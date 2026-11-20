@@ -22,6 +22,17 @@ jobs:
       - name: Max 600 lines per Rust file
         run: find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 
+  commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Same committed version as .githooks/commit-msg; rules live in committed.toml.
+      - uses: crate-ci/committed@v1.1.12
+        with:
+          commits: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || format('{0}..{1}', github.event.before, github.sha) }}
+
   msrv:
     runs-on: ubuntu-latest
     steps:

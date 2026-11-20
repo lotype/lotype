@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep the version in sync with crate-ci/committed in .github/workflows/ci.yml.
+version=1.1.12
+if ! committed --version 2>/dev/null | grep -qx "committed $version"; then
+  echo "commit-msg: committed $version is required: cargo install committed --version $version --locked" >&2
+  exit 1
+fi
+exec committed --commit-file "$1"
