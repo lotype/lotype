@@ -331,7 +331,7 @@ cargo test   --workspace --exclude linotype-ui --exclude linotype
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-The `--exclude` flags are added once `linotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `linotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
 
 ---
 
