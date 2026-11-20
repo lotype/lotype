@@ -1,0 +1,14 @@
+[package]
+name = "linotype-core"
+description = "Headless WYSIWYM document engine with realtime collaboration, built on Loro."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]

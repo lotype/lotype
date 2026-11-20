@@ -331,7 +331,7 @@ cargo test   --workspace --exclude linotype-ui --exclude linotype
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-`cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+The `--exclude` flags are added once `linotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
 
 ---
 
@@ -373,7 +373,7 @@ linotype/
                             # stream.rs, review.rs, prompts.rs, test_support/
 ```
 
-Root `Cargo.toml`:
+Root `Cargo.toml` (target state; `members` grows as each crate's milestone starts):
 
 ```toml
 [workspace]
@@ -394,6 +394,7 @@ exclude = ["porting"]       # local reference crate (porting/rust-ref) must not 
 [workspace.package]
 version = "0.1.0-alpha.0"
 edition = "2024"
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 description = "A native Rust block-based document SDK: WYSIWYM engine with realtime collaboration (Loro) and a GPUI WYSIWYG editor."
 homepage = "https://lotype.dev"
