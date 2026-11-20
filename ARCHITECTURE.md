@@ -453,3 +453,4 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 - **Comments:** only where they explain *why*. `///` becomes public rustdoc, so keep it short and do not restate the signature. Code blocks in `///` run as doctests, so include only real examples that compile.
 - **Tests:** pure Rust. Fixtures only when needed, kept next to the code they test.
 - **Language:** English for all code, identifiers, comments and repository docs.
+- **Commits:** Conventional Commits, enforced by `committed` 1.1.12 (`committed.toml`) through the `.githooks/commit-msg` hook locally and the `commits` CI job. Setup is in [CONTRIBUTING.md](CONTRIBUTING.md).
