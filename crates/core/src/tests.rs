@@ -107,6 +107,27 @@ fn typing_with_pending_marks_keeps_inherited_foreign_values() {
 }
 
 #[test]
+fn typing_does_not_extend_a_legacy_boolean_link() {
+    let (mut doc, selection) = build(blocks![p!["a<a>b"]]);
+    let block = doc.blocks()[0];
+    doc.raw_text(block)
+        .unwrap()
+        .mark(0..2, "link", true)
+        .unwrap();
+    doc.commit();
+
+    let mut editor = Editor::new(doc);
+    editor.set_selection(selection).unwrap();
+    assert!(!editor.active_marks().unwrap().contains_key("link"));
+    editor.insert_text("X").unwrap();
+    let spans = editor.document().spans(block).unwrap();
+    assert_eq!(spans[0].marks["link"], true.into());
+    assert_eq!(spans[1].text, "X");
+    assert!(spans[1].marks.is_empty());
+    assert_eq!(spans[2].marks["link"], true.into());
+}
+
+#[test]
 fn range_commands_skip_blocks_of_an_unknown_type() {
     let (mut doc, _) = build(blocks![p!["one"], p!["two"], p!["three"]]);
     let [one, two, three] = doc.blocks()[..] else {

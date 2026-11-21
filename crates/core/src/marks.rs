@@ -35,13 +35,13 @@ impl Document {
 
     pub(crate) fn typing_marks_in(&self, text: &LoroText, offset: usize) -> Result<TypingMarks> {
         let before = match offset.checked_sub(1) {
-            Some(index) => marks_of(text, index)?,
+            Some(index) => self.typing_marks_of(text, index)?,
             None => BTreeMap::new(),
         };
         let after = if offset == text.len_unicode() {
             BTreeMap::new()
         } else {
-            marks_of(text, offset)?
+            self.typing_marks_of(text, offset)?
         };
 
         let expands = |name: &str, wanted: Expand| {
@@ -62,6 +62,26 @@ impl Document {
         Ok(marks)
     }
 
+    fn typing_marks_of(&self, text: &LoroText, offset: usize) -> Result<TypingMarks> {
+        let delta = text.slice_delta(offset, offset + 1, PosType::Unicode)?;
+        let marks = match delta.into_iter().next() {
+            Some(TextDelta::Insert { attributes, .. }) => attributes,
+            _ => None,
+        };
+        // Old documents may already contain a boolean on a valued mark.
+        Ok(marks
+            .into_iter()
+            .flatten()
+            .filter(|(name, value)| {
+                !matches!(value, LoroValue::Bool(_))
+                    || self
+                        .schema()
+                        .mark_spec(name)
+                        .is_none_or(|spec| spec.allows_boolean())
+            })
+            .collect())
+    }
+
     /// The marks that all of the text between two positions has, with the same value.
     pub fn marks_in(&self, a: Pos, b: Pos) -> Result<BTreeMap<String, Value>> {
         let mut common: Option<BTreeMap<String, Value>> = None;
@@ -78,13 +98,4 @@ impl Document {
         }
         Ok(common.unwrap_or_default())
     }
-}
-
-fn marks_of(text: &LoroText, offset: usize) -> Result<TypingMarks> {
-    let delta = text.slice_delta(offset, offset + 1, PosType::Unicode)?;
-    let marks = match delta.into_iter().next() {
-        Some(TextDelta::Insert { attributes, .. }) => attributes,
-        _ => None,
-    };
-    Ok(marks.into_iter().flatten().collect())
 }

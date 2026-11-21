@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use loro::{ExpandType, LoroDoc, LoroMap, LoroText, LoroTree, StyleConfig, TreeID, TreeParentId};
 
+use crate::order::OrderCache;
 use crate::{BlockSpec, Content, Error, Result, Schema, Value};
 
 /// The deepest nesting level a document has. Top-level blocks are at level 1.
@@ -24,6 +26,8 @@ pub struct BlockId(pub(crate) TreeID);
 pub struct Document {
     pub(crate) doc: LoroDoc,
     pub(crate) tree: LoroTree,
+    pub(crate) order: Mutex<OrderCache>,
+    pub(crate) identity: Arc<()>,
     schema: Schema,
 }
 
@@ -36,7 +40,13 @@ impl Document {
         let expand = ExpandType::None;
         doc.config_default_text_style(Some(StyleConfig { expand }));
         let tree = doc.get_tree(TREE);
-        Self { doc, tree, schema }
+        Self {
+            doc,
+            tree,
+            order: Mutex::default(),
+            identity: Arc::new(()),
+            schema,
+        }
     }
 
     pub fn schema(&self) -> &Schema {

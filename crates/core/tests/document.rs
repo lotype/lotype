@@ -16,6 +16,25 @@ fn new_document_is_empty() {
 }
 
 #[test]
+fn sibling_lookups_see_uncommitted_tree_edits() {
+    let mut doc = doc();
+    let a = paragraph(&mut doc, None, 0);
+    let b = paragraph(&mut doc, None, 1);
+    assert_eq!(doc.next_block(a).unwrap(), Some(b));
+
+    let c = paragraph(&mut doc, None, 1);
+    assert_eq!(doc.next_block(a).unwrap(), Some(c));
+    assert_eq!(doc.prev_block(b).unwrap(), Some(c));
+    doc.move_block(b, Some(a), 0).unwrap();
+    assert_eq!(doc.next_block(a).unwrap(), Some(b));
+    assert_eq!(doc.prev_block(c).unwrap(), Some(b));
+    assert_eq!(doc.path(b).unwrap(), [0, 0]);
+    doc.remove_block(b).unwrap();
+    assert_eq!(doc.next_block(a).unwrap(), Some(c));
+    assert_eq!(doc.index_of(c).unwrap(), 1);
+}
+
+#[test]
 fn inserts_blocks_at_index() {
     let mut doc = doc();
     let a = paragraph(&mut doc, None, 0);

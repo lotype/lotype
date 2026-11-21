@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
+use crate::{Error, Result, Value};
+
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Content {
@@ -57,6 +59,7 @@ pub enum Expand {
 pub struct MarkSpec {
     name: String,
     expand: Expand,
+    requires_value: bool,
 }
 
 impl MarkSpec {
@@ -64,7 +67,14 @@ impl MarkSpec {
         Self {
             name: name.into(),
             expand,
+            requires_value: false,
         }
+    }
+
+    /// Requires a string or integer value, as for links and colors.
+    pub fn with_value(mut self) -> Self {
+        self.requires_value = true;
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -73,6 +83,17 @@ impl MarkSpec {
 
     pub fn expand(&self) -> Expand {
         self.expand
+    }
+
+    pub(crate) fn allows_boolean(&self) -> bool {
+        !self.requires_value
+    }
+
+    pub(crate) fn check_value(&self, value: &Value) -> Result<()> {
+        if !self.allows_boolean() && matches!(value, Value::Bool(_)) {
+            return Err(Error::MarkValueRequired(self.name.clone()));
+        }
+        Ok(())
     }
 }
 
@@ -110,20 +131,15 @@ impl Schema {
         for name in ["image", "file", "divider", "page_break"] {
             schema = schema.block(BlockSpec::new(name, None));
         }
-        for name in [
-            "bold",
-            "italic",
-            "underline",
-            "strike",
-            "text_color",
-            "background_color",
-        ] {
+        for name in ["bold", "italic", "underline", "strike"] {
             schema = schema.mark(MarkSpec::new(name, Expand::After));
         }
-        for name in ["code", "link"] {
-            schema = schema.mark(MarkSpec::new(name, Expand::None));
+        for name in ["text_color", "background_color"] {
+            schema = schema.mark(MarkSpec::new(name, Expand::After).with_value());
         }
         schema
+            .mark(MarkSpec::new("code", Expand::None))
+            .mark(MarkSpec::new("link", Expand::None).with_value())
     }
 
     /// Adds a block type, replacing any existing one with the same name.

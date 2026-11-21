@@ -277,6 +277,20 @@ fn toggle_mark_removes_a_mark_whatever_its_value() {
 }
 
 #[test]
+fn toggling_a_valued_mark_does_not_create_a_boolean() {
+    let (mut doc, a, b) = setup(blocks![p!["<a>ab<b>"]]);
+    let first = Pos::new(a.block, 1);
+    doc.mark_range(a, first, "link", "https://lotype.dev")
+        .unwrap();
+    assert!(matches!(
+        doc.toggle_mark(a, b, "link"),
+        Err(Error::MarkValueRequired(_))
+    ));
+    let link = lotype_core::test_support::marked("link", "https://lotype.dev", vec!["a".into()]);
+    assert_document(&doc, None, blocks![p![link, "b"]]);
+}
+
+#[test]
 fn toggle_mark_fills_a_partly_marked_range() {
     let (mut doc, a, b) = setup(blocks![p!["<a>a", b!["b"], "c<b>"]]);
     doc.toggle_mark(a, b, "bold").unwrap();

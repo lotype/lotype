@@ -85,10 +85,24 @@ fn assert_document_compares_selection_only_when_expected_has_markers() {
 }
 
 #[test]
-#[should_panic(expected = "left: \"paragraph \\\"a<a>b\\\"")]
+#[should_panic(expected = "document or selection differs")]
 fn assert_document_fails_on_a_different_selection() {
     let (doc, selection) = build(blocks![p!["a<a>b"]]);
     assert_document(&doc, selection.as_ref(), blocks![p!["ab<a>"]]);
+}
+
+#[test]
+#[should_panic(expected = "document or selection differs")]
+fn assert_document_distinguishes_literal_text_from_a_mark() {
+    let (doc, _) = build(blocks![p!["[bold|x]"]]);
+    assert_document(&doc, None, blocks![p![b!["x"]]]);
+}
+
+#[test]
+#[should_panic(expected = "document or selection differs")]
+fn assert_document_compares_attribute_types() {
+    let (doc, _) = build(blocks![p!().attr("level", "1")]);
+    assert_document(&doc, None, blocks![p!().attr("level", 1)]);
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 
 use loro::{LoroValue, UndoManager};
 
@@ -42,18 +43,19 @@ enum Anchor {
     Blocks(Vec<usize>),
 }
 
-/// Commits the edit when dropped. If the edit panicked, the document keeps
-/// whatever the edit did, and the history and selection, which can no longer
-/// be trusted to match it, are cleared.
-struct OpenStep<'a>(&'a mut Editor);
+/// Commits the edit and resets history if the edit replaced the document or panicked.
+struct OpenStep<'a> {
+    editor: &'a mut Editor,
+    original_document: &'a Arc<()>,
+}
 
 impl Drop for OpenStep<'_> {
     fn drop(&mut self) {
-        let editor = &mut *self.0;
+        let editor = &mut *self.editor;
         editor.doc.commit();
-        if std::thread::panicking() {
-            editor.history.group_end();
-            editor.history.clear();
+        let replaced = !Arc::ptr_eq(self.original_document, &editor.doc.identity);
+        if replaced || std::thread::panicking() {
+            editor.history = new_history(&editor.doc);
             editor.undo_steps.clear();
             editor.redo_steps.clear();
             editor.selection = None;
@@ -65,13 +67,10 @@ impl Drop for OpenStep<'_> {
 
 impl Editor {
     pub fn new(doc: Document) -> Self {
-        let mut history = UndoManager::new(&doc.doc);
-        history.set_max_undo_steps(MAX_UNDO_STEPS);
-        history.set_merge_interval(0);
         Self {
+            history: new_history(&doc),
             doc,
             selection: None,
-            history,
             undo_steps: VecDeque::new(),
             redo_steps: Vec::new(),
             run: None,
@@ -102,6 +101,7 @@ impl Editor {
     /// If `edit` fails, the changes it made before failing stay in the
     /// document as an undo step. If it panics, they stay too, and the undo
     /// history and the selection are cleared.
+    /// Replacing the document starts a new history with the replacement as its baseline.
     pub fn apply(
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
@@ -125,13 +125,17 @@ impl Editor {
         }
         let new_step = self.run.is_none();
         let before = if new_step { self.anchor() } else { None };
+        let original_document = Arc::clone(&self.doc.identity);
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
         if new_step {
             self.history.group_start()?;
         }
-        let open = OpenStep(self);
-        let result = edit(&mut open.0.doc, selection.as_ref());
+        let open = OpenStep {
+            editor: self,
+            original_document: &original_document,
+        };
+        let result = edit(&mut open.editor.doc, selection.as_ref());
         drop(open);
 
         let result = result.and_then(|selection| {
@@ -148,7 +152,8 @@ impl Editor {
                 .take()
                 .filter(|s| doc.check_selection(s).is_ok()),
         };
-        let changed = self.doc.doc.oplog_frontiers() != version;
+        let changed = Arc::ptr_eq(&original_document, &self.doc.identity)
+            && self.doc.doc.oplog_frontiers() != version;
         if changed && new_step {
             let after = self.anchor();
             self.push_undo_step(Step { before, after });
@@ -203,25 +208,58 @@ impl Editor {
         })
     }
 
-    /// Toggles a mark on the selected text. On a caret, toggles it for the
-    /// text typed next instead.
+    /// Toggles an on/off mark on the selected text or for subsequent typing.
+    /// Use [`Self::set_mark`] for marks that require a value.
     pub fn toggle_mark(&mut self, name: &str) -> Result<()> {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
+        self.doc.mark_spec(name)?.check_value(&Value::Bool(true))?;
         if anchor != head {
             return self.apply(|doc, selection| {
                 doc.toggle_mark(anchor, head, name)?;
                 Ok(selection.cloned())
             });
         }
-        self.doc.mark_spec(name)?;
-        self.end_run();
+        self.edit_pending_marks(anchor, |marks| {
+            if marks.remove(name).is_none() {
+                marks.insert(name.to_owned(), LoroValue::Bool(true));
+            }
+        })
+    }
+
+    /// Sets a mark on the selection or for subsequent typing at a caret.
+    /// Pass `None` to remove it.
+    pub fn set_mark(&mut self, name: &str, value: Option<Value>) -> Result<()> {
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        let spec = self.doc.mark_spec(name)?;
+        if let Some(value) = &value {
+            spec.check_value(value)?;
+        }
+        if anchor != head {
+            return self.apply(|doc, selection| {
+                match value {
+                    Some(value) => doc.mark_range(anchor, head, name, value)?,
+                    None => doc.unmark_range(anchor, head, name)?,
+                }
+                Ok(selection.cloned())
+            });
+        }
+        self.edit_pending_marks(anchor, |marks| match value {
+            Some(value) => {
+                marks.insert(name.to_owned(), value.to_loro());
+            }
+            None => {
+                marks.remove(name);
+            }
+        })
+    }
+
+    fn edit_pending_marks(&mut self, pos: Pos, edit: impl FnOnce(&mut TypingMarks)) -> Result<()> {
         let mut marks = match self.pending_marks.take() {
             Some(marks) => marks,
-            None => self.doc.typing_marks(anchor)?,
+            None => self.doc.typing_marks(pos)?,
         };
-        if marks.remove(name).is_none() {
-            marks.insert(name.to_owned(), LoroValue::Bool(true));
-        }
+        self.end_run();
+        edit(&mut marks);
         self.pending_marks = Some(marks);
         Ok(())
     }
@@ -332,6 +370,13 @@ impl Editor {
         });
         self.selection = selection.filter(|s| self.doc.check_selection(s).is_ok());
     }
+}
+
+fn new_history(doc: &Document) -> UndoManager {
+    let mut history = UndoManager::new(&doc.doc);
+    history.set_max_undo_steps(MAX_UNDO_STEPS);
+    history.set_merge_interval(0);
+    history
 }
 
 fn text_selection(selection: Option<&Selection>) -> Result<(Pos, Pos)> {

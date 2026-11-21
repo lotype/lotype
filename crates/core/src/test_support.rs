@@ -161,9 +161,34 @@ pub fn assert_document(doc: &Document, selection: Option<&Selection>, expected: 
     let (expected_doc, expected_selection) = build(expected);
     let selection = selection.filter(|_| expected_selection.is_some());
     assert_eq!(
+        snapshot(doc, selection),
+        snapshot(&expected_doc, expected_selection.as_ref()),
+        "document or selection differs\nActual\n{}Expected\n{}",
         outline(doc, selection),
         outline(&expected_doc, expected_selection.as_ref())
     );
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BlockSnapshot {
+    depth: usize,
+    block_type: String,
+    attrs: BTreeMap<String, Value>,
+    spans: Option<Vec<Span>>,
+    markers: Vec<(usize, &'static str)>,
+}
+
+fn snapshot(doc: &Document, selection: Option<&Selection>) -> Vec<BlockSnapshot> {
+    doc.blocks()
+        .into_iter()
+        .map(|block| BlockSnapshot {
+            depth: doc.depth(block).unwrap(),
+            block_type: doc.block_type(block).unwrap(),
+            attrs: doc.attrs(block).unwrap(),
+            spans: doc.spans(block).ok(),
+            markers: markers_in(block, selection),
+        })
+        .collect()
 }
 
 /// Builds an editor whose history starts after the built content.
@@ -185,7 +210,7 @@ pub fn assert_editor(editor: &Editor, expected: Vec<BlockNode>) {
 pub fn outline(doc: &Document, selection: Option<&Selection>) -> String {
     let mut out = String::new();
     for block in doc.blocks() {
-        let depth = doc.path(block).unwrap().len() - 1;
+        let depth = doc.depth(block).unwrap() - 1;
         let selected =
             matches!(selection, Some(Selection::Blocks(blocks)) if blocks.contains(&block));
         out.push_str(&"  ".repeat(depth));

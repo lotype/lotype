@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use lotype_core::test_support::{assert_editor, block, build, editor, marked};
 use lotype_core::{
-    Document, Editor, Expand, MarkSpec, Pos, Schema, Selection, Value, b, blocks, divider, i, p,
+    Document, Editor, Error, Expand, MarkSpec, Pos, Schema, Selection, Value, b, blocks, divider,
+    i, p,
 };
 
 fn type_each(ed: &mut Editor, text: &str) {
@@ -125,6 +126,46 @@ fn a_pending_mark_that_does_not_expand_still_covers_every_typed_character() {
     type_each(&mut ed, "let x");
     let code = marked("code", true, vec!["let x<a>".into()]);
     assert_editor(&ed, blocks![p![code]]);
+}
+
+#[test]
+fn valued_marks_require_an_explicit_value_at_a_caret() {
+    let link = |text: &str| marked("link", "https://lotype.dev", vec![text.into()]);
+    let mut ed = editor(blocks![p![link("a<a>b")]]);
+    let value = Value::from("https://lotype.dev");
+    assert!(matches!(
+        ed.toggle_mark("link"),
+        Err(Error::MarkValueRequired(_))
+    ));
+    assert!(matches!(
+        ed.set_mark("link", Some(true.into())),
+        Err(Error::MarkValueRequired(_))
+    ));
+    assert_eq!(ed.active_marks().unwrap()["link"], value);
+
+    ed.set_mark("link", None).unwrap();
+    ed.insert_text("X").unwrap();
+    ed.set_mark("link", Some(value)).unwrap();
+    ed.insert_text("Y").unwrap();
+    assert_editor(&ed, blocks![p![link("a"), "X", link("Y<a>b")]]);
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p![link("a"), "X<a>", link("b")]]);
+}
+
+#[test]
+fn setting_a_valued_mark_on_a_range_is_undoable() {
+    let mut ed = editor(blocks![p!["<a>ab<b>"]]);
+    let color = Value::from("blue");
+    assert!(matches!(
+        ed.toggle_mark("text_color"),
+        Err(Error::MarkValueRequired(_))
+    ));
+    ed.set_mark("text_color", Some(color.clone())).unwrap();
+    assert_eq!(ed.active_marks().unwrap()["text_color"], color);
+    ed.set_mark("text_color", None).unwrap();
+    assert!(ed.active_marks().unwrap().is_empty());
+    assert!(ed.undo().unwrap());
+    assert_eq!(ed.active_marks().unwrap()["text_color"], color);
 }
 
 #[test]

@@ -22,6 +22,21 @@ fn bold() -> (&'static str, Value) {
 }
 
 #[test]
+fn boolean_values_for_links_are_rejected_before_writing() {
+    let (mut doc, block) = paragraph("a");
+    let inserts = [span("b", &[bold()]), span("c", &[("link", true.into())])];
+    assert!(matches!(
+        doc.insert_spans(block, 1, &inserts),
+        Err(Error::MarkValueRequired(_))
+    ));
+    assert!(matches!(
+        doc.mark(block, 0..1, "link", true),
+        Err(Error::MarkValueRequired(_))
+    ));
+    assert_eq!(doc.spans(block).unwrap(), [span("a", &[])]);
+}
+
+#[test]
 fn inserts_and_deletes_by_byte_offset() {
     let (mut doc, block) = paragraph("héllo 😀");
     assert_eq!(doc.text_len(block).unwrap(), 11);

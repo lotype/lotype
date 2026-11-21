@@ -1,6 +1,19 @@
-use loro::{TreeID, TreeParentId};
+use std::collections::HashMap;
+
+use loro::{Frontiers, TreeID, TreeParentId};
 
 use crate::{BlockId, Document, Error, MAX_DEPTH, Result};
+
+#[derive(Default)]
+pub(crate) struct OrderCache {
+    version: Frontiers,
+    groups: HashMap<TreeParentId, Siblings>,
+}
+
+struct Siblings {
+    ids: Vec<TreeID>,
+    indices: HashMap<TreeID, usize>,
+}
 
 /// Document order: a block comes before its children, which come before its next sibling.
 ///
@@ -32,9 +45,10 @@ impl Document {
             return Ok(Some(BlockId(*first_child)));
         }
         loop {
-            let (parent, siblings, index) = self.siblings(current)?;
-            if let Some(next) = siblings.get(index + 1) {
-                return Ok(Some(BlockId(*next)));
+            let (parent, next) =
+                self.with_siblings(current, |siblings, index| siblings.get(index + 1).copied())?;
+            if let Some(next) = next {
+                return Ok(Some(BlockId(next)));
             }
             match parent {
                 TreeParentId::Node(parent) => current = parent,
@@ -45,14 +59,15 @@ impl Document {
 
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
         let mut depth = self.depth(block)?;
-        let (parent, siblings, index) = self.siblings(block.0)?;
-        if index == 0 {
+        let (parent, prev) = self.with_siblings(block.0, |siblings, index| {
+            index.checked_sub(1).map(|index| siblings[index])
+        })?;
+        let Some(mut current) = prev else {
             return Ok(match parent {
                 TreeParentId::Node(parent) => Some(BlockId(parent)),
                 _ => None,
             });
-        }
-        let mut current = siblings[index - 1];
+        };
         while depth < MAX_DEPTH
             && let Some(last_child) = self.child_ids(TreeParentId::Node(current)).last()
         {
@@ -64,7 +79,8 @@ impl Document {
 
     /// The position of `block` among its siblings.
     pub fn index_of(&self, block: BlockId) -> Result<usize> {
-        Ok(self.siblings(self.live(block)?)?.2)
+        let (_, index) = self.with_siblings(self.live(block)?, |_, index| index)?;
+        Ok(index)
     }
 
     /// Sibling indices from the top level down to `block`. Paths sort in document order.
@@ -72,7 +88,7 @@ impl Document {
         let mut path = Vec::new();
         let mut current = self.live(block)?;
         loop {
-            let (parent, _, index) = self.siblings(current)?;
+            let (parent, index) = self.with_siblings(current, |_, index| index)?;
             path.push(index);
             match parent {
                 TreeParentId::Node(parent) => current = parent,
@@ -83,11 +99,25 @@ impl Document {
         Ok(path)
     }
 
-    /// The parent of a block in the document, its children, and the block's index among them.
-    fn siblings(&self, id: TreeID) -> Result<(TreeParentId, Vec<TreeID>, usize)> {
+    fn with_siblings<T>(
+        &self,
+        id: TreeID,
+        read: impl FnOnce(&[TreeID], usize) -> T,
+    ) -> Result<(TreeParentId, T)> {
         let parent = self.tree.parent(id).ok_or(Error::BlockNotFound)?;
-        let siblings = self.child_ids(parent);
-        let index = siblings.iter().position(|sibling| *sibling == id);
-        Ok((parent, siblings, index.ok_or(Error::BlockNotFound)?))
+        // State frontiers include pending changes, undo and redo.
+        let version = self.doc.state_frontiers();
+        let mut order = self.order.lock().unwrap();
+        if order.version != version {
+            order.version = version;
+            order.groups.clear();
+        }
+        let siblings = order.groups.entry(parent).or_insert_with(|| {
+            let ids = self.child_ids(parent);
+            let indices = ids.iter().copied().zip(0..).collect();
+            Siblings { ids, indices }
+        });
+        let index = *siblings.indices.get(&id).ok_or(Error::BlockNotFound)?;
+        Ok((parent, read(&siblings.ids, index)))
     }
 }

@@ -75,8 +75,8 @@ impl Document {
         name: &str,
         value: impl Into<Value>,
     ) -> Result<()> {
-        self.mark_spec(name)?;
         let value = value.into();
+        self.mark_spec(name)?.check_value(&value)?;
         for (block, range) in self.segments(a, b)? {
             self.mark(block, range, name, value.clone())?;
         }
@@ -94,8 +94,8 @@ impl Document {
     /// Removes the mark when all of the range has it, with any value, and
     /// otherwise applies it with the value `true`.
     ///
-    /// This suits on/off marks such as bold. For a mark that carries a value,
-    /// such as a link, use [`Self::mark_range`] to apply it.
+    /// A mark that requires a value can be removed this way. Use
+    /// [`Self::mark_range`] to apply it with an explicit value.
     pub fn toggle_mark(&mut self, a: Pos, b: Pos, name: &str) -> Result<()> {
         self.mark_spec(name)?;
         let mut all_marked = true;

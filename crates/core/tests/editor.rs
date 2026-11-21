@@ -1,4 +1,4 @@
-use lotype_core::test_support::{assert_editor, editor};
+use lotype_core::test_support::{assert_editor, build, editor};
 use lotype_core::{Error, Pos, Selection, b, blocks, divider, i, p};
 
 #[test]
@@ -241,6 +241,70 @@ fn a_step_with_no_net_effect_does_not_break_undo() {
     assert!(ed.redo().unwrap());
     assert_editor(&ed, blocks![p!["ab<a>"]]);
     assert!(!ed.redo().unwrap());
+}
+
+#[test]
+fn replacing_the_document_restarts_undo_and_redo() {
+    let mut ed = editor(blocks![p!["old<a>"]]);
+    ed.insert_text(" first ").unwrap();
+    ed.insert_text("second").unwrap();
+    assert!(ed.undo().unwrap());
+    assert!(ed.can_undo());
+    assert!(ed.can_redo());
+
+    let (replacement, selection) = build(blocks![p!["new<a>"]]);
+    ed.apply(|doc, _| {
+        *doc = replacement;
+        Ok(selection)
+    })
+    .unwrap();
+    assert_editor(&ed, blocks![p!["new<a>"]]);
+    assert!(!ed.can_undo());
+    assert!(!ed.can_redo());
+
+    ed.insert_text("!").unwrap();
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["new<a>"]]);
+    assert!(!ed.undo().unwrap());
+    assert!(ed.redo().unwrap());
+    assert_editor(&ed, blocks![p!["new!<a>"]]);
+}
+
+#[test]
+fn replacing_the_document_before_a_panic_rebinds_undo() {
+    let mut ed = editor(blocks![p!["old<a>"]]);
+    let (replacement, selection) = build(blocks![p!["new<a>"]]);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = ed.apply(|doc, _| {
+            *doc = replacement;
+            panic!("edit failed");
+        });
+    }));
+    assert!(result.is_err());
+    assert_eq!(ed.selection(), None);
+    ed.set_selection(selection).unwrap();
+    ed.insert_text("!").unwrap();
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["new<a>"]]);
+}
+
+#[test]
+fn neighboring_blocks_follow_undo_and_redo() {
+    let mut ed = editor(blocks![p!["A"], p!["B"], p!["C"]]);
+    let [a, b, c] = ed.document().blocks()[..] else {
+        panic!();
+    };
+    assert_eq!(ed.document().next_block(a).unwrap(), Some(b));
+    ed.apply(|doc, _| {
+        doc.move_block(b, None, 2)?;
+        Ok(None)
+    })
+    .unwrap();
+    assert_eq!(ed.document().next_block(a).unwrap(), Some(c));
+    assert!(ed.undo().unwrap());
+    assert_eq!(ed.document().next_block(a).unwrap(), Some(b));
+    assert!(ed.redo().unwrap());
+    assert_eq!(ed.document().next_block(a).unwrap(), Some(c));
 }
 
 #[test]

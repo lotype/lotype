@@ -5,7 +5,7 @@ use loro::cursor::PosType;
 use loro::{LoroText, TextDelta};
 
 use crate::marks::{TypingMarks, visible_marks};
-use crate::{BlockId, Content, Document, Error, Pos, Result, Value};
+use crate::{BlockId, Content, Document, Error, MarkSpec, Pos, Result, Value};
 
 /// A run of text with the same marks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,8 +48,8 @@ impl Document {
     pub fn insert_spans(&mut self, block: BlockId, offset: usize, spans: &[Span]) -> Result<()> {
         let text = self.inline(block)?;
         let offset = unicode_offset(&text, offset)?;
-        for name in spans.iter().flat_map(|span| span.marks.keys()) {
-            self.mark_spec(name)?;
+        for (name, value) in spans.iter().flat_map(|span| &span.marks) {
+            self.mark_spec(name)?.check_value(value)?;
         }
         let inserts = spans.iter().map(|span| TextDelta::Insert {
             insert: span.text.clone(),
@@ -124,11 +124,12 @@ impl Document {
         name: &str,
         value: impl Into<Value>,
     ) -> Result<()> {
-        self.mark_spec(name)?;
+        let value = value.into();
+        self.mark_spec(name)?.check_value(&value)?;
         let text = self.inline(block)?;
         let range = unicode_range(&text, range)?;
         if !range.is_empty() {
-            text.mark(range, name, value.into().to_loro())?;
+            text.mark(range, name, value.to_loro())?;
         }
         Ok(())
     }
@@ -154,11 +155,10 @@ impl Document {
         self.raw_text(block)
     }
 
-    pub(crate) fn mark_spec(&self, name: &str) -> Result<()> {
-        match self.schema().mark_spec(name) {
-            Some(_) => Ok(()),
-            None => Err(Error::UnknownMark(name.to_owned())),
-        }
+    pub(crate) fn mark_spec(&self, name: &str) -> Result<&MarkSpec> {
+        self.schema()
+            .mark_spec(name)
+            .ok_or_else(|| Error::UnknownMark(name.to_owned()))
     }
 }
 

@@ -9,6 +9,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     UnknownBlockType(String),
     UnknownMark(String),
+    /// The mark requires a string or integer value.
+    MarkValueRequired(String),
     BlockNotFound,
     /// The block's type holds no inline text.
     NoInlineContent,
@@ -41,6 +43,9 @@ impl fmt::Display for Error {
         match self {
             Self::UnknownBlockType(name) => write!(f, "unknown block type `{name}`"),
             Self::UnknownMark(name) => write!(f, "unknown mark `{name}`"),
+            Self::MarkValueRequired(name) => {
+                write!(f, "mark `{name}` needs a string or integer value")
+            }
             Self::BlockNotFound => f.write_str("block not found"),
             Self::NoInlineContent => f.write_str("block has no inline content"),
             Self::ChildrenNotAllowed(name) => {
