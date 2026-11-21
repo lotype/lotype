@@ -13,3 +13,6 @@ documentation = "https://docs.lotype.dev"
 repository = "https://github.com/lotype/lotype"
 keywords = ["editor", "wysiwyg", "wysiwym", "gpui", "crdt"]
 categories = ["text-editors", "gui", "asynchronous"]
+
+[workspace.dependencies]
+loro = "1.18.0"
