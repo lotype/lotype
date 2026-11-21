@@ -104,6 +104,10 @@ impl Document {
         Ok(())
     }
 
+    pub(crate) fn check_offset(&self, block: BlockId, offset: usize) -> Result<()> {
+        unicode_offset(&self.inline(block)?, offset).map(drop)
+    }
+
     fn inline(&self, block: BlockId) -> Result<LoroText> {
         if self.spec(block)?.content() != Content::Inline {
             return Err(Error::NoInlineContent);
