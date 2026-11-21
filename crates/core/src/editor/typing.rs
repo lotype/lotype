@@ -24,6 +24,12 @@ impl Editor {
     ///
     /// Text typed in sequence undoes one word at a time: a run of calls is one
     /// undo step until a word starts after whitespace, or anything else happens.
+    ///
+    /// Markdown typed at the start of a paragraph turns it into that block:
+    /// `# ` to `###### `, `- `, `1. `, `[] `, `> `, `` ``` `` with a language
+    /// and a space, and `---`. Text typed between `**`, `*`, `_`, `~~` or
+    /// backticks gets that mark. Each is a step of its own, so undo gives
+    /// back what was typed.
     pub fn insert_text(&mut self, text: &str) -> Result<()> {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let starts_word = text.chars().next().is_some_and(|c| !c.is_whitespace());
@@ -35,7 +41,12 @@ impl Editor {
             let caret = doc.delete_range(anchor, head)?;
             doc.insert_typed(caret, text, marks)?;
             Ok(Pos::new(caret.block, caret.offset + text.len()))
-        })
+        })?;
+        // Every input rule ends in one of these, and most keystrokes do not.
+        if text.ends_with([' ', '-', '`', '*', '_', '~']) {
+            self.input_rule()?;
+        }
+        Ok(())
     }
 
     /// Deletes the selection, or the character before the caret, as Backspace

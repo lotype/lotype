@@ -11,6 +11,7 @@ use crate::{Document, Error, Pos, Result, Selection, Value};
 
 mod changes;
 mod history;
+mod input;
 mod remote;
 mod transaction;
 mod typing;

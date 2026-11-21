@@ -159,6 +159,7 @@ Design decisions:
 - **Nesting is capped at `MAX_DEPTH` (128 levels).** Deeper blocks sent by another peer stay in the shared data but are not part of the document: no method returns them, and local edits cannot create them. The cap bounds every ancestor walk, which keeps reads linear however deep a peer nests.
 - **Undo** is local-only (`loro::UndoManager`). Consecutive typing shares one step until a keystroke starts a word after whitespace. Consecutive Backspace or Delete presses within a block share a step by direction. Changing the selection, toggling a mark or running another command ends the current step. Replacing the document through `Editor::apply` starts a fresh history with the replacement as its baseline. Loro can fail to undo a step that changes from other peers have cut across, and it keeps that step on its stack; `Editor::undo` then returns the error and clears the history, since no older step could be reached any more.
 - **An edit is published after validation.** `Editor::apply` runs the callback on a private Loro fork. After the callback succeeds and its selection validates, the editor first makes the draft's new blocks in the trash, under the same IDs, and then replays the draft's operations as one undo step. The IDs agree because the draft makes blocks under the document's peer and everything else under a peer of its own. An error or panic discards the draft and preserves the document's blocks, the selection, and the history; a step on a document without a trash node adds one first, and that stays even then. The draft's update and snapshot exports are disabled. Single-keystroke typing and deletion use the live document to avoid a fork.
+- **Input rules.** `Editor::insert_text` turns Markdown typed at the start of a paragraph into that block (`# ` to `###### `, `- `, `1. `, `[] `, `> `, `` ``` `` with a language and a space, `---`) and puts a mark on text typed between `**`, `*`, `_`, `~~` or backticks. The patterns follow Tiptap and BlockNote. A rule only acts where its result fits: in a paragraph, for a block type and mark the schema has, and not where a block with children would become one that takes none. A rule is an undo step of its own, after the typing, so undo gives back what was typed.
 - **Change notifications.** `Editor::take_changes` returns what changed since it was last called: the blocks whose text, marks, type or attributes changed, whether blocks were inserted, removed or moved, and whether the editor got another document. It covers local edits, undo and redo, and imports alike, and it is pulled, not pushed: the view asks after each action or import and redraws only that. Blocks in the trash are never reported, so when blocks were inserted, removed or moved, the view reads every block that is new to it, including one that undo brought back. Selection changes are not part of it; the view reads `Editor::selection`.
 - **Pending marks.** Toggling a mark on a caret sets the formatting for subsequent typing until the selection changes or another editing command runs. Use `Editor::set_mark` with an explicit value for links and colors. By default the editor uses the marks shared by the neighboring characters and the marks whose expand rules reach the caret. If both sides expand a mark with different values, the preceding value wins. `Editor::active_marks` reports the formatting for the next insertion at a caret or the shared formatting across a text selection.
 - **Traversal.** Use `Document::blocks()` for a snapshot in document order. Neighbor and path queries share sibling indexes for the current document state.
@@ -373,11 +374,13 @@ lotype/
     │   ├── draft.rs        # What a staged edit did, to replay it on the document
     │   ├── editor/history.rs  # Undo and redo with the cursors Loro keeps per step
     │   ├── editor/changes.rs  # What changed, for a view to redraw
+    │   ├── editor/input.rs  # Applying input rules to what was typed
+    │   ├── rules.rs        # Input rules: what typed text turns into
     │   ├── collab.rs       # Update export/import, selections that follow remote changes
     │   ├── value.rs, error.rs
     │   ├── test_support.rs # [feature "test-support"]
     │   │   # planned:
-    │   ├── rules.rs        # Input rules, paste rules, keymap
+    │   ├── keymap.rs       # Paste rules, keymap
     │   ├── suggestion.rs   # Slash menu items, filter, query state
     │   ├── presence.rs     # EphemeralStore
     │   ├── normalize.rs    # Read-time schema tolerance

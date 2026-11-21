@@ -10,6 +10,7 @@ mod editor;
 mod error;
 mod marks;
 mod order;
+mod rules;
 mod schema;
 mod selection;
 #[cfg(any(test, feature = "test-support"))]
