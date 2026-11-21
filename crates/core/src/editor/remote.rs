@@ -6,16 +6,16 @@ use loro::event::Diff;
 
 use super::Editor;
 use crate::Result;
-use crate::collab::Anchored;
 
 impl Editor {
     /// Merges a snapshot or updates from another peer.
     ///
     /// The selection follows its text. It is cleared when its blocks are
-    /// gone. Remote changes are never part of this editor's undo history, but
-    /// one that touches the text being typed ends the current typing step.
-    /// One that changes the text of a block this editor's undo or redo
-    /// brought back clears the undo steps.
+    /// gone, and returns if a later import brings them back before the
+    /// selection is set again. Remote changes are never part of this editor's
+    /// undo history, but one that touches the text being typed ends the
+    /// current typing step. One that changes the text of a block this
+    /// editor's undo or redo brought back clears the undo steps.
     /// An import that advances this editor's own peer counter clears its history.
     /// See [`Document::import`](crate::Document::import) for partial imports.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
@@ -78,8 +78,8 @@ impl Editor {
         if group_ended || selection != self.selection {
             self.finish_edit_group();
         }
-        self.live_anchors = anchored
-            .filter(|anchor| selection.is_some() && matches!(anchor, Anchored::Text { .. }));
+        // Kept while nothing resolves too: a later update can bring a block back.
+        self.live_anchors = anchored;
         self.selection = selection;
         result
     }

@@ -64,3 +64,30 @@ fn a_peers_edit_to_a_restored_block_drops_the_undo_steps_it_would_corrupt() {
     assert!(a.redo().unwrap());
     assert_eq!(a.document().blocks().len(), 1);
 }
+
+#[test]
+fn delivery_boundaries_do_not_decide_whether_a_selection_survives() {
+    for blocks_selected in [false, true] {
+        let selections = [true, false].map(|split| {
+            let mut a = editor(blocks![p!["keep"], p!["ca<a>ret"]]);
+            let mut b = Editor::new(peer(a.document()));
+            let block = b.document().blocks()[1];
+            if blocks_selected {
+                a.set_selection(Some(Selection::Blocks(vec![block])))
+                    .unwrap();
+            }
+            b.set_selection(Some(Selection::Blocks(vec![block])))
+                .unwrap();
+            b.delete_selection().unwrap();
+            if split {
+                pull(&mut a, b.document());
+                assert_eq!(a.selection(), None);
+            }
+            b.undo().unwrap();
+            pull(&mut a, b.document());
+            assert!(a.selection().is_some());
+            outline(a.document(), a.selection())
+        });
+        assert_eq!(selections[0], selections[1]);
+    }
+}
