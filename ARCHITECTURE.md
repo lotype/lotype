@@ -177,7 +177,7 @@ Design decisions:
   Adding a row and a column concurrently cannot produce rows of different lengths. Merged cells are deferred.
 - **Schema normalization.** A concurrent merge can produce a schema violation, such as a heading with children. Such violations are tolerated when rendering and are never written back to the document. If every peer wrote its own fix, the fixes could conflict with each other.
 - **IME.** Text that is still being composed (*marked text*) lives in `ui` as a preview. It is committed to core only when composition ends, and its anchor is kept as a `loro::Cursor` in case remote edits arrive meanwhile.
-- **Markdown** uses `pulldown-cmark` 0.13.6 with `ENABLE_GFM` and `ENABLE_MATH`.
+- **Markdown.** `Document::insert_markdown` reads CommonMark with GitHub's alerts, task lists and strikethrough into blocks, using `pulldown-cmark` 0.13.6 (`ENABLE_GFM`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_MATH`), and `Document::to_markdown` writes a document out. Block attributes carry what Markdown says beyond the type: `level` on a heading, `start` on the first item of a numbered list that does not start at 1, `checked` on a check list item, `language` on a code block, `kind` on an alert, `url` and `caption` on an image, `url` and `name` on a file. The first paragraph of a list item or a quote is its text and the rest are its children. An image alone in a paragraph is an image block. A page break is written as `<!-- page-break -->`. Reading keeps what the schema lacks as plainly as it can: a block of a missing type becomes a paragraph, a missing mark is left off, math stays as its source text, and blocks nested deeper than `MAX_DEPTH` follow the block they could not go into. Writing escapes everything in text that Markdown would read as markup, which a property test checks by reading it back. It leaves off what Markdown cannot say: underline and colors, the difference between a toggle list item and a bullet, and nesting under a block that is no list item, quote or alert.
 
 `loro-prosemirror` is not used as a model reference. It stores nodes in `LoroList` without `LoroTree`, so a block move becomes delete + insert, and concurrent edits to the moved block can be lost.
 
@@ -381,6 +381,7 @@ lotype/
     │   ├── editor/blocks.rs  # Block type, indent, outdent, paste
     │   ├── keymap.rs       # Commands and the default keymap
     │   ├── suggestion.rs   # Slash menu items, filter, query
+    │   ├── markdown/read.rs, write.rs  # Markdown <-> block tree
     │   ├── rules.rs        # Input rules: what typed text turns into
     │   ├── collab.rs       # Update export/import, selections that follow remote changes
     │   ├── value.rs, error.rs
@@ -388,7 +389,6 @@ lotype/
     │   │   # planned:
     │   ├── presence.rs     # EphemeralStore
     │   ├── normalize.rs    # Read-time schema tolerance
-    │   └── markdown.rs     # Markdown <-> block tree
     ├── ui/src/
     │   ├── editor/         # canvas.rs, text_el.rs, ime.rs, actions.rs, block_view.rs
     │   ├── components/     # slash_menu, formatting_toolbar, link_toolbar, side_menu, table,
@@ -451,7 +451,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | # | Milestone | Verified by |
 | :--- | :--- | :--- |
 | 1 | core: blocks, text, marks, split/merge, cross-block ops, undo, builders | `cargo test` (CI) |
-| 2 | core: update export/import, multi-peer convergence including grid tables, positions that survive remote edits, read-time schema tolerance, change notifications for the UI, input rules, paste rules and keymap, slash menu items, Markdown in/out | `proptest`, `cargo test` + `insta` (CI) |
+| 2 | core: update export/import, multi-peer convergence including grid tables, positions that survive remote edits, read-time schema tolerance, change notifications for the UI, input rules, paste rules and keymap, slash menu items, Markdown in/out | `proptest`, `cargo test` (CI) |
 | 3 | ui: single-block text (cursor, selection, `TextRun`, clipboard, IME, inline atoms) | `EditorTestContext` + manual IME |
 | 4 | ui: canvas, cross-block selection, menus, toolbar, side menu, nested blocks | `#[gpui::test]` |
 | 5 | server + storage: WebSocket relay, `Authorizer`, `DocStore`, collaborator cursors | `tokio::test` E2E |

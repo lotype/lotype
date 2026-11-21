@@ -9,6 +9,7 @@ mod draft;
 mod editor;
 mod error;
 mod keymap;
+mod markdown;
 mod marks;
 mod order;
 mod rules;
