@@ -20,7 +20,7 @@ git config core.hooksPath .githooks
 ```
 
 Types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`.
-Scope is the crate without the `linotype-` prefix, e.g. `feat(core): add block tree`.
+Scope is the crate without the `lotype-` prefix, e.g. `feat(core): add block tree`.
 
 ## Before pushing
 

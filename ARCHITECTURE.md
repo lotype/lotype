@@ -1,22 +1,22 @@
-# Linotype Architecture
+# Lotype Architecture
 
-Linotype is a native Rust SDK for block-based document editors. It has two layers:
+Lotype is a native Rust SDK for block-based document editors. It has two layers:
 
-- **`linotype-core`**: a headless WYSIWYM engine with realtime collaboration, built on [Loro](https://github.com/loro-dev/loro). JS equivalent: ProseMirror + Yjs.
-- **`linotype-ui`**: a WYSIWYG editor built on GPUI. JS equivalent: Tiptap + BlockNote + React.
+- **`lotype-core`**: a headless WYSIWYM engine with realtime collaboration, built on [Loro](https://github.com/loro-dev/loro). JS equivalent: ProseMirror + Yjs.
+- **`lotype-ui`**: a WYSIWYG editor built on GPUI. JS equivalent: Tiptap + BlockNote + React.
 
 Unlike the JS stack, these are two layers with a clear boundary, not three layers patching each other. There is no browser DOM and no WebView.
 
 Status: **alpha**. License: **MIT OR Apache-2.0**.
 
-**Name and identity.** The name comes from the *line-o'-type* machine, which cast a whole line of text as one solid metal slug, just as Linotype treats a document as blocks.
+**Name and identity.** The name comes from the *line-o'-type* machine, which cast a whole line of text as one solid metal slug, just as Lotype treats a document as blocks.
 
 | | |
 | :--- | :--- |
 | Website | [lotype.dev](https://lotype.dev) |
 | Docs | [docs.lotype.dev](https://docs.lotype.dev) |
 | Document schema namespace | `https://lotype.dev/schema/v1` |
-| Source | [github.com/lotype/linotype](https://github.com/lotype/linotype) |
+| Source | [github.com/lotype/lotype](https://github.com/lotype/lotype) |
 
 ---
 
@@ -46,7 +46,7 @@ Going native does not remove per-OS work. It moves that work to the OS text-inpu
 The long-term goal is native macOS and iOS apps, including rich-text chat UIs. This is an unvalidated hypothesis, and the first-release architecture must not rule it out.
 
 - **iOS.** `gpui-pre-ios` (Zed's `gpui_ios`) exists but is young: about 3.6k lines, against about 10k for the macOS backend.
-- **Swift apps.** A future `linotype-ffi` crate (UniFFI) plus a native TextKit 2 editor, reusing `core`. `loro-swift` shows this pattern works.
+- **Swift apps.** A future `lotype-ffi` crate (UniFFI) plus a native TextKit 2 editor, reusing `core`. `loro-swift` shows this pattern works.
 - **Chat.** A restricted "chat" schema profile via the `BlockSpec` registry, using Markdown as the interchange format.
 
 What keeps these doors open: `core` has no GPUI or OS dependencies, and the schema is extensible.
@@ -55,13 +55,13 @@ What keeps these doors open: `core` has no GPUI or OS dependencies, and the sche
 
 | Legacy component | Decision | Target |
 | :--- | :--- | :--- |
-| ProseMirror model/state/transform | Replace | `linotype-core`: a Loro block tree with native IDs. `Pos { block, offset }` replaces integer positions. |
+| ProseMirror model/state/transform | Replace | `lotype-core`: a Loro block tree with native IDs. `Pos { block, offset }` replaces integer positions. |
 | `prosemirror-history` | Drop | `loro::UndoManager`, local-only, like `Y.UndoManager` |
 | Yjs / y-prosemirror | Replace | `loro`: relative positions become `loro::Cursor`; awareness becomes `EphemeralStore` |
 | Tiptap extensions + BlockNote specs | Merge | `BlockSpec` / `InlineSpec` / `MarkSpec` in core, `BlockView` in ui |
-| React UI and editor view | Rewrite | `linotype-ui` (GPUI + `gpui-component`) |
-| Legacy JSON documents | Port the schema; add a migrator | One-way `JSON (Tiptap/BlockNote) → Loro` in `linotype-storage`; `callout` becomes `alert` |
-| Axum HTTP/SSE server | Repurpose | `linotype-server`: a WebSocket sync library the consumer mounts |
+| React UI and editor view | Rewrite | `lotype-ui` (GPUI + `gpui-component`) |
+| Legacy JSON documents | Port the schema; add a migrator | One-way `JSON (Tiptap/BlockNote) → Loro` in `lotype-storage`; `callout` becomes `alert` |
+| Axum HTTP/SSE server | Repurpose | `lotype-server`: a WebSocket sync library the consumer mounts |
 | Tauri IPC and WebView config | Retire | Remove all `#[tauri::command]` handlers, the JSON IPC and the WebView workarounds |
 | Tokio LLM client logic | Port behind a trait | An `LlmProvider` implementation; keep the prompt builder and stream parser; output goes to `async_channel` |
 | `@blocknote/xl-ai` | Design reference only | GPL-3.0 OR PROPRIETARY: no code is ported |
@@ -72,15 +72,15 @@ What keeps these doors open: `core` has no GPUI or OS dependencies, and the sche
 
 | Crate | Role | Depends on |
 | :--- | :--- | :--- |
-| `linotype` | Umbrella crate; re-exports behind feature flags | all |
-| `linotype-core` | Block tree, schema, commands, selection, local undo, sync updates, awareness, Markdown | `loro`, `pulldown-cmark` |
-| `linotype-ui` | GPUI editor and built-in blocks | `core`, `gpui-component` |
-| `linotype-code` | Syntax highlighting for code blocks | `core`, `ui` (feature `gpui`) |
-| `linotype-math` | LaTeX blocks and inline math | `core`, `katex-rs`, `katex-native`, `ui` (feature `gpui`) |
-| `linotype-diagram` | Mermaid diagram blocks | `core`, `bezel-mermaid`, `ui` (feature `gpui`) |
-| `linotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum` |
-| `linotype-storage` | SQLite snapshots, debounced auto-save, migrator for legacy Tiptap/BlockNote JSON | `core`, `tokio` |
-| `linotype-ai` | Selection prompt, multi-turn chat, LLM provider trait | `core`, `tokio` |
+| `lotype` | Umbrella crate; re-exports behind feature flags | all |
+| `lotype-core` | Block tree, schema, commands, selection, local undo, sync updates, awareness, Markdown | `loro`, `pulldown-cmark` |
+| `lotype-ui` | GPUI editor and built-in blocks | `core`, `gpui-component` |
+| `lotype-code` | Syntax highlighting for code blocks | `core`, `ui` (feature `gpui`) |
+| `lotype-math` | LaTeX blocks and inline math | `core`, `katex-rs`, `katex-native`, `ui` (feature `gpui`) |
+| `lotype-diagram` | Mermaid diagram blocks | `core`, `bezel-mermaid`, `ui` (feature `gpui`) |
+| `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum` |
+| `lotype-storage` | SQLite snapshots, debounced auto-save, migrator for legacy Tiptap/BlockNote JSON | `core`, `tokio` |
+| `lotype-ai` | Selection prompt, multi-turn chat, LLM provider trait | `core`, `tokio` |
 | `app` (binary) | Reference application that wires Tokio and GPUI together | all |
 
 All dependencies point towards `core`. `core` never depends on GPUI, Tokio or any OS API.
@@ -88,12 +88,12 @@ All dependencies point towards `core`. `core` never depends on GPUI, Tokio or an
 ```mermaid
 flowchart TD
     APP["app (reference binary)"]
-    UI["linotype-ui<br/>GPUI • gpui-component"]
-    BLOCKS["linotype-code • math • diagram<br/>BlockSpec + BlockView (feature gpui)"]
-    SERVER["linotype-server<br/>Axum WebSocket"]
-    STORAGE["linotype-storage<br/>SQLite • migrator"]
-    AI["linotype-ai<br/>LlmProvider • Loro fork/diff"]
-    CORE["linotype-core<br/>Loro • WYSIWYM • collaboration"]
+    UI["lotype-ui<br/>GPUI • gpui-component"]
+    BLOCKS["lotype-code • math • diagram<br/>BlockSpec + BlockView (feature gpui)"]
+    SERVER["lotype-server<br/>Axum WebSocket"]
+    STORAGE["lotype-storage<br/>SQLite • migrator"]
+    AI["lotype-ai<br/>LlmProvider • Loro fork/diff"]
+    CORE["lotype-core<br/>Loro • WYSIWYM • collaboration"]
 
     APP --> UI & BLOCKS & STORAGE
     APP -.-> SERVER & AI
@@ -111,9 +111,9 @@ flowchart TD
 
 ## 3. Core / UI boundary
 
-**Rule:** if it can be tested without a window, it belongs in `linotype-core`. If it needs pixels, the OS or GPUI events, it belongs in `linotype-ui`.
+**Rule:** if it can be tested without a window, it belongs in `lotype-core`. If it needs pixels, the OS or GPUI events, it belongs in `lotype-ui`.
 
-| `linotype-core` (no pixels, synchronous) | `linotype-ui` (GPUI) |
+| `lotype-core` (no pixels, synchronous) | `lotype-ui` (GPUI) |
 | :--- | :--- |
 | Block tree (`LoroTree`) with inline content (`LoroText`) and marks | Block rendering, text layout (`TextRun` from marks), virtual list |
 | Schema registry: `BlockSpec`, `InlineSpec`, `MarkSpec` | `BlockView` per block type |
@@ -131,7 +131,7 @@ A custom block is a `BlockSpec` in core plus a `BlockView` in ui.
 
 ---
 
-## 4. Document model (`linotype-core`)
+## 4. Document model (`lotype-core`)
 
 Built on `loro` 1.18. The APIs below were checked in the crate source:
 
@@ -149,7 +149,7 @@ Built on `loro` 1.18. The APIs below were checked in the crate source:
 Design decisions:
 
 - **Blocks** are `LoroTree` nodes, so every block has a native ID (`TreeID`) with no patching. Each block's inline content is a `LoroText`, and its attributes are a `LoroMap`.
-- **Positions** are `Pos { block: BlockId, offset: usize }`. Offsets are UTF-8 bytes, and positions are stored as `loro::Cursor` so they survive remote edits. Conversion to UTF-16 happens only at the IME boundary in `linotype-ui`.
+- **Positions** are `Pos { block: BlockId, offset: usize }`. Offsets are UTF-8 bytes, and positions are stored as `loro::Cursor` so they survive remote edits. Conversion to UTF-16 happens only at the IME boundary in `lotype-ui`.
 - **Undo** is local-only (`loro::UndoManager`), so a user undoes only their own edits. `prosemirror-history` is not ported.
 - **Tables** use a grid model so concurrent edits merge cleanly:
   ```text
@@ -167,7 +167,7 @@ Design decisions:
 
 ---
 
-## 5. UI layer (`linotype-ui`)
+## 5. UI layer (`lotype-ui`)
 
 - **GPUI.** `gpui-component` 0.10.0 depends on `gpui-pre = "=0.3.12"`. This is a GPUI snapshot republished by the gpui-component maintainer, not by the Zed team.
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`.
@@ -180,10 +180,10 @@ Blocks are split into crates the same way BlockNote splits its packages. Every b
 
 | Crate | Contents | Renderer |
 | :--- | :--- | :--- |
-| `linotype-ui` | Blocks: Paragraph, Heading, Quote, Alert, Bullet/Numbered/Check/Toggle list, Code (plain), Table, Image, File, Divider, PageBreak<br/>Styles: bold, italic, underline, strike, code, text color, background color<br/>Inline: text, link | `text_el` |
-| `linotype-code` | Syntax highlighting | gpui-component `highlighter` |
-| `linotype-math` | Block and inline LaTeX | `katex-rs` + `katex-native` |
-| `linotype-diagram` | Mermaid diagrams | `bezel-mermaid` |
+| `lotype-ui` | Blocks: Paragraph, Heading, Quote, Alert, Bullet/Numbered/Check/Toggle list, Code (plain), Table, Image, File, Divider, PageBreak<br/>Styles: bold, italic, underline, strike, code, text color, background color<br/>Inline: text, link | `text_el` |
+| `lotype-code` | Syntax highlighting | gpui-component `highlighter` |
+| `lotype-math` | Block and inline LaTeX | `katex-rs` + `katex-native` |
+| `lotype-diagram` | Mermaid diagrams | `bezel-mermaid` |
 
 Math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `LoroText`. They can be edited collaboratively, and the renderer can be swapped without migrating documents.
 
@@ -207,9 +207,9 @@ Math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `Lor
 
 ---
 
-## 6. Collaboration (`linotype-server`)
+## 6. Collaboration (`lotype-server`)
 
-`linotype-server` is a library: an Axum router that the consumer mounts in their own server and hosts themselves. Linotype does not issue tokens; it calls consumer-provided hooks:
+`lotype-server` is a library: an Axum router that the consumer mounts in their own server and hosts themselves. Lotype does not issue tokens; it calls consumer-provided hooks:
 
 ```rust
 trait Authorizer {
@@ -217,7 +217,7 @@ trait Authorizer {
 }
 enum Access { Read, Write }
 
-trait DocStore { // default implementation: linotype-storage
+trait DocStore { // default implementation: lotype-storage
     async fn load(&self, doc_id: &DocId) -> Result<Option<Vec<u8>>>;
     async fn append_update(&self, doc_id: &DocId, update: &[u8]) -> Result<()>;
 }
@@ -227,7 +227,7 @@ The server **rejects updates from clients with `Read` access**, because clients 
 
 ---
 
-## 7. AI (`linotype-ai`)
+## 7. AI (`lotype-ai`)
 
 There are two entry points:
 
@@ -274,7 +274,7 @@ Consumers bring their own provider and API keys.
 
 ### 7.3 Split
 
-| `linotype-ai` (no GPUI, runs in Linux CI) | `linotype-ui` |
+| `lotype-ai` (no GPUI, runs in Linux CI) | `lotype-ui` |
 | :--- | :--- |
 | `AiSession`, state machine, multi-turn history | Selection prompt (formatting toolbar, `/ai`) |
 | `DocumentState`, tool schema from `BlockSpec` | Chat panel |
@@ -326,19 +326,19 @@ CI runs from alpha onwards, on a Linux runner. `core`, `storage`, `server`, `ai`
 
 ```text
 cargo fmt --check
-cargo clippy --workspace --exclude linotype-ui --exclude linotype -- -D warnings
-cargo test   --workspace --exclude linotype-ui --exclude linotype
+cargo clippy --workspace --exclude lotype-ui --exclude lotype -- -D warnings
+cargo test   --workspace --exclude lotype-ui --exclude lotype
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `linotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `lotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
 
 ---
 
 ## 9. Workspace layout
 
 ```text
-linotype/
+lotype/
 ├── Cargo.toml
 ├── ARCHITECTURE.md
 ├── assets/                 # Fonts, SVG icons, GPUI themes
@@ -364,9 +364,9 @@ linotype/
     │   ├── components/     # slash_menu, formatting_toolbar, link_toolbar, side_menu, table,
     │   │                   # collab_cursors, ai_prompt, ai_panel, ai_review
     │   └── test_support/
-    ├── code/               # linotype-code
-    ├── math/               # linotype-math
-    ├── diagram/            # linotype-diagram
+    ├── code/               # lotype-code
+    ├── math/               # lotype-math
+    ├── diagram/            # lotype-diagram
     ├── server/src/         # router.rs, auth.rs, store.rs
     ├── storage/src/        # sqlite.rs, debouncer.rs, migrator.rs
     └── ai/src/             # provider.rs, session.rs, store.rs, context.rs, tools.rs,
@@ -399,7 +399,7 @@ license = "MIT OR Apache-2.0"
 description = "A native Rust block-based document SDK: WYSIWYM engine with realtime collaboration (Loro) and a GPUI WYSIWYG editor."
 homepage = "https://lotype.dev"
 documentation = "https://docs.lotype.dev"
-repository = "https://github.com/lotype/linotype"
+repository = "https://github.com/lotype/lotype"
 keywords = ["editor", "wysiwyg", "wysiwym", "gpui", "crdt"]
 categories = ["text-editors", "gui", "asynchronous"]
 

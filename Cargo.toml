@@ -10,7 +10,7 @@ rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 homepage = "https://lotype.dev"
 documentation = "https://docs.lotype.dev"
-repository = "https://github.com/lotype/linotype"
+repository = "https://github.com/lotype/lotype"
 keywords = ["editor", "wysiwyg", "wysiwym", "gpui", "crdt"]
 categories = ["text-editors", "gui", "asynchronous"]
 

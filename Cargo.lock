@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "linotype-core"
+name = "lotype-core"
 version = "0.1.0-alpha.0"

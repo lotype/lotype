@@ -1,5 +1,5 @@
 [package]
-name = "linotype-core"
+name = "lotype-core"
 description = "Headless WYSIWYM document engine with realtime collaboration, built on Loro."
 version.workspace = true
 edition.workspace = true
