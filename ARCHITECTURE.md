@@ -156,7 +156,9 @@ Design decisions:
   - Marks outside the schema stay readable. Split, merge and range delete copy text and attributes as stored, so unknown marks and values survive.
   - Tree walks use an explicit stack, never recursion.
 - **Nesting is capped at `MAX_DEPTH` (128 levels).** Deeper blocks sent by another peer stay in the shared data but are not part of the document: no method returns them, and local edits cannot create them. The cap bounds every ancestor walk, which keeps reads linear however deep a peer nests.
-- **Undo** is local-only (`loro::UndoManager`), so a user undoes only their own edits. `prosemirror-history` is not ported.
+- **Undo** is local-only (`loro::UndoManager`). Consecutive typing shares one step until a keystroke starts a word after whitespace. Consecutive Backspace or Delete presses within a block share a step by direction. Changing the selection, toggling a mark or running another command ends the current step.
+- **Pending marks.** Toggling a mark on a caret sets the formatting for subsequent typing until the selection changes or another editing command runs. By default the editor uses the marks shared by the neighboring characters and the marks whose expand rules reach the caret. If both sides expand a mark with different values, the preceding value wins. `Editor::active_marks` reports the formatting for the next insertion at a caret or the shared formatting across a text selection.
+- **Characters.** Backspace and Delete remove a whole grapheme cluster, including when the caret is between two scalars in that cluster. With a selection they delete the selection. At a block boundary they use a separate undo step for the structural edit.
 - **Tables** use a grid model so concurrent edits merge cleanly:
   ```text
   table block
@@ -356,9 +358,11 @@ lotype/
     │   ├── document.rs     # LoroDoc wrapper: block tree, types, attributes
     │   ├── order.rs        # Document order: traversal, paths
     │   ├── text.rs         # Rich text and marks
+    │   ├── marks.rs        # Marks in effect at a position and over a range
     │   ├── selection.rs    # Pos, Selection
     │   ├── commands.rs     # Split, merge, range delete, marks across blocks
-    │   ├── editor.rs       # Editor: selection + local undo
+    │   ├── editor.rs       # Editor: selection, undo steps, pending marks
+    │   ├── editor/typing.rs  # Typing and deleting runs, grapheme deletes
     │   ├── value.rs, error.rs
     │   ├── test_support.rs # [feature "test-support"]
     │   │   # planned:
@@ -452,7 +456,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | Offset unit of GPUI `TextRun` (assumed to be UTF-8 bytes) | Verify in the `gpui-pre` source |
 | Builder markers `<a>`/`<b>` clash with literal `<a>`/`<b>` in test text | Accepted: test-only; write such text through the document API instead |
 | `heapless` 0.7/0.8 (pulled in by `loro`) has unsoundness advisories fixed only in 0.9.4. Loro and `postcard` use just `heapless::Vec`/`String`; the one advisory touching those (`vec::IntoIter` drop) needs an element whose `Drop` panics, which Loro's elements do not | Accepted; goes away when Loro moves to heapless 0.9 |
-| Typing is one undo step per call, and toggling a mark on a caret does nothing (no pending marks) | Add coalescing and pending marks with the UI milestone |
+| The core uses whitespace boundaries to group typing and has no clock for pause detection | The UI can end a run by setting the selection again |
 | Every editor command walks all blocks once to record the selection for undo, so its cost grows with document size | Acceptable now; revisit with the performance milestone |
 | A split or merge is delete + insert in the CRDT, so a concurrent edit to the moved text can be lost | Accepted; inherent without a native split operation |
 | Content only a peer with another schema can create is kept but not fully understood: a mark outside the local schema keeps its value when text moves but then follows the local default expand rule (none), and an attribute that is itself a container is not copied to the new block on split | Accepted; revisit with schema negotiation in the collaboration milestone |
