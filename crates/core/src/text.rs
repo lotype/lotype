@@ -51,6 +51,9 @@ impl Document {
         for name in spans.iter().flat_map(|span| span.marks.keys()) {
             self.mark_spec(name)?;
         }
+        if spans.is_empty() {
+            return Ok(());
+        }
         let mut delta = Vec::with_capacity(spans.len() + 1);
         if offset > 0 {
             delta.push(TextDelta::Retain {
@@ -115,7 +118,7 @@ impl Document {
         self.raw_text(block)
     }
 
-    fn mark_spec(&self, name: &str) -> Result<()> {
+    pub(crate) fn mark_spec(&self, name: &str) -> Result<()> {
         match self.schema().mark_spec(name) {
             Some(_) => Ok(()),
             None => Err(Error::UnknownMark(name.to_owned())),
