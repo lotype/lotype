@@ -47,29 +47,42 @@ impl Document {
     pub fn insert_spans(&mut self, block: BlockId, offset: usize, spans: &[Span]) -> Result<()> {
         let text = self.inline(block)?;
         let offset = unicode_offset(&text, offset)?;
-        // Checked up front: a failing delta would be applied halfway.
         for name in spans.iter().flat_map(|span| span.marks.keys()) {
             self.mark_spec(name)?;
         }
-        if spans.is_empty() {
-            return Ok(());
+        let inserts = spans.iter().map(|span| TextDelta::Insert {
+            insert: span.text.clone(),
+            attributes: Some(
+                span.marks
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.to_loro()))
+                    .collect(),
+            ),
+        });
+        insert_delta(&text, offset, inserts.collect())
+    }
+
+    /// Copies a range of text to another place as stored, including marks
+    /// that are not in the schema and mark values [`Value`] cannot hold.
+    pub(crate) fn copy_text(
+        &mut self,
+        from: BlockId,
+        range: Range<usize>,
+        to: BlockId,
+        offset: usize,
+    ) -> Result<()> {
+        let source = self.inline(from)?;
+        let range = unicode_range(&source, range)?;
+        let target = self.inline(to)?;
+        let offset = unicode_offset(&target, offset)?;
+        let mut delta = source.slice_delta(range.start, range.end, PosType::Unicode)?;
+        // Without attributes an insert would take on the marks around it.
+        for item in &mut delta {
+            if let TextDelta::Insert { attributes, .. } = item {
+                attributes.get_or_insert_default();
+            }
         }
-        let mut delta = Vec::with_capacity(spans.len() + 1);
-        if offset > 0 {
-            delta.push(TextDelta::Retain {
-                retain: offset,
-                attributes: None,
-            });
-        }
-        for span in spans {
-            let marks = span.marks.iter();
-            delta.push(TextDelta::Insert {
-                insert: span.text.clone(),
-                attributes: Some(marks.map(|(k, v)| (k.clone(), v.to_loro())).collect()),
-            });
-        }
-        text.apply_delta(&delta)?;
-        Ok(())
+        insert_delta(&target, offset, delta)
     }
 
     pub fn delete_text(&mut self, block: BlockId, range: Range<usize>) -> Result<()> {
@@ -126,6 +139,21 @@ impl Document {
     }
 }
 
+fn insert_delta(text: &LoroText, offset: usize, inserts: Vec<TextDelta>) -> Result<()> {
+    if inserts.is_empty() {
+        return Ok(());
+    }
+    let mut delta = Vec::with_capacity(inserts.len() + 1);
+    if offset > 0 {
+        delta.push(TextDelta::Retain {
+            retain: offset,
+            attributes: None,
+        });
+    }
+    delta.extend(inserts);
+    Ok(text.apply_delta(&delta)?)
+}
+
 fn to_spans(delta: Vec<TextDelta>) -> Vec<Span> {
     let mut spans = Vec::with_capacity(delta.len());
     for item in delta {
@@ -143,9 +171,9 @@ fn to_spans(delta: Vec<TextDelta>) -> Vec<Span> {
 
 fn unicode_range(text: &LoroText, range: Range<usize>) -> Result<Range<usize>> {
     if range.start > range.end {
-        return Err(Error::OutOfBounds {
-            index: range.start,
-            len: range.end,
+        return Err(Error::InvalidRange {
+            start: range.start,
+            end: range.end,
         });
     }
     Ok(unicode_offset(text, range.start)?..unicode_offset(text, range.end)?)

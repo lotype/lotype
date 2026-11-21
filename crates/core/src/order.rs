@@ -1,28 +1,34 @@
 use loro::{TreeID, TreeParentId};
 
-use crate::{BlockId, Document, Error, Result};
+use crate::{BlockId, Document, Error, MAX_DEPTH, Result};
 
 /// Document order: a block comes before its children, which come before its next sibling.
 ///
-/// Each method checks liveness once, for the block it is given. Ancestors and
-/// children of a live block are live, so the walks themselves skip the check.
+/// Each method checks the block it is given once. Ancestors and children of a
+/// block in the document are in it too, so the walks themselves skip the check.
 impl Document {
     /// Every block, in document order.
     pub fn blocks(&self) -> Vec<BlockId> {
         let mut ordered = Vec::new();
-        let mut stack = self.child_ids(TreeParentId::Root);
-        stack.reverse();
         // An explicit stack: nesting depth is controlled by remote peers.
-        while let Some(id) = stack.pop() {
+        let mut stack = Vec::new();
+        let roots = self.child_ids(TreeParentId::Root);
+        stack.extend(roots.into_iter().rev().map(|id| (id, 1)));
+        while let Some((id, depth)) = stack.pop() {
             ordered.push(BlockId(id));
-            stack.extend(self.child_ids(TreeParentId::Node(id)).into_iter().rev());
+            if depth < MAX_DEPTH {
+                let children = self.child_ids(TreeParentId::Node(id));
+                stack.extend(children.into_iter().rev().map(|child| (child, depth + 1)));
+            }
         }
         ordered
     }
 
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {
-        let mut current = self.live(block)?;
-        if let Some(first_child) = self.child_ids(TreeParentId::Node(current)).first() {
+        let mut current = block.0;
+        if self.depth(block)? < MAX_DEPTH
+            && let Some(first_child) = self.child_ids(TreeParentId::Node(current)).first()
+        {
             return Ok(Some(BlockId(*first_child)));
         }
         loop {
@@ -38,7 +44,8 @@ impl Document {
     }
 
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
-        let (parent, siblings, index) = self.siblings(self.live(block)?)?;
+        let mut depth = self.depth(block)?;
+        let (parent, siblings, index) = self.siblings(block.0)?;
         if index == 0 {
             return Ok(match parent {
                 TreeParentId::Node(parent) => Some(BlockId(parent)),
@@ -46,8 +53,11 @@ impl Document {
             });
         }
         let mut current = siblings[index - 1];
-        while let Some(last_child) = self.child_ids(TreeParentId::Node(current)).last() {
+        while depth < MAX_DEPTH
+            && let Some(last_child) = self.child_ids(TreeParentId::Node(current)).last()
+        {
             current = *last_child;
+            depth += 1;
         }
         Ok(Some(BlockId(current)))
     }
@@ -73,19 +83,7 @@ impl Document {
         Ok(path)
     }
 
-    /// The block at `path`, as returned by [`Document::path`].
-    pub fn block_at(&self, path: &[usize]) -> Option<BlockId> {
-        let mut parent = TreeParentId::Root;
-        for index in path {
-            parent = TreeParentId::Node(*self.child_ids(parent).get(*index)?);
-        }
-        match parent {
-            TreeParentId::Node(id) => Some(BlockId(id)),
-            _ => None,
-        }
-    }
-
-    /// The parent of a live block, its children, and the block's index among them.
+    /// The parent of a block in the document, its children, and the block's index among them.
     fn siblings(&self, id: TreeID) -> Result<(TreeParentId, Vec<TreeID>, usize)> {
         let parent = self.tree.parent(id).ok_or(Error::BlockNotFound)?;
         let siblings = self.child_ids(parent);

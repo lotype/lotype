@@ -1,4 +1,4 @@
-use lotype_core::{BlockId, Document, Error, Schema, Value};
+use lotype_core::{BlockId, Document, Error, MAX_DEPTH, Schema, Value};
 
 fn doc() -> Document {
     Document::new(Schema::builtin())
@@ -132,6 +132,15 @@ fn changes_block_type() {
         Err(Error::ChildrenNotAllowed(_))
     ));
     assert_eq!(doc.block_type(parent).unwrap(), "paragraph");
+
+    let text = paragraph(&mut doc, None, 2);
+    doc.insert_text(text, 0, "words").unwrap();
+    assert!(matches!(
+        doc.set_block_type(text, "divider"),
+        Err(Error::TextNotAllowed(name)) if name == "divider"
+    ));
+    doc.delete_text(text, 0..5).unwrap();
+    doc.set_block_type(text, "divider").unwrap();
 }
 
 #[test]
@@ -209,12 +218,48 @@ fn paths_sort_in_document_order() {
 }
 
 #[test]
-fn deep_nesting_does_not_overflow_the_stack() {
+fn nesting_stops_at_max_depth() {
     let mut doc = doc();
-    let mut parent = None;
-    for _ in 0..1_000 {
-        parent = Some(paragraph(&mut doc, parent, 0));
+    let mut chain = Vec::new();
+    for _ in 0..MAX_DEPTH {
+        chain.push(paragraph(&mut doc, chain.last().copied(), 0));
     }
-    assert_eq!(doc.blocks().len(), 1_000);
-    assert_eq!(doc.path(parent.unwrap()).unwrap().len(), 1_000);
+    let deepest = *chain.last().unwrap();
+    assert!(matches!(
+        doc.insert_block(Some(deepest), 0, "paragraph"),
+        Err(Error::TooDeep)
+    ));
+    assert_eq!(doc.blocks().len(), MAX_DEPTH);
+    assert_eq!(doc.path(deepest).unwrap().len(), MAX_DEPTH);
+
+    let pair = paragraph(&mut doc, None, 1);
+    let child = paragraph(&mut doc, Some(pair), 0);
+    assert!(matches!(
+        doc.move_block(pair, Some(chain[MAX_DEPTH - 2]), 0),
+        Err(Error::TooDeep)
+    ));
+    assert!(matches!(
+        doc.move_block(child, Some(deepest), 0),
+        Err(Error::TooDeep)
+    ));
+    doc.move_block(child, Some(chain[MAX_DEPTH - 2]), 1)
+        .unwrap();
+    doc.move_block(pair, Some(chain[MAX_DEPTH - 3]), 1).unwrap();
+    assert_eq!(doc.children(None).unwrap(), [chain[0]]);
+}
+
+#[test]
+fn a_cyclic_move_is_reported_as_such_even_in_a_tall_tree() {
+    let mut doc = doc();
+    let mut chain = Vec::new();
+    for _ in 0..MAX_DEPTH {
+        chain.push(paragraph(&mut doc, chain.last().copied(), 0));
+    }
+    for target in [chain[0], chain[1], chain[MAX_DEPTH - 2]] {
+        assert!(matches!(
+            doc.move_block(chain[0], Some(target), 0),
+            Err(Error::CyclicMove)
+        ));
+    }
+    assert_eq!(doc.blocks().len(), MAX_DEPTH);
 }

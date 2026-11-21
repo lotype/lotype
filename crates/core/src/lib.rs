@@ -11,10 +11,12 @@ mod schema;
 mod selection;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+#[cfg(test)]
+mod tests;
 mod text;
 mod value;
 
-pub use document::{BlockId, Document};
+pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::Editor;
 pub use error::{Error, Result};
 pub use schema::{BlockSpec, Content, Expand, MarkSpec, Schema};

@@ -14,9 +14,18 @@ pub enum Error {
     NoInlineContent,
     /// The block type named here cannot have child blocks.
     ChildrenNotAllowed(String),
+    /// The block type named here holds no text, but the block has some.
+    TextNotAllowed(String),
+    /// The block would end up nested deeper than [`MAX_DEPTH`](crate::MAX_DEPTH).
+    TooDeep,
     OutOfBounds {
         index: usize,
         len: usize,
+    },
+    /// A range whose start is after its end.
+    InvalidRange {
+        start: usize,
+        end: usize,
     },
     /// A text offset falls inside a UTF-8 character.
     NotCharBoundary(usize),
@@ -36,6 +45,11 @@ impl fmt::Display for Error {
             Self::NoInlineContent => f.write_str("block has no inline content"),
             Self::ChildrenNotAllowed(name) => {
                 write!(f, "block type `{name}` cannot have children")
+            }
+            Self::TextNotAllowed(name) => write!(f, "block type `{name}` cannot hold text"),
+            Self::TooDeep => f.write_str("blocks cannot be nested this deep"),
+            Self::InvalidRange { start, end } => {
+                write!(f, "range start {start} is after its end {end}")
             }
             Self::OutOfBounds { index, len } => {
                 write!(f, "index {index} is out of bounds (len {len})")

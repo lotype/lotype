@@ -78,11 +78,11 @@ fn rejects_out_of_bounds_and_inverted_ranges() {
     ));
     assert!(matches!(
         doc.delete_text(block, 2..1),
-        Err(Error::OutOfBounds { .. })
+        Err(Error::InvalidRange { start: 2, end: 1 })
     ));
     assert!(matches!(
         doc.mark(block, 2..1, "bold", true),
-        Err(Error::OutOfBounds { .. })
+        Err(Error::InvalidRange { .. })
     ));
     assert_eq!(doc.text(block).unwrap(), "abc");
 }

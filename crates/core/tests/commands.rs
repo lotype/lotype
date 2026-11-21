@@ -217,6 +217,32 @@ fn delete_out_of_a_nested_block_keeps_what_comes_after() {
 }
 
 #[test]
+fn delete_keeps_later_siblings_at_every_level_in_order() {
+    let (mut doc, a, b) = setup(blocks![
+        p!["st<a>art"],
+        p![
+            "l1",
+            p!["l2", p!["l3 <b>end", p!["e1"], p!["e2"]], p!["s3"]],
+            p!["s2"]
+        ],
+        p!["s1"],
+    ]);
+    let caret = doc.delete_range(a, b).unwrap();
+    assert_caret(
+        &doc,
+        caret,
+        blocks![
+            p!["st<a>end"],
+            p!["e1"],
+            p!["e2"],
+            p!["s3"],
+            p!["s2"],
+            p!["s1"],
+        ],
+    );
+}
+
+#[test]
 fn delete_rejects_invalid_positions() {
     let (mut doc, _) = build(blocks![p!["é"], p!["b"]]);
     let [first, second] = doc.blocks()[..] else {
@@ -240,6 +266,14 @@ fn toggle_mark_applies_then_removes() {
     assert_document(&doc, None, blocks![p!["a", b!["bc"], "d"]]);
     doc.toggle_mark(b, a, "bold").unwrap();
     assert_document(&doc, None, blocks![p!["abcd"]]);
+}
+
+#[test]
+fn toggle_mark_removes_a_mark_whatever_its_value() {
+    let (mut doc, a, b) = setup(blocks![p!["<a>ab<b>"]]);
+    doc.mark_range(a, b, "link", "https://lotype.dev").unwrap();
+    doc.toggle_mark(a, b, "link").unwrap();
+    assert_document(&doc, None, blocks![p!["ab"]]);
 }
 
 #[test]
