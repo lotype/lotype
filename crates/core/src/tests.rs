@@ -225,6 +225,24 @@ fn a_block_only_takes_a_removed_id_that_nothing_else_claims() {
 }
 
 #[test]
+fn a_claim_that_arrives_without_a_tree_change_takes_effect() {
+    let (mut source, _) = build(blocks![p!["kept"], p!["gone"]]);
+    let [kept, gone] = source.blocks()[..] else {
+        panic!()
+    };
+    source.remove_block(gone).unwrap();
+    let mut doc = Document::new(Schema::builtin());
+    doc.import(&source.export_snapshot().unwrap()).unwrap();
+    assert_eq!(doc.blocks(), [kept]);
+
+    claim(&source, kept, gone);
+    let update = source.export_updates(&doc.version()).unwrap();
+    doc.import(&update).unwrap();
+    assert_eq!(doc.blocks(), [gone]);
+    assert_eq!(doc.text(gone).unwrap(), "kept");
+}
+
+#[test]
 fn moving_a_previously_hidden_claimant_agrees_with_a_peer() {
     let (mut source, _) = build(blocks![p!["root"], p!["gone"]]);
     let [root, gone] = source.blocks()[..] else {

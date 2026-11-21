@@ -1,9 +1,13 @@
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use loro::cursor::{Cursor, PosType, Side};
+use loro::event::Diff;
 use loro::undo::CursorWithPos;
 use loro::{ContainerID, ContainerTrait, ExportMode, TreeID, UndoItemMeta, VersionVector};
 
+use crate::document::ID;
 use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
 /// How much of a document's history a peer has. The default is none of it.
@@ -92,9 +96,23 @@ impl Document {
         if self.draft.is_some() {
             return Err(Error::ImportDuringEdit);
         }
-        let before = self.doc.state_frontiers();
+        // Only the tree and `$id` decide which block has which id. Text,
+        // the bulk of what peers send, leaves the ids as they are.
+        let stale = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&stale);
+        let subscription = self.doc.subscribe_root(Arc::new(move |event| {
+            let ids_changed = event.events.iter().any(|change| match &change.diff {
+                Diff::Tree(_) => true,
+                Diff::Map(map) => map.updated.contains_key(ID),
+                _ => false,
+            });
+            if ids_changed {
+                seen.store(true, Ordering::Relaxed);
+            }
+        }));
         let imported = self.doc.import(update);
-        if self.doc.state_frontiers() != before {
+        drop(subscription);
+        if stale.load(Ordering::Relaxed) {
             self.refresh_ids();
         }
         imported
