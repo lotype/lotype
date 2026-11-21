@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use loro::cursor::{Cursor, PosType, Side};
-use loro::{ContainerID, ContainerTrait, ExportMode, TreeID, VersionVector};
+use loro::undo::CursorWithPos;
+use loro::{ContainerID, ContainerTrait, ExportMode, TreeID, UndoItemMeta, VersionVector};
 
 use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
@@ -31,6 +32,19 @@ pub(crate) struct Anchor {
 }
 
 impl Anchored {
+    /// The endpoints for Loro's undo history, which moves them through the
+    /// changes of other peers until the step is undone.
+    pub(crate) fn history_meta(&self) -> UndoItemMeta {
+        let mut meta = UndoItemMeta::new();
+        if let Self::Text { anchor, head } = self
+            && let (Some(anchor), Some(head)) = (&anchor.cursor, &head.cursor)
+        {
+            meta.add_cursor(anchor);
+            meta.add_cursor(head);
+        }
+        meta
+    }
+
     pub(crate) fn record_import(&mut self, changed_texts: &HashSet<ContainerID>) {
         if let Self::Text { anchor, head } = self {
             for endpoint in [anchor, head] {
@@ -112,10 +126,18 @@ impl Document {
     /// Where the selection is now. A caret whose block is gone has no place,
     /// and neither has a block selection that lost all of its blocks.
     pub(crate) fn resolve(&self, anchored: &Anchored) -> Option<Selection> {
+        self.resolve_history(anchored, &[])
+    }
+
+    pub(crate) fn resolve_history(
+        &self,
+        anchored: &Anchored,
+        cursors: &[CursorWithPos],
+    ) -> Option<Selection> {
         match anchored {
             Anchored::Text { anchor, head } => Some(Selection::Text {
-                anchor: self.resolve_anchor(anchor)?,
-                head: self.resolve_anchor(head)?,
+                anchor: self.resolve_anchor(anchor, cursors.first())?,
+                head: self.resolve_anchor(head, cursors.get(1))?,
             }),
             Anchored::Blocks(blocks) => {
                 let mut seen = HashSet::new();
@@ -166,7 +188,7 @@ impl Document {
         }
     }
 
-    fn resolve_anchor(&self, anchor: &Anchor) -> Option<Pos> {
+    fn resolve_anchor(&self, anchor: &Anchor, restored: Option<&CursorWithPos>) -> Option<Pos> {
         let block = self.resolve_block(&anchor.block)?;
         let text = self.inline(block).ok()?;
         // Undo brings a removed block back with new text, which the cursor
@@ -175,15 +197,28 @@ impl Document {
             .cursor
             .as_ref()
             .filter(|cursor| anchor.moved && cursor.container == text.id());
-        let moved = cursor.and_then(|cursor| {
+        let relative = cursor.and_then(|cursor| {
             let position = self.doc.get_cursor_pos(cursor).ok()?;
-            // A deleted character resolves to its boundary, so only step
-            // past a character if it is still there.
-            let unicode =
-                position.current.pos + usize::from(anchor.after && position.update.is_none());
-            text.convert_pos(unicode, PosType::Unicode, PosType::Bytes)
+            let present = position.update.is_none();
+            Some((
+                position.current.pos + usize::from(anchor.after && present),
+                present,
+            ))
         });
-        let pos = Pos::new(block, moved.unwrap_or(anchor.offset));
+        let unicode = match relative {
+            Some((pos, true)) => Some(pos),
+            _ => restored
+                // The character is gone for good when undo put a copy of it
+                // back. Loro moved the place it was at through what the
+                // other peers changed, which is then inside the copy.
+                .filter(|cursor| anchor.moved && cursor.cursor.container == text.id())
+                .map(|cursor| cursor.pos.pos + usize::from(anchor.after))
+                .or_else(|| relative.map(|(pos, _)| pos)),
+        };
+        let offset = unicode
+            .and_then(|pos| text.convert_pos(pos, PosType::Unicode, PosType::Bytes))
+            .unwrap_or(anchor.offset);
+        let pos = Pos::new(block, offset);
         self.check_pos(pos).ok().map(|()| pos)
     }
 }

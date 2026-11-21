@@ -323,6 +323,54 @@ fn undo_puts_the_selection_where_remote_changes_moved_it() {
 }
 
 #[test]
+fn undo_restores_a_caret_inside_reinserted_unicode_text() {
+    let mut a = editor(blocks![p!["aé<a>🙂z"]]);
+    let mut b = peer(a.document());
+    let block = b.blocks()[0];
+    a.apply(|doc, _| {
+        doc.delete_text(block, 1..7)?;
+        Ok(Some(Selection::caret(Pos::new(block, 1))))
+    })
+    .unwrap();
+    b.insert_text(block, 0, ">").unwrap();
+    sync(&mut a, &mut b);
+
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p![">aé<a>🙂z"]]);
+    assert!(a.redo().unwrap());
+    assert_editor(&a, blocks![p![">a<a>z"]]);
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p![">aé<a>🙂z"]]);
+}
+
+#[test]
+fn an_earlier_undo_step_restores_a_caret_inside_reinserted_text() {
+    let mut a = editor(blocks![p!["ab<a>cd"]]);
+    let mut b = peer(a.document());
+    let block = b.blocks()[0];
+    a.apply(|doc, _| {
+        doc.delete_text(block, 1..3)?;
+        Ok(Some(Selection::caret(Pos::new(block, 1))))
+    })
+    .unwrap();
+    b.insert_text(block, 0, ">").unwrap();
+    sync(&mut a, &mut b);
+    a.apply(|doc, _| {
+        doc.insert_text(block, 3, "X")?;
+        Ok(Some(Selection::caret(Pos::new(block, 4))))
+    })
+    .unwrap();
+
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p![">a<a>d"]]);
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p![">ab<a>cd"]]);
+    assert!(a.redo().unwrap());
+    assert!(a.redo().unwrap());
+    assert_editor(&a, blocks![p![">adX<a>"]]);
+}
+
+#[test]
 fn an_edit_in_a_block_a_peer_removed_is_gone_with_it() {
     let mut a = editor(blocks![p!["keep"], p!["x<a>"]]);
     let mut b = peer(a.document());

@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use loro::{LoroValue, UndoManager};
+use loro::undo::CursorWithPos;
+use loro::{InnerUndoManager, LoroValue, UndoOrRedo};
 
 use crate::collab::Anchored;
 use crate::marks::{TypingMarks, visible_marks};
 use crate::{Document, Error, Pos, Result, Selection, Value};
 
+mod history;
 mod remote;
 mod transaction;
 mod typing;
@@ -22,7 +24,7 @@ pub struct Editor {
     /// The endpoints from the last local text selection. An import may
     /// temporarily collapse a range while its endpoints remain distinct.
     live_anchors: Option<Anchored>,
-    history: UndoManager,
+    history: InnerUndoManager,
     undo_steps: VecDeque<Step>,
     redo_steps: Vec<Step>,
     /// The run of typing or deleting that the next keystroke may extend.
@@ -197,6 +199,8 @@ impl Editor {
         if changed {
             let after = after.as_ref().map(|s| self.doc.anchored(s));
             if new_step {
+                self.history
+                    .set_top_undo_meta(history::meta(before.as_ref()));
                 self.push_undo_step(Step { before, after });
                 self.redo_steps.clear();
             } else if let Some(step) = self.undo_steps.back_mut() {
@@ -331,17 +335,21 @@ impl Editor {
     pub fn undo(&mut self) -> Result<bool> {
         self.finish_edit_group();
         self.pending_marks = None;
-        while !self.undo_steps.is_empty() {
+        while let Some(step) = self.undo_steps.back() {
             // A step with no net effect changes nothing. Go on to the one before it.
-            let changed = match self.history.undo() {
-                Ok(changed) => changed,
+            let after = self.reanchor(step.after.as_ref());
+            let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Undo) {
+                Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
             };
             if let Some(step) = self.undo_steps.pop_back()
                 && changed
             {
-                self.restore(step.before.as_ref());
-                self.redo_steps.push(step);
+                self.restore(step.before.as_ref(), &cursors);
+                self.history
+                    .set_top_redo_meta(history::meta(after.as_ref()));
+                let before = self.selection.as_ref().map(|s| self.doc.anchored(s));
+                self.redo_steps.push(Step { before, after });
                 return Ok(true);
             }
         }
@@ -352,16 +360,20 @@ impl Editor {
     pub fn redo(&mut self) -> Result<bool> {
         self.finish_edit_group();
         self.pending_marks = None;
-        while !self.redo_steps.is_empty() {
-            let changed = match self.history.redo() {
-                Ok(changed) => changed,
+        while let Some(step) = self.redo_steps.last() {
+            let before = self.reanchor(step.before.as_ref());
+            let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Redo) {
+                Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
             };
             if let Some(step) = self.redo_steps.pop()
                 && changed
             {
-                self.restore(step.after.as_ref());
-                self.push_undo_step(step);
+                self.restore(step.after.as_ref(), &cursors);
+                self.history
+                    .set_top_undo_meta(history::meta(before.as_ref()));
+                let after = self.selection.as_ref().map(|s| self.doc.anchored(s));
+                self.push_undo_step(Step { before, after });
                 return Ok(true);
             }
         }
@@ -376,15 +388,20 @@ impl Editor {
     }
 
     /// Sets the selection from a stored one, or clears it when it no longer fits the document.
-    fn restore(&mut self, selection: Option<&Anchored>) {
+    fn restore(&mut self, selection: Option<&Anchored>, cursors: &[CursorWithPos]) {
         self.doc.refresh_ids();
-        self.selection = selection.and_then(|anchored| self.doc.resolve(anchored));
+        self.selection = selection.and_then(|anchored| self.doc.resolve_history(anchored, cursors));
         self.live_anchors = None;
+    }
+
+    fn reanchor(&self, selection: Option<&Anchored>) -> Option<Anchored> {
+        let selection = self.doc.resolve(selection?)?;
+        Some(self.doc.anchored(&selection))
     }
 }
 
-fn new_history(doc: &Document) -> UndoManager {
-    let mut history = UndoManager::new(&doc.doc);
+fn new_history(doc: &Document) -> InnerUndoManager {
+    let history = InnerUndoManager::new(doc.doc.inner());
     // One more than the editor offers: Loro makes room for a step as it
     // records it, and a failed step that is rolled back must not cost a real one.
     history.set_max_undo_steps(MAX_UNDO_STEPS + 1);
