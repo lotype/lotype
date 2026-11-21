@@ -1,0 +1,162 @@
+use unicode_segmentation::GraphemeCursor;
+
+use super::{Editor, text_selection};
+use crate::{Document, Pos, Result, Selection};
+
+/// Consecutive typing or deleting that undoes as one step.
+pub(super) struct Run {
+    kind: Kind,
+    /// Where the run left the caret. The next keystroke extends the run only from here.
+    caret: Pos,
+    ends_with_space: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Insert,
+    DeleteBackward,
+    DeleteForward,
+}
+
+impl Editor {
+    /// Replaces the selected text with `text`.
+    ///
+    /// Text typed in sequence undoes one word at a time: a run of calls is one
+    /// undo step until a word starts after whitespace, or anything else happens.
+    pub fn insert_text(&mut self, text: &str) -> Result<()> {
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        let starts_word = text.chars().next().is_some_and(|c| !c.is_whitespace());
+        let extends = anchor == head
+            && self.extends(Kind::Insert, head)
+            && !(starts_word && self.run.as_ref().is_some_and(|run| run.ends_with_space));
+        let marks = self.pending_marks.clone();
+        self.run_step(Kind::Insert, extends, text, |doc| {
+            let caret = doc.delete_range(anchor, head)?;
+            doc.insert_typed(caret, text, marks)?;
+            Ok(Pos::new(caret.block, caret.offset + text.len()))
+        })
+    }
+
+    /// Deletes the selection, or the character before the caret, as Backspace
+    /// does. At the start of a block it joins the block onto the one before it.
+    pub fn delete_backward(&mut self) -> Result<()> {
+        self.delete_character(Kind::DeleteBackward)
+    }
+
+    /// Deletes the selection, or the character after the caret, as Delete
+    /// does. At the end of a block it joins the next block onto this one.
+    pub fn delete_forward(&mut self) -> Result<()> {
+        self.delete_character(Kind::DeleteForward)
+    }
+
+    fn delete_character(&mut self, kind: Kind) -> Result<()> {
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|sel| !sel.is_collapsed())
+        {
+            return self.delete_selection();
+        }
+        let (_, head) = text_selection(self.selection.as_ref())?;
+        self.pending_marks = None;
+        match kind {
+            Kind::DeleteBackward if head.offset == 0 => self.join_backward(),
+            Kind::DeleteForward if head.offset == self.doc.text_len(head.block)? => {
+                self.apply(|doc, selection| {
+                    join_forward(doc, head.block)?;
+                    Ok(selection.cloned())
+                })
+            }
+            _ => self.delete_grapheme(head, kind),
+        }
+    }
+
+    fn delete_grapheme(&mut self, head: Pos, kind: Kind) -> Result<()> {
+        let extends = self.extends(kind, head);
+        self.run_step(kind, extends, "", |doc| {
+            doc.check_pos(head)?;
+            let text = doc.text(head.block)?;
+            let cursor = || GraphemeCursor::new(head.offset, text.len(), true);
+            // A scalar boundary inside a grapheme is a valid caret position.
+            // Use the whole text so either key can remove the whole grapheme.
+            let at_boundary = cursor().is_boundary(&text, 0).expect("full text provided");
+            let start = if at_boundary && kind == Kind::DeleteForward {
+                head.offset
+            } else {
+                cursor()
+                    .prev_boundary(&text, 0)
+                    .expect("full text provided")
+                    .unwrap_or(0)
+            };
+            let end = if at_boundary && kind == Kind::DeleteBackward {
+                head.offset
+            } else {
+                cursor()
+                    .next_boundary(&text, 0)
+                    .expect("full text provided")
+                    .unwrap_or(text.len())
+            };
+            doc.delete_text(head.block, start..end)?;
+            Ok(Pos::new(head.block, start))
+        })
+    }
+
+    /// Closes the open run, so the next keystroke starts a new undo step.
+    pub(super) fn end_run(&mut self) {
+        if self.run.take().is_some() {
+            self.history.group_end();
+        }
+    }
+
+    fn extends(&self, kind: Kind, caret: Pos) -> bool {
+        matches!(&self.run, Some(run) if run.kind == kind && run.caret == caret)
+    }
+
+    /// Runs one keystroke's edit, which returns the new caret, and keeps its
+    /// undo step open as a run. `typed` is the text the keystroke inserted.
+    fn run_step(
+        &mut self,
+        kind: Kind,
+        extends: bool,
+        typed: &str,
+        edit: impl FnOnce(&mut Document) -> Result<Pos>,
+    ) -> Result<()> {
+        let mut caret = None;
+        let result = self.step(extends, |doc, _| {
+            let pos = edit(doc)?;
+            caret = Some(pos);
+            Ok(Some(Selection::caret(pos)))
+        });
+        match (result, caret) {
+            (Ok(true), Some(caret)) => {
+                let ends_with_space = typed.chars().next_back().is_some_and(char::is_whitespace);
+                self.run = Some(Run {
+                    kind,
+                    caret,
+                    ends_with_space,
+                });
+                Ok(())
+            }
+            (result, _) => {
+                // Nothing changed or the edit failed: nothing to extend later.
+                self.run = None;
+                self.history.group_end();
+                result.map(drop)
+            }
+        }
+    }
+}
+
+/// Joins the block after `block` onto it. A textless block there is removed
+/// instead, unless it has children.
+fn join_forward(doc: &mut Document, block: crate::BlockId) -> Result<()> {
+    let Some(next) = doc.next_block(block)? else {
+        return Ok(());
+    };
+    if doc.text_len(next).is_ok() {
+        doc.merge_backward(next)?;
+    } else if doc.children(Some(next))?.is_empty() {
+        doc.remove_block(next)?;
+    }
+    Ok(())
+}

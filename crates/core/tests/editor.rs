@@ -195,13 +195,14 @@ fn history_is_capped() {
     let mut ed = editor(blocks![p!["<a>"]]);
     for _ in 0..105 {
         ed.insert_text("x").unwrap();
+        ed.insert_text(" ").unwrap();
     }
     let mut undone = 0;
     while ed.undo().unwrap() {
         undone += 1;
     }
     assert_eq!(undone, 100);
-    assert_editor(&ed, blocks![p!["xxxxx<a>"]]);
+    assert_editor(&ed, blocks![p!["x x x x x <a>"]]);
 }
 
 #[test]

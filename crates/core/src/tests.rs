@@ -7,7 +7,7 @@ use loro::TreeParentId;
 
 use crate::document::TYPE;
 use crate::test_support::{assert_document, build, outline};
-use crate::{BlockId, Document, Error, MAX_DEPTH, Pos, b, blocks, p};
+use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Selection, b, blocks, p};
 
 fn highlight(doc: &Document, block: BlockId, range: Range<usize>) {
     let text = doc.raw_text(block).unwrap();
@@ -72,6 +72,38 @@ fn merge_and_delete_work_around_unknown_marks() {
     doc.mark(one, 0..8, "bold", true).unwrap();
     doc.unmark(one, 0..8, "bold").unwrap();
     assert_eq!(doc.text(one).unwrap(), "onetXree");
+}
+
+#[test]
+fn typing_with_pending_marks_keeps_inherited_foreign_values() {
+    let (mut doc, _) = build(blocks![p!["ab"]]);
+    let block = doc.blocks()[0];
+    highlight(&doc, block, 0..2);
+    doc.commit();
+
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(block, 1))))
+        .unwrap();
+    editor.toggle_mark("bold").unwrap();
+    editor.insert_text("x").unwrap();
+    let delta = editor
+        .document()
+        .raw_text(block)
+        .unwrap()
+        .slice_delta(1, 2, loro::cursor::PosType::Unicode)
+        .unwrap();
+    let [
+        loro::TextDelta::Insert {
+            attributes: Some(attrs),
+            ..
+        },
+    ] = delta.as_slice()
+    else {
+        panic!("expected one marked insert");
+    };
+    assert_eq!(attrs.get("highlight"), Some(&0.5.into()));
+    assert_eq!(attrs.get("bold"), Some(&true.into()));
 }
 
 #[test]

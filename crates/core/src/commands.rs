@@ -169,7 +169,7 @@ impl Document {
     }
 
     /// The non-empty text ranges between two positions, one per block.
-    fn segments(&self, a: Pos, b: Pos) -> Result<Vec<(BlockId, Range<usize>)>> {
+    pub(crate) fn segments(&self, a: Pos, b: Pos) -> Result<Vec<(BlockId, Range<usize>)>> {
         let (start, end) = self.ordered(a, b)?;
         let mut segments = Vec::new();
         if start.block == end.block {

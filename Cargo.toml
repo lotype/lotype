@@ -16,3 +16,4 @@ categories = ["text-editors", "gui", "asynchronous"]
 
 [workspace.dependencies]
 loro = "1.18.0"
+unicode-segmentation = "1.13.3"

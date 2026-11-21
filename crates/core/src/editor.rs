@@ -1,8 +1,11 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use loro::UndoManager;
+use loro::{LoroValue, UndoManager};
 
-use crate::{BlockId, Document, Error, Pos, Result, Selection};
+use crate::marks::{TypingMarks, visible_marks};
+use crate::{BlockId, Document, Error, Pos, Result, Selection, Value};
+
+mod typing;
 
 const MAX_UNDO_STEPS: usize = 100;
 
@@ -16,6 +19,11 @@ pub struct Editor {
     history: UndoManager,
     undo_steps: VecDeque<Step>,
     redo_steps: Vec<Step>,
+    /// The run of typing or deleting that the next keystroke may extend.
+    /// While it is set, its undo step is still open.
+    run: Option<typing::Run>,
+    /// Marks the next typed text gets instead of those around the caret.
+    pending_marks: Option<TypingMarks>,
 }
 
 /// The selection around one undo step.
@@ -34,21 +42,23 @@ enum Anchor {
     Blocks(Vec<usize>),
 }
 
-/// Closes the undo step when dropped. If the edit panicked, the document
-/// keeps whatever the edit did, and the history and selection, which can no
-/// longer be trusted to match it, are cleared.
+/// Commits the edit when dropped. If the edit panicked, the document keeps
+/// whatever the edit did, and the history and selection, which can no longer
+/// be trusted to match it, are cleared.
 struct OpenStep<'a>(&'a mut Editor);
 
 impl Drop for OpenStep<'_> {
     fn drop(&mut self) {
         let editor = &mut *self.0;
         editor.doc.commit();
-        editor.history.group_end();
         if std::thread::panicking() {
+            editor.history.group_end();
             editor.history.clear();
             editor.undo_steps.clear();
             editor.redo_steps.clear();
             editor.selection = None;
+            editor.run = None;
+            editor.pending_marks = None;
         }
     }
 }
@@ -64,6 +74,8 @@ impl Editor {
             history,
             undo_steps: VecDeque::new(),
             redo_steps: Vec::new(),
+            run: None,
+            pending_marks: None,
         }
     }
 
@@ -79,6 +91,8 @@ impl Editor {
         if let Some(selection) = &selection {
             self.doc.check_selection(selection)?;
         }
+        self.end_run();
+        self.pending_marks = None;
         self.selection = selection;
         Ok(())
     }
@@ -92,13 +106,33 @@ impl Editor {
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
     ) -> Result<()> {
-        let before = self.anchor();
+        self.pending_marks = None;
+        let result = self.step(false, edit);
+        self.history.group_end();
+        result.map(drop)
+    }
+
+    /// Runs `edit` and records it for undo: as a new step, or as part of the
+    /// open run's step when `extend_run` is set. Returns whether the document
+    /// changed. A new step is left open for the caller to close or keep.
+    fn step(
+        &mut self,
+        extend_run: bool,
+        edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
+    ) -> Result<bool> {
+        if !extend_run {
+            self.end_run();
+        }
+        let new_step = self.run.is_none();
+        let before = if new_step { self.anchor() } else { None };
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
-        self.history.group_start()?;
-        let step = OpenStep(self);
-        let result = edit(&mut step.0.doc, selection.as_ref());
-        drop(step);
+        if new_step {
+            self.history.group_start()?;
+        }
+        let open = OpenStep(self);
+        let result = edit(&mut open.0.doc, selection.as_ref());
+        drop(open);
 
         let result = result.and_then(|selection| {
             if let Some(selection) = &selection {
@@ -114,23 +148,18 @@ impl Editor {
                 .take()
                 .filter(|s| doc.check_selection(s).is_ok()),
         };
-        if self.doc.doc.oplog_frontiers() != version {
+        let changed = self.doc.doc.oplog_frontiers() != version;
+        if changed && new_step {
             let after = self.anchor();
             self.push_undo_step(Step { before, after });
             self.redo_steps.clear();
+        } else if changed {
+            let after = self.anchor();
+            if let Some(step) = self.undo_steps.back_mut() {
+                step.after = after;
+            }
         }
-        result.map(drop)
-    }
-
-    /// Replaces the selected text with `text`.
-    pub fn insert_text(&mut self, text: &str) -> Result<()> {
-        self.apply(|doc, selection| {
-            let (anchor, head) = text_selection(selection)?;
-            let caret = doc.delete_range(anchor, head)?;
-            doc.insert_text(caret.block, caret.offset, text)?;
-            let caret = Pos::new(caret.block, caret.offset + text.len());
-            Ok(Some(Selection::caret(caret)))
-        })
+        result.map(|_| changed)
     }
 
     /// Deletes the selected text or blocks.
@@ -174,13 +203,40 @@ impl Editor {
         })
     }
 
-    /// Toggles a mark on the selected text. Does nothing for a caret.
+    /// Toggles a mark on the selected text. On a caret, toggles it for the
+    /// text typed next instead.
     pub fn toggle_mark(&mut self, name: &str) -> Result<()> {
-        self.apply(|doc, selection| {
-            let (anchor, head) = text_selection(selection)?;
-            doc.toggle_mark(anchor, head, name)?;
-            Ok(selection.cloned())
-        })
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        if anchor != head {
+            return self.apply(|doc, selection| {
+                doc.toggle_mark(anchor, head, name)?;
+                Ok(selection.cloned())
+            });
+        }
+        self.doc.mark_spec(name)?;
+        self.end_run();
+        let mut marks = match self.pending_marks.take() {
+            Some(marks) => marks,
+            None => self.doc.typing_marks(anchor)?,
+        };
+        if marks.remove(name).is_none() {
+            marks.insert(name.to_owned(), LoroValue::Bool(true));
+        }
+        self.pending_marks = Some(marks);
+        Ok(())
+    }
+
+    /// The marks in effect: those of the next typed text for a caret, and
+    /// those all of the selected text has for a range.
+    pub fn active_marks(&self) -> Result<BTreeMap<String, Value>> {
+        match (&self.selection, &self.pending_marks) {
+            (Some(Selection::Text { anchor, head }), _) if anchor != head => {
+                self.doc.marks_in(*anchor, *head)
+            }
+            (Some(Selection::Text { .. }), Some(pending)) => Ok(visible_marks(pending.clone())),
+            (Some(Selection::Text { anchor, .. }), None) => self.doc.marks_at(*anchor),
+            _ => Ok(BTreeMap::new()),
+        }
     }
 
     pub fn can_undo(&self) -> bool {
@@ -193,6 +249,8 @@ impl Editor {
 
     /// Undoes the last step. Returns whether there was one.
     pub fn undo(&mut self) -> Result<bool> {
+        self.end_run();
+        self.pending_marks = None;
         loop {
             let count = self.history.undo_count();
             let changed = self.history.undo()?;
@@ -212,6 +270,8 @@ impl Editor {
 
     /// Redoes the last undone step. Returns whether there was one.
     pub fn redo(&mut self) -> Result<bool> {
+        self.end_run();
+        self.pending_marks = None;
         loop {
             let count = self.history.redo_count();
             let changed = self.history.redo()?;

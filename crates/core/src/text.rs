@@ -4,7 +4,8 @@ use std::ops::Range;
 use loro::cursor::PosType;
 use loro::{LoroText, TextDelta};
 
-use crate::{BlockId, Content, Document, Error, Result, Value};
+use crate::marks::{TypingMarks, visible_marks};
+use crate::{BlockId, Content, Document, Error, Pos, Result, Value};
 
 /// A run of text with the same marks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +61,28 @@ impl Document {
             ),
         });
         insert_delta(&text, offset, inserts.collect())
+    }
+
+    pub(crate) fn insert_typed(
+        &mut self,
+        pos: Pos,
+        content: &str,
+        pending: Option<TypingMarks>,
+    ) -> Result<()> {
+        if content.is_empty() {
+            return Ok(());
+        }
+        let text = self.inline(pos.block)?;
+        let offset = unicode_offset(&text, pos.offset)?;
+        let marks = match pending {
+            Some(marks) => marks,
+            None => self.typing_marks_in(&text, offset)?,
+        };
+        let insert = TextDelta::Insert {
+            insert: content.to_owned(),
+            attributes: Some(marks.into_iter().collect()),
+        };
+        insert_delta(&text, offset, vec![insert])
     }
 
     /// Copies a range of text to another place as stored, including marks
@@ -124,7 +147,7 @@ impl Document {
         unicode_offset(&self.inline(block)?, offset).map(drop)
     }
 
-    fn inline(&self, block: BlockId) -> Result<LoroText> {
+    pub(crate) fn inline(&self, block: BlockId) -> Result<LoroText> {
         if self.spec(block)?.content() != Content::Inline {
             return Err(Error::NoInlineContent);
         }
@@ -158,11 +181,9 @@ fn to_spans(delta: Vec<TextDelta>) -> Vec<Span> {
     let mut spans = Vec::with_capacity(delta.len());
     for item in delta {
         if let TextDelta::Insert { insert, attributes } = item {
-            let marks = attributes.into_iter().flatten();
-            let marks = marks.filter_map(|(k, v)| Some((k, Value::from_loro(&v)?)));
             spans.push(Span {
                 text: insert,
-                marks: marks.collect(),
+                marks: visible_marks(attributes.into_iter().flatten()),
             });
         }
     }
@@ -179,7 +200,7 @@ fn unicode_range(text: &LoroText, range: Range<usize>) -> Result<Range<usize>> {
     Ok(unicode_offset(text, range.start)?..unicode_offset(text, range.end)?)
 }
 
-fn unicode_offset(text: &LoroText, offset: usize) -> Result<usize> {
+pub(crate) fn unicode_offset(text: &LoroText, offset: usize) -> Result<usize> {
     let unicode = text.convert_pos(offset, PosType::Bytes, PosType::Unicode);
     let unicode = unicode.ok_or_else(|| Error::OutOfBounds {
         index: offset,
