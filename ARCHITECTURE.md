@@ -436,7 +436,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | # | Milestone | Verified by |
 | :--- | :--- | :--- |
 | 1 | core: blocks, text, marks, split/merge, cross-block ops, undo, builders | `cargo test` (CI) |
-| 2 | core: multi-peer convergence, including grid tables | `proptest` (CI) |
+| 2 | core: update export/import, multi-peer convergence including grid tables, positions that survive remote edits, read-time schema tolerance, change notifications for the UI, input rules, paste rules and keymap, slash menu items, Markdown in/out | `proptest`, `cargo test` + `insta` (CI) |
 | 3 | ui: single-block text (cursor, selection, `TextRun`, clipboard, IME, inline atoms) | `EditorTestContext` + manual IME |
 | 4 | ui: canvas, cross-block selection, menus, toolbar, side menu, nested blocks | `#[gpui::test]` |
 | 5 | server + storage: WebSocket relay, `Authorizer`, `DocStore`, collaborator cursors | `tokio::test` E2E |
