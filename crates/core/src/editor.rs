@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use loro::undo::CursorWithPos;
-use loro::{InnerUndoManager, LoroValue, UndoOrRedo};
+use loro::{ContainerID, Counter, InnerUndoManager, LoroValue, UndoOrRedo};
 
 use crate::collab::Anchored;
 use crate::marks::{TypingMarks, visible_marks};
@@ -27,6 +27,9 @@ pub struct Editor {
     history: InnerUndoManager,
     undo_steps: VecDeque<Step>,
     redo_steps: Vec<Step>,
+    /// The texts of blocks that undo or redo brought back. Loro runs the
+    /// older steps of that same kind at the offsets they had in the old text.
+    brought_back: HashMap<ContainerID, UndoOrRedo>,
     /// The run of typing or deleting that the next keystroke may extend.
     /// While it is set, its undo step is still open.
     run: Option<typing::Run>,
@@ -51,6 +54,7 @@ impl Editor {
             live_anchors: None,
             undo_steps: VecDeque::new(),
             redo_steps: Vec::new(),
+            brought_back: HashMap::new(),
             run: None,
             pending_marks: None,
         }
@@ -62,8 +66,22 @@ impl Editor {
         self.history = new_history(&self.doc);
         self.undo_steps.clear();
         self.redo_steps.clear();
+        self.brought_back.clear();
         self.run = None;
         self.pending_marks = None;
+    }
+
+    /// This peer's next operation counter.
+    fn local_counter(&self) -> Counter {
+        let versions = self.doc.doc.state_vv();
+        versions.get(&self.doc.doc.peer_id()).copied().unwrap_or(0)
+    }
+
+    /// Notes the blocks an undo or redo that started at `since` brought back.
+    fn note_brought_back(&mut self, since: Counter, by: UndoOrRedo) {
+        let texts = self.doc.texts_created_since(since);
+        self.brought_back
+            .extend(texts.into_iter().map(|text| (text, by)));
     }
 
     /// Loro can fail to undo a step that changes from other peers have cut
@@ -177,10 +195,12 @@ impl Editor {
                 // cannot fail halfway.
                 if changed && new_step {
                     self.history.group_end();
+                    let since = self.local_counter();
                     if let Err(error) = self.history.undo() {
                         self.selection = None;
                         return Err(self.history_failed(error));
                     }
+                    self.note_brought_back(since, UndoOrRedo::Undo);
                     // Loro dropped its redo steps when it recorded the edit,
                     // and now holds the undone edit as one. Emptying this
                     // list keeps `redo` away from it.
@@ -342,6 +362,7 @@ impl Editor {
         while let Some(step) = self.undo_steps.back() {
             // A step with no net effect changes nothing. Go on to the one before it.
             let mut after = self.reanchor(step.after.as_ref());
+            let since = self.local_counter();
             let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Undo) {
                 Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
@@ -353,6 +374,7 @@ impl Editor {
                 && changed
             {
                 self.restore(step.before.as_ref(), &cursors);
+                self.note_brought_back(since, UndoOrRedo::Undo);
                 self.history
                     .set_top_redo_meta(history::meta(after.as_ref()));
                 let before = self.selection.as_ref().map(|s| self.doc.anchored(s));
@@ -369,6 +391,7 @@ impl Editor {
         self.pending_marks = None;
         while let Some(step) = self.redo_steps.last() {
             let mut before = self.reanchor(step.before.as_ref());
+            let since = self.local_counter();
             let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Redo) {
                 Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
@@ -380,6 +403,7 @@ impl Editor {
                 && changed
             {
                 self.restore(step.after.as_ref(), &cursors);
+                self.note_brought_back(since, UndoOrRedo::Redo);
                 self.history
                     .set_top_undo_meta(history::meta(before.as_ref()));
                 let after = self.selection.as_ref().map(|s| self.doc.anchored(s));

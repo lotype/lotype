@@ -1,5 +1,6 @@
+use loro::{ExportMode, LoroDoc, TreeID, TreeParentId};
 use lotype_core::test_support::{assert_editor, editor, outline};
-use lotype_core::{Document, Editor, Schema, Selection, blocks, p};
+use lotype_core::{Document, Editor, Pos, Schema, Selection, blocks, p};
 
 /// Another peer that starts from `doc` as it is now.
 fn peer(doc: &Document) -> Document {
@@ -90,4 +91,69 @@ fn delivery_boundaries_do_not_decide_whether_a_selection_survives() {
         });
         assert_eq!(selections[0], selections[1]);
     }
+}
+
+#[test]
+fn a_restored_block_that_lost_its_id_still_drops_the_undo_steps() {
+    let mut a = editor(blocks![p!["keep"], p!["hello<a>"]]);
+    let [keep, hello] = a.document().blocks()[..] else {
+        panic!()
+    };
+    a.insert_text("!").unwrap();
+    a.set_selection(Some(Selection::Blocks(vec![hello])))
+        .unwrap();
+    a.delete_selection().unwrap();
+    assert!(a.undo().unwrap());
+
+    // A peer has another block claim the id too, so that neither gets it.
+    let raw = LoroDoc::new();
+    raw.import(&a.document().export_snapshot().unwrap())
+        .unwrap();
+    let tree = raw.get_tree("blocks");
+    let keep_node = TreeID::try_from(keep.to_string().as_str()).unwrap();
+    let meta = tree.get_meta(keep_node).unwrap();
+    meta.insert("$id", hello.to_string()).unwrap();
+    let restored = tree.children(TreeParentId::Root).unwrap()[1];
+    let text = tree.get_meta(restored).unwrap().get("$text").unwrap();
+    let text = text.into_container().unwrap().into_text().unwrap();
+    text.insert(0, ">>").unwrap();
+    raw.commit();
+    a.import(&raw.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    let restored = a.document().blocks()[1];
+    assert_ne!(restored, hello);
+    assert!(!a.undo().unwrap());
+    assert_eq!(a.document().text(restored).unwrap(), ">>hello!");
+}
+
+#[test]
+fn a_peers_edit_to_a_block_redo_brought_back_drops_the_redo_steps() {
+    let mut a = editor(blocks![p!["keep<a>"]]);
+    a.apply(|doc, _| {
+        let block = doc.insert_block(None, 1, "paragraph")?;
+        Ok(Some(Selection::caret(Pos::new(block, 0))))
+    })
+    .unwrap();
+    let block = a.document().blocks()[1];
+    a.insert_text("hello").unwrap();
+    a.apply(|doc, _| {
+        doc.delete_text(block, 2..3)?;
+        Ok(Some(Selection::caret(Pos::new(block, 4))))
+    })
+    .unwrap();
+    for _ in 0..3 {
+        assert!(a.undo().unwrap());
+    }
+    assert!(a.redo().unwrap());
+    assert!(a.redo().unwrap());
+    let mut b = peer(a.document());
+    b.insert_text(block, 0, ">>").unwrap();
+    pull(&mut a, &b);
+
+    // Loro would take the `h` out here.
+    assert!(!a.redo().unwrap());
+    assert_eq!(a.document().text(block).unwrap(), ">>hello");
+    assert!(a.undo().unwrap());
+    assert_eq!(a.document().text(block).unwrap(), ">>");
 }

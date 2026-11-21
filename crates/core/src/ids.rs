@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use loro::{ContainerID, ContainerTrait, TreeID, TreeParentId};
+use loro::{ContainerID, ContainerTrait, Counter, TreeID, TreeParentId};
 
-use crate::document::ID;
+use crate::document::{ID, TEXT};
 use crate::{BlockId, Document, MAX_DEPTH};
 
 /// Blocks that came back under a new Loro node, by the id they were created
@@ -71,15 +71,20 @@ impl Document {
         self.restored = restored;
     }
 
-    /// Whether one of `texts` is in a block that this peer's undo or redo
-    /// brought back.
-    pub(crate) fn brought_back(&self, texts: &HashSet<ContainerID>) -> bool {
+    /// The texts of the blocks this peer created from `counter` on. After an
+    /// undo or redo those are the blocks it brought back. They are found by
+    /// their nodes, since a peer can take the id from a block that came back.
+    pub(crate) fn texts_created_since(&self, counter: Counter) -> Vec<ContainerID> {
         let peer = self.doc.peer_id();
-        let mut nodes = self.restored.ids.keys();
-        nodes.any(|node| {
-            let text = self.raw_text(self.id_of(*node));
-            node.peer == peer && text.is_ok_and(|text| texts.contains(&text.id()))
-        })
+        let created = self
+            .raw_blocks()
+            .filter(|(node, _)| node.peer == peer && node.counter >= counter);
+        created
+            .filter_map(|(node, _)| {
+                let text = self.tree.get_meta(node).ok()?.get(TEXT)?;
+                Some(text.into_container().ok()?.id())
+            })
+            .collect()
     }
 
     /// Whether a node that was in the document has been removed. Bounded like
