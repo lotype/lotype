@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use loro::{TreeID, TreeParentId};
+use loro::{ContainerID, ContainerTrait, TreeID, TreeParentId};
 
 use crate::document::ID;
 use crate::{BlockId, Document, MAX_DEPTH};
@@ -69,6 +69,17 @@ impl Document {
             }
         }
         self.restored = restored;
+    }
+
+    /// Whether one of `texts` is in a block that this peer's undo or redo
+    /// brought back.
+    pub(crate) fn brought_back(&self, texts: &HashSet<ContainerID>) -> bool {
+        let peer = self.doc.peer_id();
+        let mut nodes = self.restored.ids.keys();
+        nodes.any(|node| {
+            let text = self.raw_text(self.id_of(*node));
+            node.peer == peer && text.is_ok_and(|text| texts.contains(&text.id()))
+        })
     }
 
     /// Whether a node that was in the document has been removed. Bounded like

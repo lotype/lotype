@@ -389,7 +389,7 @@ fn an_edit_in_a_block_a_peer_removed_is_gone_with_it() {
 }
 
 #[test]
-fn an_undo_that_loro_cannot_do_clears_the_history() {
+fn a_peers_change_across_a_restored_block_clears_the_undo_steps() {
     let mut a = editor(blocks![p!["one<a>"], p!["two", p!["child"]], p!["three"]]);
     let mut b = peer(a.document());
     let two = b.blocks()[1];
@@ -416,10 +416,10 @@ fn an_undo_that_loro_cannot_do_clears_the_history() {
         .unwrap();
     let before = outline(a.document(), None);
 
-    assert!(matches!(a.undo(), Err(Error::Internal(_))));
-    assert_eq!(outline(a.document(), None), before);
+    // Loro can no longer undo the merge, and fails when it tries.
     assert!(!a.can_undo());
     assert!(!a.undo().unwrap());
+    assert_eq!(outline(a.document(), None), before);
 
     a.insert_text("!").unwrap();
     assert!(a.undo().unwrap());

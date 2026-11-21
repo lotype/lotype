@@ -1,5 +1,5 @@
 use lotype_core::test_support::{assert_editor, editor, outline};
-use lotype_core::{Document, Editor, Schema, blocks, p};
+use lotype_core::{Document, Editor, Schema, Selection, blocks, p};
 
 /// Another peer that starts from `doc` as it is now.
 fn peer(doc: &Document) -> Document {
@@ -43,4 +43,24 @@ fn delivery_boundaries_do_not_change_the_caret_undo_restores() {
         outline(a.document(), a.selection())
     });
     assert_eq!(carets[0], carets[1]);
+}
+
+#[test]
+fn a_peers_edit_to_a_restored_block_drops_the_undo_steps_it_would_corrupt() {
+    let mut a = editor(blocks![p!["keep"], p!["hello<a>"]]);
+    let hello = a.document().blocks()[1];
+    a.insert_text("!").unwrap();
+    a.set_selection(Some(Selection::Blocks(vec![hello])))
+        .unwrap();
+    a.delete_selection().unwrap();
+    assert!(a.undo().unwrap());
+    let mut b = peer(a.document());
+    b.insert_text(hello, 0, ">>").unwrap();
+    pull(&mut a, &b);
+
+    // Loro would take the `l` out here and leave the `!`.
+    assert!(!a.undo().unwrap());
+    assert_eq!(a.document().text(hello).unwrap(), ">>hello!");
+    assert!(a.redo().unwrap());
+    assert_eq!(a.document().blocks().len(), 1);
 }

@@ -14,6 +14,8 @@ impl Editor {
     /// The selection follows its text. It is cleared when its blocks are
     /// gone. Remote changes are never part of this editor's undo history, but
     /// one that touches the text being typed ends the current typing step.
+    /// One that changes the text of a block this editor's undo or redo
+    /// brought back clears the undo steps.
     /// An import that advances this editor's own peer counter clears its history.
     /// See [`Document::import`](crate::Document::import) for partial imports.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
@@ -54,6 +56,13 @@ impl Editor {
         if self.doc.doc.state_vv().get(&local_peer).copied() != local_counter {
             self.forget_history();
         } else if !changed_texts.is_empty() {
+            // Undo brought the block back with new text, and Loro undoes
+            // the steps from before that at offsets these changes moved.
+            if self.doc.brought_back(&changed_texts) {
+                self.finish_edit_group();
+                self.history.clear_undo();
+                self.undo_steps.clear();
+            }
             for step in self.undo_steps.iter_mut().chain(&mut self.redo_steps) {
                 for anchored in step.before.iter_mut().chain(&mut step.after) {
                     anchored.record_import(&changed_texts);
