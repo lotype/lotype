@@ -288,6 +288,36 @@ fn a_range_command_returns_the_caret_under_the_survivors_new_id() {
 }
 
 #[test]
+fn structural_deletion_preserves_a_concurrently_hidden_child() {
+    for merge in [false, true] {
+        let (mut a, _) = build(blocks![p!["root"]]);
+        let mut parent = a.blocks()[0];
+        for _ in 1..MAX_DEPTH - 2 {
+            parent = a.insert_block(Some(parent), 0, "paragraph").unwrap();
+        }
+        let first = a.insert_block(Some(parent), 0, "paragraph").unwrap();
+        let last = a.insert_block(Some(parent), 1, "paragraph").unwrap();
+        let mut b = Document::new(Schema::builtin());
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        let child = b.insert_block(Some(last), 0, "paragraph").unwrap();
+        b.insert_text(child, 0, "remote").unwrap();
+        a.move_block(last, Some(first), 0).unwrap();
+        a.import(&b.export_updates(&a.version()).unwrap()).unwrap();
+        assert!(!a.contains(child));
+
+        if merge {
+            a.merge_backward(last).unwrap();
+        } else {
+            a.delete_range(Pos::new(first, 0), Pos::new(last, 0))
+                .unwrap();
+        }
+        assert_eq!(a.parent(child).unwrap(), Some(first));
+        assert_eq!(a.text(child).unwrap(), "remote");
+    }
+}
+
+#[test]
 fn importing_operations_for_the_local_peer_keeps_them_out_of_undo() {
     let (doc, selection) = build(blocks![p!["x<a>"], p!["other"]]);
     let other = doc.blocks()[1];

@@ -208,8 +208,18 @@ impl Document {
         index: usize,
     ) -> Result<()> {
         let id = self.live(block)?;
-        self.check_index(parent, index, Some(block))?;
-        self.tree.mov_to(id, self.slot(parent)?.0, index)?;
+        self.relocate_node(id, parent, index)
+    }
+
+    /// Moves an existing raw child, including a child hidden by the depth cap.
+    pub(crate) fn relocate_node(
+        &mut self,
+        node: TreeID,
+        parent: Option<BlockId>,
+        index: usize,
+    ) -> Result<()> {
+        self.check_index(parent, index, Some(node))?;
+        self.tree.mov_to(node, self.slot(parent)?.0, index)?;
         Ok(())
     }
 
@@ -389,11 +399,10 @@ impl Document {
         &self,
         parent: Option<BlockId>,
         index: usize,
-        moving: Option<BlockId>,
+        moving: Option<TreeID>,
     ) -> Result<()> {
         let parent_id = self.slot(parent)?.0;
-        let already_here =
-            moving.is_some_and(|block| self.tree.parent(self.node(block)) == Some(parent_id));
+        let already_here = moving.is_some_and(|node| self.tree.parent(node) == Some(parent_id));
         let len = self.tree.children_num(parent_id).unwrap_or(0) - usize::from(already_here);
         if index > len {
             return Err(Error::OutOfBounds { index, len });

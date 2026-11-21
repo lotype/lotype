@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
+use loro::TreeParentId;
+
 use crate::{BlockId, Document, Error, Pos, Result, Value};
 
 /// Edits that span more than one primitive operation.
@@ -125,30 +127,34 @@ impl Document {
     /// ancestor was, and then the removed blocks go with what is left in them.
     fn remove_keeping_survivors(&mut self, between: Vec<BlockId>, last: BlockId) -> Result<()> {
         let removed: HashSet<BlockId> = between.iter().copied().collect();
-        let mut survivors = self.children(Some(last))?;
+        let mut survivors = self.child_ids(TreeParentId::Node(self.live(last)?));
         let mut top = last;
         while let Some(parent) = self.parent(top)?.filter(|parent| removed.contains(parent)) {
             let siblings = self.children(Some(parent))?;
             let after = siblings.iter().position(|sibling| *sibling == top);
-            survivors.extend(&siblings[after.map_or(siblings.len(), |index| index + 1)..]);
+            survivors.extend(
+                siblings[after.map_or(siblings.len(), |index| index + 1)..]
+                    .iter()
+                    .map(|block| self.node(*block)),
+            );
             top = parent;
         }
         let parent = self.parent(top)?;
         let index = self.index_of(top)?;
         for (offset, survivor) in survivors.into_iter().enumerate() {
-            self.relocate_block(survivor, parent, index + 1 + offset)?;
+            self.relocate_node(survivor, parent, index + 1 + offset)?;
         }
         self.remove_blocks(between.into_iter().chain([last]))
     }
 
     /// Removes `block`, leaving its children where it was.
     fn dissolve_block(&mut self, block: BlockId) -> Result<()> {
-        let children = self.children(Some(block))?;
+        let children = self.child_ids(TreeParentId::Node(self.live(block)?));
         if !children.is_empty() {
             let parent = self.parent(block)?;
             let index = self.index_of(block)?;
             for (offset, child) in children.into_iter().enumerate() {
-                self.relocate_block(child, parent, index + 1 + offset)?;
+                self.relocate_node(child, parent, index + 1 + offset)?;
             }
         }
         self.remove_block(block)
