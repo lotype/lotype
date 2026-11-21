@@ -1,6 +1,11 @@
 <div align="center">
 
-<h1>Lotype</h1>
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/lotype-dark.svg">
+    <img alt="Lotype" src="assets/lotype.svg" width="336">
+  </picture>
+</h1>
 
 <p>
   A native Rust SDK for block-based document editors.<br/>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <style>.ink{fill:#111111}@media (prefers-color-scheme:dark){.ink{fill:#F2F2F2}}</style>
+  <path class="ink" d="M5 24V14a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v10zM14 24V14a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v10zM23 24V14a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v10z"/>
+  <path fill="#E8590C" d="M5 24h22v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/>
+  <path class="ink" d="M11 5h4a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-3v14h-1z"/>
+  <path fill="#E8590C" d="M20.5 5Q21.1 6.9 23 7.5Q21.1 8.1 20.5 10Q19.9 8.1 18 7.5Q19.9 6.9 20.5 5zM20 11h1v11h-1z"/>
+</svg>

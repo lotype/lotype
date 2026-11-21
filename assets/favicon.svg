@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" shape-rendering="crispEdges">
+  <style>.ink{fill:#111111}@media (prefers-color-scheme:dark){.ink{fill:#F2F2F2}}</style>
+  <path class="ink" d="M2 7h2v5H2zM7 7h2v5H7zM12 7h2v5h-2zM5 2h3v2H6v7H5z"/>
+  <path fill="#E8590C" d="M2 12h12v2H2zM10 2h1v1h1v1h-1v1h-1V4H9V3h1zM10 6h1v5h-1z"/>
+</svg>
