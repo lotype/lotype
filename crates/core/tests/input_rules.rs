@@ -1,5 +1,7 @@
-use lotype_core::test_support::{editor, outline};
-use lotype_core::{BlockSpec, Content, Document, Editor, Pos, Schema, Selection, blocks, p};
+use lotype_core::test_support::{block, editor, outline};
+use lotype_core::{
+    BlockSpec, Content, Document, Editor, Expand, MarkSpec, Pos, Schema, Selection, blocks, p,
+};
 
 /// Types `text` a character at a time, as a keyboard does.
 fn type_in(ed: &mut Editor, text: &str) {
@@ -119,4 +121,39 @@ fn typing_after_a_mark_rule_is_outside_the_mark_and_undo_gives_the_text_back() {
     assert!(ed.undo().unwrap());
     assert!(ed.undo().unwrap());
     assert_eq!(shown(&ed), "paragraph \"**b**<a> tail\"\n");
+}
+
+#[test]
+fn code_is_typed_as_it_is() {
+    for typed in [
+        "int *a, *b;",
+        "echo `date` now",
+        "**kw**",
+        "_a = _b",
+        "~~x~~",
+    ] {
+        let mut ed = editor(blocks![block("code_block", vec!["<a>".into()])]);
+        type_in(&mut ed, typed);
+        assert_eq!(shown(&ed), format!("code_block \"{typed}<a>\"\n"));
+    }
+
+    let mut ed = editor(blocks![p!["<a>"]]);
+    type_in(&mut ed, "`ptr x`");
+    let block = ed.document().blocks()[0];
+    ed.set_selection(Some(Selection::caret(Pos::new(block, 4))))
+        .unwrap();
+    type_in(&mut ed, "*a, *");
+    assert_eq!(ed.document().text(block).unwrap(), "ptr *a, *x");
+}
+
+#[test]
+fn a_mark_that_needs_a_value_is_left_to_the_text() {
+    let schema = Schema::builtin().mark(MarkSpec::new("bold", Expand::After).with_value());
+    let mut doc = Document::new(schema);
+    let block = doc.insert_block(None, 0, "paragraph").unwrap();
+    let mut ed = Editor::new(doc);
+    ed.set_selection(Some(Selection::caret(Pos::new(block, 0))))
+        .unwrap();
+    type_in(&mut ed, "**b**");
+    assert_eq!(ed.document().text(block).unwrap(), "**b**");
 }

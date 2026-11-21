@@ -26,10 +26,10 @@ impl Editor {
     /// undo step until a word starts after whitespace, or anything else happens.
     ///
     /// Markdown typed at the start of a paragraph turns it into that block:
-    /// `# ` to `###### `, `- `, `1. `, `[] `, `> `, `` ``` `` with a language
-    /// and a space, and `---`. Text typed between `**`, `*`, `_`, `~~` or
-    /// backticks gets that mark. Each is a step of its own, so undo gives
-    /// back what was typed.
+    /// `# ` to `###### `, `- `, `1. `, `[] `, `> `, `` ``` `` with or without
+    /// a language and then a space, and `---`. Text typed between `**`, `*`,
+    /// `_`, `~~` or backticks gets that mark, except in code. Each is a step
+    /// of its own, so undo gives back what was typed.
     pub fn insert_text(&mut self, text: &str) -> Result<()> {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let starts_word = text.chars().next().is_some_and(|c| !c.is_whitespace());

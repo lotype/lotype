@@ -20,8 +20,19 @@ impl Editor {
         {
             return self.turn_into(block, typed.len(), rule);
         }
+        // Code is typed as it is, in a code block and in inline code alike.
+        if self.doc.block_type(block)? == "code_block"
+            || self.doc.marks_at(head)?.contains_key("code")
+        {
+            return Ok(());
+        }
+        let on_off = |name| {
+            self.doc
+                .mark_spec(name)
+                .is_ok_and(|spec| spec.allows_boolean())
+        };
         match rules::mark_rule(typed) {
-            Some(rule) if self.doc.mark_spec(rule.mark).is_ok() => self.mark_typed(block, rule),
+            Some(rule) if on_off(rule.mark) => self.mark_typed(block, rule),
             _ => Ok(()),
         }
     }
