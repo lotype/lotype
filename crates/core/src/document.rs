@@ -344,6 +344,15 @@ impl Document {
         Err(Error::BlockNotFound)
     }
 
+    /// Whether the children of `parent` are blocks of the document.
+    pub(crate) fn shows(&self, parent: TreeParentId) -> bool {
+        match parent {
+            TreeParentId::Root => true,
+            TreeParentId::Node(node) => self.node_depth(node).is_ok(),
+            _ => false,
+        }
+    }
+
     pub(crate) fn live(&self, block: BlockId) -> Result<TreeID> {
         self.depth(block).map(|_| block.0)
     }

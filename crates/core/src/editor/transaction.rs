@@ -33,6 +33,8 @@ impl Editor {
         let Some(record) = draft.draft.take() else {
             self.finish_edit_group();
             self.doc = draft;
+            (self.seen, self._watching) = super::changes::watch(&self.doc);
+            self.replaced = true;
             self.forget_history();
             self.selection = after;
             self.live_anchors = None;

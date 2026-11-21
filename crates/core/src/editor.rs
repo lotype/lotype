@@ -1,17 +1,21 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use loro::undo::CursorWithPos;
-use loro::{Counter, InnerUndoManager, LoroValue, UndoOrRedo};
+use loro::{Counter, InnerUndoManager, LoroValue, Subscription, UndoOrRedo};
 
 use crate::collab::Anchored;
 use crate::marks::{TypingMarks, visible_marks};
 use crate::trash::SYSTEM_ORIGIN;
 use crate::{Document, Error, Pos, Result, Selection, Value};
 
+mod changes;
 mod history;
 mod remote;
 mod transaction;
 mod typing;
+
+pub use changes::Changes;
 
 const MAX_UNDO_STEPS: usize = 100;
 
@@ -33,6 +37,10 @@ pub struct Editor {
     run: Option<typing::Run>,
     /// Marks the next typed text gets instead of those around the caret.
     pending_marks: Option<TypingMarks>,
+    /// What changed in the document since a view last asked.
+    seen: Arc<Mutex<changes::Seen>>,
+    _watching: Subscription,
+    replaced: bool,
 }
 
 /// The selection around one undo step. Anchored, so that it is still in the
@@ -44,7 +52,11 @@ struct Step {
 
 impl Editor {
     pub fn new(doc: Document) -> Self {
+        let (seen, _watching) = changes::watch(&doc);
         Self {
+            seen,
+            _watching,
+            replaced: false,
             history: new_history(&doc),
             doc,
             selection: None,
