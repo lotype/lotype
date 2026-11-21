@@ -33,6 +33,9 @@ pub(crate) struct Anchor {
     after: bool,
     /// Keep the exact offset until a remote edit changes this text.
     moved: bool,
+    /// The step this is stored with removed the cursor's character, so
+    /// undoing it puts a copy there.
+    cut: bool,
 }
 
 impl Anchored {
@@ -203,6 +206,20 @@ impl Document {
             cursor,
             after,
             moved: false,
+            cut: false,
+        }
+    }
+
+    /// Notes the endpoints whose character is gone. Call it right after the
+    /// step the selection is stored with, before any other change.
+    pub(crate) fn record_cut(&self, anchored: &mut Anchored) {
+        if let Anchored::Text { anchor, head } = anchored {
+            for endpoint in [anchor, head] {
+                endpoint.cut = endpoint.cursor.as_ref().is_some_and(|cursor| {
+                    let position = self.doc.get_cursor_pos(cursor);
+                    position.is_ok_and(|position| position.update.is_some())
+                });
+            }
         }
     }
 
@@ -226,11 +243,18 @@ impl Document {
         let unicode = match relative {
             Some((pos, true)) => Some(pos),
             _ => restored
-                // The character is gone for good when undo put a copy of it
-                // back. Loro moved the place it was at through what the
-                // other peers changed, which is then inside the copy.
-                .filter(|cursor| anchor.moved && cursor.cursor.container == text.id())
-                .map(|cursor| cursor.pos.pos + usize::from(anchor.after))
+                // The character is gone. When the step removed it, undoing
+                // the step put a copy back, which the cursor does not know.
+                // When a peer removed the one before a range start, the
+                // cursor resolves behind the text undo puts back at that
+                // start. Either way Loro has moved the place the character
+                // was at through what the other peers changed.
+                .filter(|cursor| {
+                    (anchor.cut || anchor.after)
+                        && anchor.moved
+                        && cursor.cursor.container == text.id()
+                })
+                .map(|cursor| cursor.pos.pos + usize::from(anchor.after && anchor.cut))
                 .or_else(|| relative.map(|(pos, _)| pos)),
         };
         let offset = unicode

@@ -199,6 +199,10 @@ impl Editor {
         if changed {
             let after = after.as_ref().map(|s| self.doc.anchored(s));
             if new_step {
+                let mut before = before;
+                if let Some(before) = &mut before {
+                    self.doc.record_cut(before);
+                }
                 self.history
                     .set_top_undo_meta(history::meta(before.as_ref()));
                 self.push_undo_step(Step { before, after });
@@ -337,11 +341,14 @@ impl Editor {
         self.pending_marks = None;
         while let Some(step) = self.undo_steps.back() {
             // A step with no net effect changes nothing. Go on to the one before it.
-            let after = self.reanchor(step.after.as_ref());
+            let mut after = self.reanchor(step.after.as_ref());
             let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Undo) {
                 Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
             };
+            if let Some(after) = &mut after {
+                self.doc.record_cut(after);
+            }
             if let Some(step) = self.undo_steps.pop_back()
                 && changed
             {
@@ -361,11 +368,14 @@ impl Editor {
         self.finish_edit_group();
         self.pending_marks = None;
         while let Some(step) = self.redo_steps.last() {
-            let before = self.reanchor(step.before.as_ref());
+            let mut before = self.reanchor(step.before.as_ref());
             let (changed, cursors) = match history::change(&self.history, UndoOrRedo::Redo) {
                 Ok(result) => result,
                 Err(error) => return Err(self.history_failed(error)),
             };
+            if let Some(before) = &mut before {
+                self.doc.record_cut(before);
+            }
             if let Some(step) = self.redo_steps.pop()
                 && changed
             {
