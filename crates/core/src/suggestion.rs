@@ -159,7 +159,15 @@ impl Editor {
         let Some(Selection::Text { anchor, head }) = self.selection() else {
             return None;
         };
-        let text = (anchor == head).then(|| self.document().text(head.block).ok())??;
+        let doc = self.document();
+        // A slash in code is a slash.
+        let code = doc
+            .block_type(head.block)
+            .is_ok_and(|block_type| block_type == "code_block")
+            || doc
+                .marks_at(*head)
+                .is_ok_and(|marks| marks.contains_key("code"));
+        let text = (anchor == head && !code).then(|| doc.text(head.block).ok())??;
         let typed = text.get(..head.offset)?;
         let slash = typed.rfind('/')?;
         let query = &typed[slash + 1..];

@@ -5,19 +5,28 @@ use crate::{BlockId, Document, Span, Value};
 /// start with.
 type Item = (BlockId, String, String, String);
 
+/// The largest number CommonMark reads at the start of a list item.
+const LARGEST_NUMBER: i64 = 999_999_999;
+
 impl Document {
     /// The document as Markdown: CommonMark with GitHub's alerts, task lists
     /// and strikethrough.
     ///
     /// Markdown cannot say everything a document holds. Underline and colors
-    /// are left off, a toggle list item reads as a bullet, and blocks nested
-    /// in a block that is no list item, quote or alert follow it instead.
+    /// are left off, a toggle list item reads as a bullet, a file as a link,
+    /// and blocks nested in a block that is no list item, quote or alert
+    /// follow it instead. Space at the ends of a block's text, empty
+    /// paragraphs, and the difference between a list item without text and
+    /// one whose text is its first paragraph are not kept either.
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         let mut stack = self.items(None, "");
         stack.reverse();
         while let Some((block, gap, first, rest)) = stack.pop() {
-            if let Some(body) = self.body(block) {
+            let body = self.body(block).unwrap_or_default();
+            let mut children = self.items(Some(block), &rest);
+            let marker = first != rest;
+            if !body.is_empty() || marker && children.is_empty() {
                 if !out.is_empty() {
                     // Stays inside the quote the block is in, if any.
                     out.push_str(gap.trim_end());
@@ -28,8 +37,12 @@ impl Document {
                     out.push_str(line);
                     out.push('\n');
                 }
+            } else if marker && let Some(child) = children.first_mut() {
+                // A list item may not start with a blank line, so what is in
+                // one without text starts on the line of its marker.
+                child.2 = format!("{first}{}", &child.2[rest.len()..]);
+                child.1 = gap;
             }
-            let children = self.items(Some(block), &rest);
             stack.extend(children.into_iter().rev());
         }
         out
@@ -43,8 +56,8 @@ impl Document {
             let block_type = self.block_type(block).unwrap_or_default();
             let numbered = block_type == "numbered_list_item";
             number = numbered.then(|| match (number, self.attr(block, "start")) {
-                (Some(before), _) => before + 1,
-                (None, Ok(Some(Value::Int(start)))) => start,
+                (Some(before), _) => LARGEST_NUMBER.min(before + 1),
+                (None, Ok(Some(Value::Int(start)))) => start.clamp(0, LARGEST_NUMBER),
                 (None, _) => 1,
             });
             let marker = match block_type.as_str() {
@@ -60,7 +73,13 @@ impl Document {
                 }
                 _ => String::new(),
             };
-            let (first, indent) = (format!("{prefix}{marker}"), " ".repeat(marker.len()));
+            // What is in a task item lines up with its dash, not its box.
+            let width = if marker.starts_with("- ") {
+                2
+            } else {
+                marker.len()
+            };
+            let (first, indent) = (format!("{prefix}{marker}"), " ".repeat(width));
             (block, prefix.to_owned(), first, format!("{prefix}{indent}"))
         });
         items.collect()
@@ -69,17 +88,22 @@ impl Document {
     /// The lines of a block itself, without what is nested in it.
     fn body(&self, block: BlockId) -> Option<String> {
         let block_type = self.block_type(block).ok()?;
-        let text = |key| match self.attr(block, key) {
-            Ok(Some(Value::Str(text))) => text,
+        let attr = |key| match self.attr(block, key) {
+            Ok(Some(Value::Str(text))) => text.replace(['\n', '\r'], " "),
             _ => String::new(),
         };
         Some(match block_type.as_str() {
             "divider" => "---".to_owned(),
             "page_break" => PAGE_BREAK.to_owned(),
-            "alert" => format!("[!{}]", text("kind").to_uppercase()),
-            "image" => format!("![{}]({})", escape(&text("caption")), address(&text("url"))),
+            "alert" => {
+                let kinds = ["TIP", "IMPORTANT", "WARNING", "CAUTION"];
+                let kind = attr("kind").to_uppercase();
+                let kind = kinds.into_iter().find(|known| *known == kind);
+                format!("[!{}]", kind.unwrap_or("NOTE"))
+            }
+            "image" => format!("![{}]({})", escape(&attr("caption")), address(&attr("url"))),
             "file" => {
-                let (name, url) = (text("name"), text("url"));
+                let (name, url) = (attr("name"), attr("url"));
                 let shown = if name.is_empty() { &url } else { &name };
                 format!("[{}]({})", escape(shown), address(&url))
             }
@@ -87,7 +111,7 @@ impl Document {
                 let code = self.text(block).ok()?;
                 let fence = "`".repeat(longest_run(&code, '`').max(2) + 1);
                 let language =
-                    text("language").replace(|c: char| c == '`' || c.is_whitespace(), "");
+                    attr("language").replace(|c: char| c == '`' || c.is_whitespace(), "");
                 format!("{fence}{language}\n{code}\n{fence}")
             }
             "heading" => {
@@ -95,11 +119,19 @@ impl Document {
                     Ok(Some(Value::Int(level))) => level.clamp(1, 6) as usize,
                     _ => 1,
                 };
-                let title = inline(&self.spans(block).ok()?).replace("\\\n", " ");
+                let mut title = inline(&self.spans(block).ok()?).replace("\\\n", " ");
+                // Signs at the end of a heading would read as part of its frame.
+                if let Some(last) = title.rfind('#').filter(|at| at + 1 == title.len()) {
+                    title.insert(last, '\\');
+                }
                 format!("{} {title}", "#".repeat(level))
             }
             _ => {
-                let lines = inline(&self.spans(block).ok()?);
+                // A block of a type unknown here still has its text.
+                let lines = match self.spans(block) {
+                    Ok(spans) => inline(&spans),
+                    Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
+                };
                 let lines: Vec<_> = lines.split('\n').map(line_start).collect();
                 lines.join("\n")
             }
@@ -112,54 +144,158 @@ fn longest_run(text: &str, of: char) -> usize {
     runs.map(str::len).max().unwrap_or(0)
 }
 
+/// A mark that is open, with what tells it from another and what closes it.
+struct Open {
+    key: String,
+    close: String,
+}
+
 /// Rich text as Markdown. A line break in it is a hard break.
 fn inline(spans: &[Span]) -> String {
     let mut out = String::new();
-    // The marks open now, outermost first, each with what closes it.
-    let mut open: Vec<(String, String)> = Vec::new();
+    let mut open: Vec<Open> = Vec::new();
     // Space between two spans goes outside the marks that end or start there.
-    let mut space = "";
+    let mut space = String::new();
+    // A sign only ends emphasis before a character that is no part of a
+    // word. Where one follows, it is written as a character reference.
+    let mut guard = false;
+    // The sign that ended emphasis last, with nothing written since. A sign
+    // that starts emphasis right there must be the other one, or the two
+    // would read as one run.
+    let mut closed = None;
+    // Where in `out` emphasis signs start, and where the text after them does.
+    let mut started: Vec<(usize, usize)> = Vec::new();
     for span in spans {
         let core = span.text.trim();
-        let start = span.text.len() - span.text.trim_start().len();
+        if core.is_empty() {
+            space.push_str(&span.text);
+            continue;
+        }
+        let lead = span.text.len() - span.text.trim_start().len();
+        let on = |name: &str| {
+            let value = span.marks.get(name);
+            value.is_some_and(|value| *value != Value::Bool(false))
+        };
         let mut wanted = Vec::new();
-        if !core.is_empty() {
-            if let Some(Value::Str(url)) = span.marks.get("link") {
-                wanted.push((format!("]({})", address(url)), "["));
-            }
-            for (name, sign) in [("bold", "**"), ("italic", "*"), ("strike", "~~")] {
-                if span.marks.contains_key(name) {
-                    wanted.push((sign.to_owned(), sign));
-                }
-            }
+        if let Some(Value::Str(url)) = span.marks.get("link") {
+            wanted.push(format!("link {url}"));
         }
+        let names = ["bold", "italic", "strike"];
+        wanted.extend(names.into_iter().filter(|name| on(name)).map(str::to_owned));
+
         let kept = open.iter().zip(&wanted);
-        let kept = kept.take_while(|(open, wanted)| open.1 == wanted.0).count();
+        let kept = kept
+            .take_while(|(open, wanted)| open.key == **wanted)
+            .count();
         while open.len() > kept {
-            out.push_str(&open.pop().map(|(_, close)| close).unwrap_or_default());
+            let Some(mark) = open.pop() else { break };
+            let sign = mark.close.chars().next();
+            if matches!(sign, Some('*' | '_' | '~')) {
+                let inside = out.chars().next_back();
+                guard = sign == Some('_') || inside.is_none_or(|c| !c.is_alphanumeric());
+                closed = sign.filter(|sign| *sign != '~');
+            } else {
+                (guard, closed) = (false, None);
+            }
+            out.push_str(&mark.close);
         }
-        out.push_str(space);
-        out.push_str(&span.text[..start]);
-        for (close, sign) in wanted.into_iter().skip(kept) {
+
+        space.push_str(&span.text[..lead]);
+        // A line cannot start with a break, nor can the text.
+        if out.is_empty() && space.contains(['\n', '\r']) {
+            space.clear();
+        }
+        if !space.is_empty() {
+            out.push_str(&escape(&space));
+            space.clear();
+            (guard, closed) = (false, None);
+        }
+
+        let text = if on("code") { code(core) } else { escape(core) };
+        let underscores = closed == Some('*');
+        let new = &wanted[kept..];
+        let emphasis = new.first().is_some_and(|first| !first.starts_with("link "));
+        if emphasis {
+            // A sign only starts emphasis after a character that is no part
+            // of a word, unless a word follows it. An underscore never
+            // starts emphasis inside a word.
+            let after = if new.len() > 1 {
+                None
+            } else {
+                text.chars().next()
+            };
+            if underscores || !after.is_some_and(char::is_alphanumeric) {
+                guard_before(&mut out, &mut started);
+            }
+        }
+        let start = out.len();
+        for key in new {
+            let (sign, close) = match (key.as_str(), underscores) {
+                ("bold", false) => ("**", "**".to_owned()),
+                ("bold", true) => ("__", "__".to_owned()),
+                ("italic", false) => ("*", "*".to_owned()),
+                ("italic", true) => ("_", "_".to_owned()),
+                ("strike", _) => ("~~", "~~".to_owned()),
+                (link, _) => ("[", format!("]({})", address(&link["link ".len()..]))),
+            };
             out.push_str(sign);
-            open.push((sign.to_owned(), close));
+            open.push(Open {
+                key: key.clone(),
+                close,
+            });
+            guard = false;
         }
-        if span.marks.contains_key("code") {
-            out.push_str(&code(core));
-        } else {
-            out.push_str(&escape(core));
+        if emphasis {
+            started.push((start, out.len()));
         }
-        space = &span.text[start + core.len()..];
+        match text.chars().next().filter(|c| guard && part_of_word(*c)) {
+            Some(first) => {
+                out.push_str(&reference(first));
+                out.push_str(&text[first.len_utf8()..]);
+            }
+            None => out.push_str(&text),
+        }
+        (guard, closed) = (false, None);
+        space.push_str(&span.text[lead + core.len()..]);
     }
-    while let Some((_, close)) = open.pop() {
-        out.push_str(&close);
+    while let Some(mark) = open.pop() {
+        out.push_str(&mark.close);
     }
-    out.push_str(space);
     out
 }
 
+/// Writes the last character of `out` as a reference, if it can count as
+/// part of a word, so that a sign after it can start emphasis. The signs
+/// right before that character then have a sign after them, and need the
+/// same of the character before them.
+fn guard_before(out: &mut String, started: &mut [(usize, usize)]) {
+    let mut end = out.len();
+    while let Some(c) = out[..end].chars().next_back().filter(|c| part_of_word(*c)) {
+        let (at, written) = (end - c.len_utf8(), reference(c));
+        let grown = written.len() - c.len_utf8();
+        out.replace_range(at..end, &written);
+        for (start, text) in started.iter_mut().filter(|(start, _)| *start >= end) {
+            (*start, *text) = (*start + grown, *text + grown);
+        }
+        match started.iter().find(|(_, text)| *text == at) {
+            Some((start, _)) => end = *start,
+            None => return,
+        }
+    }
+}
+
+/// Whether a character next to an emphasis sign can count as part of a word.
+/// Only space and ASCII signs surely do not.
+fn part_of_word(c: char) -> bool {
+    !c.is_whitespace() && !c.is_ascii_punctuation()
+}
+
+fn reference(c: char) -> String {
+    format!("&#{};", c as u32)
+}
+
 fn code(text: &str) -> String {
-    let text = text.replace('\n', " ");
+    let text = text.replace(['\n', '\r'], " ");
     let fence = "`".repeat(longest_run(&text, '`') + 1);
     let pad = if text.starts_with('`') || text.ends_with('`') {
         " "
@@ -179,6 +315,8 @@ fn escape(text: &str) -> String {
                 out.push(c);
             }
             '\n' => out.push_str("\\\n"),
+            // Markdown ends a line at a carriage return as well.
+            '\r' => out.push_str("&#13;"),
             _ => out.push(c),
         }
     }
@@ -188,9 +326,10 @@ fn escape(text: &str) -> String {
 /// A line of a paragraph, kept from reading as a heading, a list item, a
 /// quote, a rule or code.
 fn line_start(line: &str) -> String {
-    let text = line.trim_start_matches(' ');
-    // A space written as a character reference is no indentation.
-    let mut out = "&#32;".repeat(line.len() - text.len());
+    let text = line.trim_start_matches([' ', '\t']);
+    // Space written as character references is no indentation.
+    let indent = line[..line.len() - text.len()].chars();
+    let mut out: String = indent.map(reference).collect();
     let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
     let numbered = digits > 0 && text[digits..].starts_with(['.', ')']);
     if text.starts_with(['#', '>', '-', '+', '=']) {
@@ -208,9 +347,10 @@ fn line_start(line: &str) -> String {
 
 /// A link's address, in angle brackets when it would not read as one otherwise.
 fn address(url: &str) -> String {
+    let url = url.replace('\\', "\\\\").replace('&', "&amp;");
     let plain = !url.is_empty() && !url.contains(|c: char| c.is_whitespace() || "()<>".contains(c));
     if plain {
-        return url.to_owned();
+        return url;
     }
     let url = url.replace('<', "%3C").replace('>', "%3E");
     format!("<{}>", url.replace(['\n', '\r'], ""))

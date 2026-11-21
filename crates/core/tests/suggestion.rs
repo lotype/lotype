@@ -62,7 +62,9 @@ fn the_query_is_what_follows_a_slash_that_starts_a_word() {
         Some((0..3, "he".to_owned()))
     );
     assert_eq!(query(blocks![p!["é /q<a>"]]), Some((3..5, "q".to_owned())));
+    let code = lotype_core::test_support::block("code_block", vec!["ls /usr<a>".into()]);
     for none in [
+        blocks![code],
         blocks![p!["a/x<a>"]],
         blocks![p!["/a b<a>"]],
         blocks![p!["<a>/a"]],

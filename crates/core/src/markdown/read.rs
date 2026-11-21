@@ -51,10 +51,20 @@ struct Leaf {
 struct Reader {
     stack: Vec<(Container, Vec<Node>)>,
     leaf: Option<Leaf>,
-    marks: Vec<(&'static str, Value)>,
-    /// Inside an image, where text is its description.
-    described: bool,
+    /// The values of each mark in [`MARKS`] that is open, innermost last.
+    marks: [Vec<Value>; 4],
+    /// Which marks were opened, in order, to close them in turn.
+    opened: Vec<usize>,
+    /// Inside an image, where text is its description, and whether it has any.
+    described: Option<bool>,
 }
+
+/// The marks Markdown has signs for. Code is not among them: it does not nest.
+const MARKS: [&str; 4] = ["bold", "italic", "strike", "link"];
+const BOLD: usize = 0;
+const ITALIC: usize = 1;
+const STRIKE: usize = 2;
+const LINK: usize = 3;
 
 impl Reader {
     fn open(&mut self, node: Node) {
@@ -94,9 +104,15 @@ impl Reader {
         if self.leaf.is_none() {
             self.open(Node::new("paragraph"));
         }
+        // Not from every open mark: emphasis can nest as deep as the text is long.
         let mut marks: BTreeMap<String, Value> = BTreeMap::new();
-        for (name, value) in &self.marks {
-            marks.insert((*name).to_owned(), value.clone());
+        for (name, values) in MARKS.iter().zip(&self.marks) {
+            if let Some(value) = values.last() {
+                marks.insert((*name).to_owned(), value.clone());
+            }
+        }
+        if let Some(described) = &mut self.described {
+            *described = true;
         }
         if code {
             marks.insert("code".to_owned(), true.into());
@@ -115,8 +131,17 @@ impl Reader {
     fn plain(&mut self, text: &str, code: bool) {
         self.text(text, code);
         if let Some(leaf) = &mut self.leaf {
-            leaf.plain |= !self.described;
+            leaf.plain |= self.described.is_none();
         }
+    }
+
+    fn mark(&mut self, mark: usize, value: impl Into<Value>) {
+        self.marks[mark].push(value.into());
+        self.opened.push(mark);
+    }
+
+    fn unmark(&mut self) -> Option<Value> {
+        self.marks[self.opened.pop()?].pop()
     }
 
     fn start(&mut self, tag: Tag) {
@@ -141,10 +166,10 @@ impl Reader {
                 self.enter(Container::List(start));
             }
             Tag::Item => self.enter(Container::Item(None)),
-            Tag::Emphasis => self.marks.push(("italic", true.into())),
-            Tag::Strong => self.marks.push(("bold", true.into())),
-            Tag::Strikethrough => self.marks.push(("strike", true.into())),
-            Tag::Link { dest_url, .. } => self.marks.push(("link", dest_url.as_ref().into())),
+            Tag::Emphasis => self.mark(ITALIC, true),
+            Tag::Strong => self.mark(BOLD, true),
+            Tag::Strikethrough => self.mark(STRIKE, true),
+            Tag::Link { dest_url, .. } => self.mark(LINK, dest_url.as_ref()),
             Tag::Image { dest_url, .. } => {
                 if self.leaf.is_none() {
                     self.open(Node::new("paragraph"));
@@ -154,8 +179,8 @@ impl Reader {
                     leaf.plain |= leaf.image.is_some();
                     leaf.image = Some(dest_url.to_string());
                 }
-                self.marks.push(("link", dest_url.as_ref().into()));
-                self.described = true;
+                self.mark(LINK, dest_url.as_ref());
+                self.described = Some(false);
             }
             _ => {}
         }
@@ -191,22 +216,18 @@ impl Reader {
             }
             TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item => self.leave(),
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
-                self.marks.pop();
+                self.unmark();
             }
             TagEnd::Image => {
-                self.described = false;
                 // An image without a description still shows as its address.
-                if let Some((_, Value::Str(url))) = self.marks.pop()
-                    && self.leaf.as_ref().is_some_and(|leaf| !leaf.plain)
-                    && self
-                        .leaf
-                        .as_ref()
-                        .is_some_and(|leaf| leaf.node.spans.is_empty())
+                if let Some(Value::Str(url)) = self.unmark()
+                    && self.described == Some(false)
                 {
-                    self.marks.push(("link", url.as_str().into()));
+                    self.mark(LINK, url.as_str());
                     self.text(&url, false);
-                    self.marks.pop();
+                    self.unmark();
                 }
+                self.described = None;
             }
             _ => {}
         }
@@ -327,11 +348,24 @@ impl Document {
         let mut stack: Vec<_> = nodes.into_iter().rev().map(|n| (top, depth, n)).collect();
         while let Some((parent, depth, mut node)) = stack.pop() {
             if self.schema().block_spec(node.block_type).is_none() {
-                if node.spans.is_empty() && node.children.is_empty() {
-                    continue;
+                if node.block_type == "image" {
+                    node.spans = image_link(&node.attrs);
                 }
                 // Without its type, its attributes mean nothing.
                 (node.block_type, node.attrs) = ("paragraph", Vec::new());
+                if node.spans.is_empty() {
+                    // It says nothing itself, so what is in it takes its place.
+                    let children = node.children.into_iter().rev();
+                    stack.extend(children.map(|child| (parent, depth, child)));
+                    continue;
+                }
+            }
+            let holds_text = self.holds_text(node.block_type)?;
+            if !holds_text && !node.spans.is_empty() {
+                // The type holds no text here, so its text goes first inside it.
+                let mut text = Node::new("paragraph");
+                text.spans = std::mem::take(&mut node.spans);
+                node.children.insert(0, text);
             }
             let index = next.entry(parent).or_insert(0);
             let block = self.insert_block(parent, *index, node.block_type)?;
@@ -342,9 +376,13 @@ impl Document {
             for (key, value) in node.attrs {
                 self.set_attr(block, key, value)?;
             }
-            if self.holds_text(node.block_type)? {
+            if holds_text {
                 for span in &mut node.spans {
-                    span.marks.retain(|name, _| self.mark_spec(name).is_ok());
+                    let fits = |name: &String, value: &mut Value| {
+                        let spec = self.mark_spec(name);
+                        spec.is_ok_and(|spec| spec.check_value(value).is_ok())
+                    };
+                    span.marks.retain(fits);
                 }
                 self.insert_spans(block, 0, &node.spans)?;
             }
@@ -359,4 +397,16 @@ impl Document {
         }
         Ok(made)
     }
+}
+
+/// An image as text: its description, linked to its address.
+fn image_link(attrs: &[(&'static str, Value)]) -> Vec<Span> {
+    let text = |wanted| match attrs.iter().find(|(key, _)| *key == wanted) {
+        Some((_, Value::Str(text))) => text.clone(),
+        _ => String::new(),
+    };
+    let (url, caption) = (text("url"), text("caption"));
+    let marks = BTreeMap::from([("link".to_owned(), Value::from(url.as_str()))]);
+    let text = if caption.is_empty() { url } else { caption };
+    vec![Span { text, marks }]
 }
