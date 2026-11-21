@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 use lotype_core::test_support::{editor, outline};
-use lotype_core::{Command, Editor, Selection, blocks, default_keymap, divider, h1, p};
+use lotype_core::{
+    BlockId, BlockSpec, Command, Content, Document, Editor, Schema, Selection, b, blocks,
+    default_keymap, divider, h1, p,
+};
 
 fn shown(ed: &Editor) -> String {
     outline(ed.document(), ed.selection())
@@ -184,4 +187,113 @@ fn the_default_keymap_runs_and_binds_each_key_once() {
         let mut ed = editor(blocks![p!["a"], p!["<a>bc<b>"]]);
         ed.run(&binding.command).unwrap();
     }
+}
+
+fn find(ed: &Editor, text: &str) -> BlockId {
+    let doc = ed.document();
+    let found = |block: &BlockId| doc.text(*block).is_ok_and(|t| t == text);
+    doc.blocks().into_iter().find(found).unwrap()
+}
+
+#[test]
+fn a_block_selection_moves_each_block_once_whatever_its_order() {
+    let mut ed = editor(blocks![p!["a", p!["a1"]], p!["b"], p!["c"]]);
+    let (b, c) = (find(&ed, "b"), find(&ed, "c"));
+    ed.set_selection(Some(Selection::Blocks(vec![c, b, c])))
+        .unwrap();
+    ed.indent().unwrap();
+    assert_eq!(
+        outline(ed.document(), None),
+        "paragraph \"a\"\n  paragraph \"a1\"\n  paragraph \"b\"\n  paragraph \"c\"\n"
+    );
+
+    // A block deep inside a selected one moves with it, not on its own.
+    let mut ed = editor(blocks![p!["top", p!["g", p!["m", p!["deep"]]]]]);
+    let picked = vec![find(&ed, "deep"), find(&ed, "g")];
+    ed.set_selection(Some(Selection::Blocks(picked))).unwrap();
+    ed.outdent().unwrap();
+    assert_eq!(
+        outline(ed.document(), None),
+        "paragraph \"top\"\nparagraph \"g\"\n  paragraph \"m\"\n    paragraph \"deep\"\n"
+    );
+}
+
+#[test]
+fn outdent_frees_a_block_that_takes_no_children_from_the_end() {
+    let mut ed = editor(blocks![p!["top", h1!["x<a>"], p!["y<b>"]]]);
+    ed.outdent().unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph \"top\"\nheading level=1 \"x<a>\"\nparagraph \"y<b>\"\n"
+    );
+}
+
+#[test]
+fn set_block_leaves_what_cannot_become_the_type() {
+    let mut ed = editor(blocks![p!["<a>a"], p!["b", p!["child<b>"]]]);
+    ed.run(&Command::set_block("heading").with("level", 1))
+        .unwrap();
+    assert_eq!(
+        shown(&ed),
+        "heading level=1 \"<a>a\"\nparagraph \"b\"\n  heading level=1 \"child<b>\"\n"
+    );
+
+    // A block of a type only another peer knows keeps its type and attributes.
+    let theirs = Schema::builtin().block(BlockSpec::new("widget", Content::None));
+    let mut source = Document::new(theirs);
+    let widget = source.insert_block(None, 0, "widget").unwrap();
+    source.set_attr(widget, "src", "keep").unwrap();
+    let mut doc = Document::new(Schema::builtin());
+    doc.import(&source.export_snapshot().unwrap()).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.set_selection(Some(Selection::Blocks(vec![widget])))
+        .unwrap();
+    ed.set_block("page_break", &[]).unwrap();
+    assert_eq!(outline(ed.document(), None), "widget src=keep\n");
+}
+
+#[test]
+fn asking_for_what_a_block_already_is_makes_no_step() {
+    let mut ed = editor(blocks![h1!["a<a>"]]);
+    ed.insert_text("x").unwrap();
+    assert!(ed.undo().unwrap());
+    ed.run(&Command::set_block("heading").with("level", 1))
+        .unwrap();
+    assert!(ed.can_redo());
+    assert!(!ed.can_undo());
+}
+
+#[test]
+fn pasted_text_is_a_step_of_its_own_and_no_rule_reads_it() {
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.paste_text("---").unwrap();
+    assert_eq!(shown(&ed), "paragraph \"---<a>\"\n");
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.paste_text("**a** and **b**").unwrap();
+    assert_eq!(shown(&ed), "paragraph \"**a** and **b**<a>\"\n");
+
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.insert_text("typed").unwrap();
+    ed.paste_text(" pasted").unwrap();
+    ed.insert_text("!").unwrap();
+    assert!(ed.undo().unwrap());
+    assert!(ed.undo().unwrap());
+    assert_eq!(shown(&ed), "paragraph \"typed<a>\"\n");
+}
+
+#[test]
+fn a_pasted_address_takes_the_marks_typing_would_and_replaces_an_empty_range() {
+    let mut ed = editor(blocks![p![b!["ab<a>cd"]]]);
+    ed.paste_text("https://x.dev").unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph \"[bold|ab][bold,link=https://x.dev|https://x.dev]<a>[bold|cd]\"\n"
+    );
+
+    let mut ed = editor(blocks![p!["a<a>"], p!["<b>b"]]);
+    ed.paste_text("https://x.dev").unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph \"a[link=https://x.dev|https://x.dev]<a>b\"\n"
+    );
 }

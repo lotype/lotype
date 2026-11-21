@@ -147,7 +147,8 @@ impl Document {
         if !after.is_empty() && !self.spec(block).is_ok_and(BlockSpec::allows_children) {
             return Ok(false);
         }
-        let end = self.children(Some(block))?.len();
+        // Behind every child it has, also those the depth cap hides.
+        let end = self.child_ids(TreeParentId::Node(block.0)).len();
         for (offset, sibling) in after.iter().enumerate() {
             self.relocate_block(*sibling, Some(block), end + offset)?;
         }

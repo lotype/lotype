@@ -1,21 +1,35 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use super::{Editor, text_selection};
-use crate::{BlockId, Document, Error, Pos, Result, Selection, Span, Value};
+use crate::{BlockId, Content, Document, Error, Pos, Result, Selection, Span, Value};
 
 impl Editor {
     /// Turns the blocks of the selection into `block_type`, with these
-    /// attributes and no others. Blocks without text stay as they are when
-    /// the type holds text, and the other way round.
+    /// attributes and no others. A block stays as it is when it cannot
+    /// become that: when one of the two holds text and the other does not,
+    /// when it has children and the type takes none, or when its own type
+    /// is unknown here.
     pub fn set_block(&mut self, block_type: &str, attrs: &[(String, Value)]) -> Result<()> {
         let blocks = self.selected_blocks()?;
         self.apply(|doc, selection| {
+            let (holds_text, nests) = {
+                let spec = doc.schema().block_spec(block_type);
+                let spec = spec.ok_or_else(|| Error::UnknownBlockType(block_type.to_owned()))?;
+                (spec.content() == Content::Inline, spec.allows_children())
+            };
             for block in blocks {
-                if doc.text_len(block).is_ok() != doc.holds_text(block_type)? {
+                let fits = doc.spec(block).is_ok()
+                    && doc.text_len(block).is_ok() == holds_text
+                    && (nests || doc.children(Some(block))?.is_empty());
+                if !fits {
                     continue;
                 }
+                // Only what changes, so that asking for what a block already
+                // is makes no undo step.
                 for key in doc.attrs(block)?.into_keys() {
-                    doc.remove_attr(block, &key)?;
+                    if !attrs.iter().any(|(kept, _)| *kept == key) {
+                        doc.remove_attr(block, &key)?;
+                    }
                 }
                 doc.set_block_type(block, block_type)?;
                 for (key, value) in attrs {
@@ -29,54 +43,70 @@ impl Editor {
     /// Nests the selected blocks under the block before them, as Tab does.
     /// Blocks that cannot go there stay.
     pub fn indent(&mut self) -> Result<()> {
-        self.shift(Document::indent_block)
+        self.shift(false, Document::indent_block)
     }
 
     /// Moves the selected blocks out of their parent, as Shift-Tab does.
     /// Blocks that cannot leave stay.
     pub fn outdent(&mut self) -> Result<()> {
-        self.shift(Document::outdent_block)
+        self.shift(true, Document::outdent_block)
     }
 
-    fn shift(&mut self, shift: fn(&mut Document, BlockId) -> Result<bool>) -> Result<()> {
+    fn shift(
+        &mut self,
+        backward: bool,
+        shift: fn(&mut Document, BlockId) -> Result<bool>,
+    ) -> Result<()> {
         let blocks = self.selected_blocks()?;
         self.apply(|doc, selection| {
-            // A block inside another selected block moves with that one.
-            let chosen: HashSet<_> = blocks.iter().copied().collect();
+            // Each block once, and not one inside another selected block,
+            // which moves with that one.
+            let chosen: HashSet<_> = blocks.into_iter().collect();
             let mut outermost = Vec::new();
-            for block in blocks {
-                if doc
-                    .parent(block)?
-                    .is_none_or(|parent| !chosen.contains(&parent))
-                {
-                    outermost.push(block);
+            for block in &chosen {
+                let mut above = doc.parent(*block)?;
+                while let Some(parent) = above.filter(|parent| !chosen.contains(parent)) {
+                    above = doc.parent(parent)?;
+                }
+                if above.is_none() {
+                    outermost.push((doc.path(*block)?, *block));
                 }
             }
-            for block in outermost {
+            outermost.sort_by(|a, b| a.0.cmp(&b.0));
+            // Moving out starts at the end: a block that takes no children
+            // cannot leave while a sibling still follows it.
+            if backward {
+                outermost.reverse();
+            }
+            for (_, block) in outermost {
                 shift(doc, block)?;
             }
             Ok(selection.cloned())
         })
     }
 
-    /// Inserts pasted plain text. A web or mail address becomes a link: on
-    /// the selected text when there is some, and else as text of its own.
+    /// Inserts pasted plain text, as a step of its own and as it is: no
+    /// input rule reads it. A web or mail address becomes a link: on the
+    /// selected text when there is some, and else as text of its own.
     pub fn paste_text(&mut self, text: &str) -> Result<()> {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let address = text.trim();
-        if !is_address(address) || self.doc.mark_spec("link").is_err() {
-            return self.insert_text(text);
+        let links = is_address(address) && self.doc.mark_spec("link").is_ok();
+        let selected = !self.doc.segments(anchor, head)?.is_empty();
+        let mut marks = self.active_marks()?;
+        if links {
+            marks.insert("link".to_owned(), Value::from(address));
         }
         self.apply(|doc, selection| {
-            if anchor != head {
+            if links && selected {
                 doc.mark_range(anchor, head, "link", address)?;
                 return Ok(selection.cloned());
             }
-            let marks = BTreeMap::from([("link".to_owned(), Value::from(address))]);
-            let text = address.to_owned();
-            doc.insert_spans(head.block, head.offset, &[Span { text, marks }])?;
-            let caret = Pos::new(head.block, head.offset + address.len());
-            Ok(Some(Selection::caret(caret)))
+            let text = if links { address } else { text }.to_owned();
+            let caret = doc.delete_range(anchor, head)?;
+            let end = Pos::new(caret.block, caret.offset + text.len());
+            doc.insert_spans(caret.block, caret.offset, &[Span { text, marks }])?;
+            Ok(Some(Selection::caret(end)))
         })
     }
 
