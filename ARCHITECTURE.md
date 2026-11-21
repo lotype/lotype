@@ -457,7 +457,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | Offset unit of GPUI `TextRun` (assumed to be UTF-8 bytes) | Verify in the `gpui-pre` source |
 | Builder markers `<a>`/`<b>` clash with literal `<a>`/`<b>` in test text | Accepted: test-only; write such text through the document API instead |
 | `heapless` 0.7/0.8 (pulled in by `loro`) has unsoundness advisories fixed only in 0.9.4. Loro and `postcard` use just `heapless::Vec`/`String`; the one advisory touching those (`vec::IntoIter` drop) needs an element whose `Drop` panics, which Loro's elements do not | Accepted; goes away when Loro moves to heapless 0.9 |
-| The core uses whitespace boundaries to group typing and has no clock for pause detection | The UI can end a run by setting the selection again |
+| The core uses whitespace boundaries to group typing and has no clock for pause detection | The UI can call `Editor::finish_edit_group` when its typing timer expires |
 | Every editor command walks all blocks once to record the selection for undo, so its cost grows with document size | Acceptable now; revisit with the performance milestone |
 | A split or merge is delete + insert in the CRDT, so a concurrent edit to the moved text can be lost | Accepted; inherent without a native split operation |
 | Content only a peer with another schema can create is kept but not fully understood: a mark outside the local schema keeps its value when text moves but then follows the local default expand rule (none), and an attribute that is itself a container is not copied to the new block on split | Accepted; revisit with schema negotiation in the collaboration milestone |

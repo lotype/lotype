@@ -16,9 +16,10 @@ const TREE: &str = "blocks";
 pub(crate) const TYPE: &str = "$type";
 pub(crate) const TEXT: &str = "$text";
 
-/// Identifies a block.
+/// A handle to a live block in a document.
 ///
-/// Undoing the removal of a block restores it under a new id.
+/// Undoing a removal restores the block under a new ID. Refresh cached IDs
+/// from [`Document::blocks`] after undo restores removed blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockId(pub(crate) TreeID);
 
