@@ -169,6 +169,25 @@ fn setting_a_valued_mark_on_a_range_is_undoable() {
 }
 
 #[test]
+fn finish_edit_group_preserves_the_selection_and_pending_marks() {
+    let code = |text: &str| marked("code", true, vec![text.into()]);
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.toggle_mark("code").unwrap();
+    ed.insert_text("a").unwrap();
+
+    ed.finish_edit_group();
+    ed.finish_edit_group();
+    assert_editor(&ed, blocks![p![code("a<a>")]]);
+    ed.insert_text("b").unwrap();
+    assert_editor(&ed, blocks![p![code("ab<a>")]]);
+
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p![code("a<a>")]]);
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["<a>"]]);
+}
+
+#[test]
 fn setting_the_same_selection_ends_the_run_but_keeps_pending_marks() {
     let code = |text: &str| marked("code", true, vec![text.into()]);
     let mut ed = editor(blocks![p!["<a>"]]);

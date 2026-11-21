@@ -101,8 +101,9 @@ impl Editor {
         })
     }
 
-    /// Closes the open run, so the next keystroke starts a new undo step.
-    pub(super) fn end_run(&mut self) {
+    /// Ends the current typing or deletion group so the next edit starts a new undo step.
+    /// The selection and pending marks stay active.
+    pub fn finish_edit_group(&mut self) {
         if self.run.take().is_some() {
             self.history.group_end();
         }

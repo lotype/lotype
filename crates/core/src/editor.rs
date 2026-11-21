@@ -92,7 +92,7 @@ impl Editor {
         if let Some(selection) = &selection {
             self.doc.check_selection(selection)?;
         }
-        self.end_run();
+        self.finish_edit_group();
         if self.selection != selection {
             self.pending_marks = None;
         }
@@ -106,6 +106,27 @@ impl Editor {
     /// document as an undo step. If it panics, they stay too, and the undo
     /// history and the selection are cleared.
     /// Replacing the document starts a new history with the replacement as its baseline.
+    ///
+    /// ```
+    /// use lotype_core::{Document, Editor, Error, Schema};
+    ///
+    /// # fn main() -> lotype_core::Result<()> {
+    /// let mut editor = Editor::new(Document::new(Schema::builtin()));
+    /// let result = editor.apply(|doc, _| {
+    ///     let block = doc.insert_block(None, 0, "paragraph")?;
+    ///     doc.insert_text(block, 0, "draft")?;
+    ///     doc.mark(block, 0..5, "unknown", true)?;
+    ///     Ok(None)
+    /// });
+    ///
+    /// assert!(matches!(result, Err(Error::UnknownMark(_))));
+    /// let block = editor.document().blocks()[0];
+    /// assert_eq!(editor.document().text(block)?, "draft");
+    /// assert!(editor.undo()?);
+    /// assert!(editor.document().blocks().is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn apply(
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
@@ -125,7 +146,7 @@ impl Editor {
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
     ) -> Result<bool> {
         if !extend_run {
-            self.end_run();
+            self.finish_edit_group();
         }
         let new_step = self.run.is_none();
         let before = if new_step { self.anchor() } else { None };
@@ -262,7 +283,7 @@ impl Editor {
             Some(marks) => marks,
             None => self.doc.typing_marks(pos)?,
         };
-        self.end_run();
+        self.finish_edit_group();
         edit(&mut marks);
         self.pending_marks = Some(marks);
         Ok(())
@@ -291,7 +312,7 @@ impl Editor {
 
     /// Undoes the last step. Returns whether there was one.
     pub fn undo(&mut self) -> Result<bool> {
-        self.end_run();
+        self.finish_edit_group();
         self.pending_marks = None;
         loop {
             let count = self.history.undo_count();
@@ -312,7 +333,7 @@ impl Editor {
 
     /// Redoes the last undone step. Returns whether there was one.
     pub fn redo(&mut self) -> Result<bool> {
-        self.end_run();
+        self.finish_edit_group();
         self.pending_marks = None;
         loop {
             let count = self.history.redo_count();
