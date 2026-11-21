@@ -148,8 +148,14 @@ Built on `loro` 1.18. The APIs below were checked in the crate source:
 
 Design decisions:
 
-- **Blocks** are `LoroTree` nodes, so every block has a native ID (`TreeID`) with no patching. Each block's inline content is a `LoroText`, and its attributes are a `LoroMap`.
-- **Positions** are `Pos { block: BlockId, offset: usize }`. Offsets are UTF-8 bytes, and positions are stored as `loro::Cursor` so they survive remote edits. Conversion to UTF-16 happens only at the IME boundary in `lotype-ui`.
+- **Blocks** are `LoroTree` nodes, so every block has a native ID (`TreeID`) with no patching. A block's metadata map holds its type (`$type`), its text (`$text`, a `LoroText` created with the block so two peers never create it separately) and its attributes. Attribute keys starting with `$` are reserved.
+- **Block IDs are not stable across undo of a removal.** Loro restores a removed block, with its text, marks and children, under a new `TreeID`. Anything that must survive undo, such as the editor's own undo selections, refers to blocks by their position in document order instead of by ID.
+- **Positions** are `Pos { block: BlockId, offset: usize }`. Offsets are UTF-8 bytes and must fall on character boundaries; anything else is rejected. Positions that must survive remote edits will be kept as `loro::Cursor` when collaboration lands (milestone 2). Conversion to UTF-16 happens only at the IME boundary in `lotype-ui`.
+- **Untrusted content.** Everything read from the Loro document may come from another peer, possibly one with a different schema, so the core never panics on it and never loses it:
+  - Blocks of an unknown type are reported as such and skipped by range commands.
+  - Marks outside the schema stay readable. Split, merge and range delete copy text and attributes as stored, so unknown marks and values survive.
+  - Tree walks use an explicit stack, never recursion.
+- **Nesting is capped at `MAX_DEPTH` (128 levels).** Deeper blocks sent by another peer stay in the shared data but are not part of the document: no method returns them, and local edits cannot create them. The cap bounds every ancestor walk, which keeps reads linear however deep a peer nests.
 - **Undo** is local-only (`loro::UndoManager`), so a user undoes only their own edits. `prosemirror-history` is not ported.
 - **Tables** use a grid model so concurrent edits merge cleanly:
   ```text
@@ -311,9 +317,9 @@ The test helpers are public, gated behind `#[cfg(any(test, feature = "test-suppo
 
 - **Document builders** in core. Selection markers `<a>` and `<b>` follow `prosemirror-test-builder`:
   ```rust
-  let mut ed = test_editor(doc![p!["Hello <a>wor", b!["ld"], "<b>"], h1!["Title"]]);
-  ed.run(commands::toggle_mark(Mark::Italic));
-  assert_doc!(ed, doc![p!["Hello <a>", i!["wor", b!["ld"]], "<b>"], h1!["Title"]]);
+  let mut ed = editor(blocks![p!["Hello <a>wor", b!["ld"], "<b>"], h1!["Title"]]);
+  ed.toggle_mark("italic")?;
+  assert_editor(&ed, blocks![p!["Hello <a>", i!["wor", b!["ld"]], "<b>"], h1!["Title"]]);
   ```
 - **Collaboration helpers:** `peers(..)`, `sync(&a, &b)`, `assert_converged!`, and an exported proptest strategy `arb_ops::<MyBlock>()`.
 - **Spec checks:** `assert_spec_roundtrip::<MyBlock>(markdown)`.
@@ -331,7 +337,7 @@ cargo test   --workspace --exclude lotype-ui --exclude lotype
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `lotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `lotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. A third runs `cargo deny check` against `deny.toml`: RustSec advisories, a license allow-list with nothing copyleft that would bind applications using the SDK, and crates.io as the only source. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
 
 ---
 
@@ -346,19 +352,21 @@ lotype/
 └── crates/
     ├── app/                # Reference binary: main.rs, wiring.rs
     ├── core/src/
-    │   ├── document.rs     # LoroDoc wrapper: block tree, content
-    │   ├── schema.rs       # BlockSpec / InlineSpec / MarkSpec registry
-    │   ├── blocks/         # Built-in specs
-    │   ├── marks.rs        # Built-in marks, expand config
+    │   ├── schema.rs       # BlockSpec / MarkSpec registry, built-in blocks and marks
+    │   ├── document.rs     # LoroDoc wrapper: block tree, types, attributes
+    │   ├── order.rs        # Document order: traversal, paths
+    │   ├── text.rs         # Rich text and marks
     │   ├── selection.rs    # Pos, Selection
-    │   ├── commands.rs     # Block and mark commands, cross-block ops
+    │   ├── commands.rs     # Split, merge, range delete, marks across blocks
+    │   ├── editor.rs       # Editor: selection + local undo
+    │   ├── value.rs, error.rs
+    │   ├── test_support.rs # [feature "test-support"]
+    │   │   # planned:
     │   ├── rules.rs        # Input rules, paste rules, keymap
     │   ├── suggestion.rs   # Slash menu items, filter, query state
-    │   ├── history.rs      # UndoManager wrapper
     │   ├── collab.rs       # Update export/import, EphemeralStore
     │   ├── normalize.rs    # Read-time schema tolerance
-    │   ├── markdown.rs     # Markdown <-> block tree
-    │   └── test_support/
+    │   └── markdown.rs     # Markdown <-> block tree
     ├── ui/src/
     │   ├── editor/         # canvas.rs, text_el.rs, ime.rs, actions.rs, block_view.rs
     │   ├── components/     # slash_menu, formatting_toolbar, link_toolbar, side_menu, table,
@@ -442,7 +450,13 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | No performance baseline from the legacy Tauri app | Measure latency, open time, memory and scroll FPS |
 | `katex-native` is very new (0.1.1) | Fallback: keep `katex-rs` as the parser and write our own display list |
 | Offset unit of GPUI `TextRun` (assumed to be UTF-8 bytes) | Verify in the `gpui-pre` source |
-| Builder markers `<a>`/`<b>` may clash with literal text | Check while implementing the builders |
+| Builder markers `<a>`/`<b>` clash with literal `<a>`/`<b>` in test text | Accepted: test-only; write such text through the document API instead |
+| `heapless` 0.7/0.8 (pulled in by `loro`) has unsoundness advisories fixed only in 0.9.4. Loro and `postcard` use just `heapless::Vec`/`String`; the one advisory touching those (`vec::IntoIter` drop) needs an element whose `Drop` panics, which Loro's elements do not | Accepted; goes away when Loro moves to heapless 0.9 |
+| Typing is one undo step per call, and toggling a mark on a caret does nothing (no pending marks) | Add coalescing and pending marks with the UI milestone |
+| Every editor command walks all blocks once to record the selection for undo, so its cost grows with document size | Acceptable now; revisit with the performance milestone |
+| A split or merge is delete + insert in the CRDT, so a concurrent edit to the moved text can be lost | Accepted; inherent without a native split operation |
+| Content only a peer with another schema can create is kept but not fully understood: a mark outside the local schema keeps its value when text moves but then follows the local default expand rule (none), and an attribute that is itself a container is not copied to the new block on split | Accepted; revisit with schema negotiation in the collaboration milestone |
+| Each accessor checks that its block is in the document by walking its ancestors, at most `MAX_DEPTH` steps; reading a whole document nested near the cap is correspondingly slower than a flat one | Accepted bound; a liveness cache is the fix if profiling calls for it |
 
 ---
 
