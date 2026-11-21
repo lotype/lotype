@@ -157,3 +157,19 @@ fn a_peers_edit_to_a_block_redo_brought_back_drops_the_redo_steps() {
     assert!(a.undo().unwrap());
     assert_eq!(a.document().text(block).unwrap(), ">>");
 }
+
+#[test]
+fn undo_restores_a_caret_whose_character_a_later_keystroke_removed() {
+    let mut a = editor(blocks![p!["a🇦x<a>🇧z"]]);
+    let mut b = peer(a.document());
+    // Without the `x` the two halves are one flag, which goes as a whole.
+    a.delete_backward().unwrap();
+    a.delete_backward().unwrap();
+    assert_editor(&a, blocks![p!["a<a>z"]]);
+    b.insert_text(b.blocks()[0], 0, ">").unwrap();
+    pull(&mut a, &b);
+
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p![">a🇦x<a>🇧z"]]);
+    assert!(!a.can_undo());
+}

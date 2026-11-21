@@ -215,7 +215,7 @@ impl Document {
     pub(crate) fn record_cut(&self, anchored: &mut Anchored) {
         if let Anchored::Text { anchor, head } = anchored {
             for endpoint in [anchor, head] {
-                endpoint.cut = endpoint.cursor.as_ref().is_some_and(|cursor| {
+                endpoint.cut |= endpoint.cursor.as_ref().is_some_and(|cursor| {
                     let position = self.doc.get_cursor_pos(cursor);
                     position.is_ok_and(|position| position.update.is_some())
                 });

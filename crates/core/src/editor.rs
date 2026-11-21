@@ -228,6 +228,10 @@ impl Editor {
                 self.push_undo_step(Step { before, after });
                 self.redo_steps.clear();
             } else if let Some(step) = self.undo_steps.back_mut() {
+                // A later keystroke of the run can remove the character too.
+                if let Some(before) = &mut step.before {
+                    self.doc.record_cut(before);
+                }
                 step.after = after;
             }
         }
