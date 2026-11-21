@@ -1,3 +1,4 @@
+use loro::TreeParentId;
 use unicode_segmentation::GraphemeCursor;
 
 use super::{Editor, text_selection};
@@ -62,10 +63,7 @@ impl Editor {
         match kind {
             Kind::DeleteBackward if head.offset == 0 => self.join_backward(),
             Kind::DeleteForward if head.offset == self.doc.text_len(head.block)? => {
-                self.apply(|doc, selection| {
-                    join_forward(doc, head.block)?;
-                    Ok(selection.cloned())
-                })
+                self.apply(|doc, _| Ok(Some(Selection::caret(join_forward(doc, head)?))))
             }
             _ => self.delete_grapheme(head, kind),
         }
@@ -150,14 +148,19 @@ impl Editor {
 
 /// Joins the block after `block` onto it. A textless block there is removed
 /// instead, unless it has children.
-fn join_forward(doc: &mut Document, block: crate::BlockId) -> Result<()> {
-    let Some(next) = doc.next_block(block)? else {
-        return Ok(());
+fn join_forward(doc: &mut Document, caret: Pos) -> Result<Pos> {
+    let Some(next) = doc.next_block(caret.block)? else {
+        return Ok(caret);
     };
     if doc.text_len(next).is_ok() {
-        doc.merge_backward(next)?;
-    } else if doc.children(Some(next))?.is_empty() {
+        return Ok(doc.merge_backward(next)?.unwrap_or(caret));
+    }
+    let node = doc.live(caret.block)?;
+    if doc
+        .child_ids(TreeParentId::Node(doc.live(next)?))
+        .is_empty()
+    {
         doc.remove_block(next)?;
     }
-    Ok(())
+    Ok(Pos::new(doc.id_of(node), caret.offset))
 }

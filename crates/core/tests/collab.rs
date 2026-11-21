@@ -183,6 +183,28 @@ fn deleting_the_character_before_a_backward_range_keeps_its_text_selected() {
 }
 
 #[test]
+fn delivery_boundaries_do_not_change_a_range_over_replaced_text() {
+    let mut a = editor(blocks![p!["x<a>abc<b>y"]]);
+    let mut b = peer(a.document());
+    let mut c = Editor::new(peer(a.document()));
+    c.set_selection(a.selection().cloned()).unwrap();
+    let block = b.blocks()[0];
+
+    b.delete_text(block, 1..4).unwrap();
+    a.import(&b.export_updates(&a.document().version()).unwrap())
+        .unwrap();
+    assert!(a.selection().unwrap().is_collapsed());
+    b.insert_text(block, 1, "new").unwrap();
+    a.import(&b.export_updates(&a.document().version()).unwrap())
+        .unwrap();
+    c.import(&b.export_updates(&c.document().version()).unwrap())
+        .unwrap();
+
+    assert_editor(&a, blocks![p!["x<a>new<b>y"]]);
+    assert_eq!(a.selection(), c.selection());
+}
+
+#[test]
 fn unrelated_remote_text_does_not_move_an_undone_caret() {
     let mut a = editor(blocks![p!["one t<a>o three"], p!["other"]]);
     let mut b = peer(a.document());

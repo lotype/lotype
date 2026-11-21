@@ -6,6 +6,7 @@ use loro::event::Diff;
 
 use super::Editor;
 use crate::Result;
+use crate::collab::Anchored;
 
 impl Editor {
     /// Merges a snapshot or updates from another peer.
@@ -16,7 +17,10 @@ impl Editor {
     /// An import that advances this editor's own peer counter clears its history.
     /// See [`Document::import`](crate::Document::import) for partial imports.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
-        let mut anchored = self.selection.as_ref().map(|s| self.doc.anchored(s));
+        let mut anchored = self
+            .live_anchors
+            .take()
+            .or_else(|| self.selection.as_ref().map(|s| self.doc.anchored(s)));
         let local_peer = self.doc.doc.peer_id();
         let local_counter = self.doc.doc.state_vv().get(&local_peer).copied();
         let changed_texts = Arc::new(Mutex::new(HashSet::new()));
@@ -42,7 +46,9 @@ impl Editor {
         if let Some(anchored) = &mut anchored {
             anchored.record_import(&changed_texts);
         }
-        let selection = anchored.and_then(|anchored| self.doc.resolve(&anchored));
+        let selection = anchored
+            .as_ref()
+            .and_then(|anchored| self.doc.resolve(anchored));
         // Loro tracks undo ranges by local op counter. If an import advances
         // this peer's counter, start a new history beyond the imported ops.
         if self.doc.doc.state_vv().get(&local_peer).copied() != local_counter {
@@ -63,6 +69,8 @@ impl Editor {
         if group_ended || selection != self.selection {
             self.finish_edit_group();
         }
+        self.live_anchors = anchored
+            .filter(|anchor| selection.is_some() && matches!(anchor, Anchored::Text { .. }));
         self.selection = selection;
         result
     }

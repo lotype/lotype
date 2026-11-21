@@ -378,7 +378,7 @@ impl Document {
         self.node_depth(self.node(block))
     }
 
-    fn node_depth(&self, mut current: TreeID) -> Result<usize> {
+    pub(crate) fn node_depth(&self, mut current: TreeID) -> Result<usize> {
         for depth in 1..=MAX_DEPTH {
             match self.tree.parent(current) {
                 Some(TreeParentId::Node(parent)) => current = parent,

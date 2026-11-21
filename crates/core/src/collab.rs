@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use loro::cursor::{Cursor, PosType, Side};
-use loro::{ContainerID, ContainerTrait, ExportMode, VersionVector};
+use loro::{ContainerID, ContainerTrait, ExportMode, TreeID, VersionVector};
 
 use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
@@ -12,11 +12,17 @@ pub struct Version(VersionVector);
 /// A selection that follows its text through changes from other peers.
 pub(crate) enum Anchored {
     Text { anchor: Anchor, head: Anchor },
-    Blocks(Vec<BlockId>),
+    Blocks(Vec<BlockAnchor>),
+}
+
+pub(crate) struct BlockAnchor {
+    id: BlockId,
+    node: TreeID,
 }
 
 pub(crate) struct Anchor {
-    pos: Pos,
+    block: BlockAnchor,
+    offset: usize,
     cursor: Option<Cursor>,
     /// The cursor is on the character before the position.
     after: bool,
@@ -94,7 +100,12 @@ impl Document {
                     head: self.anchor(*head, start == Some(*head)),
                 }
             }
-            Selection::Blocks(blocks) => Anchored::Blocks(blocks.clone()),
+            Selection::Blocks(blocks) => Anchored::Blocks(
+                blocks
+                    .iter()
+                    .map(|&block| self.anchor_block(block))
+                    .collect(),
+            ),
         }
     }
 
@@ -107,13 +118,30 @@ impl Document {
                 head: self.resolve_anchor(head)?,
             }),
             Anchored::Blocks(blocks) => {
+                let mut seen = HashSet::new();
                 let blocks: Vec<_> = blocks
                     .iter()
-                    .copied()
-                    .filter(|b| self.contains(*b))
+                    .filter_map(|block| self.resolve_block(block))
+                    .filter(|block| seen.insert(*block))
                     .collect();
                 (!blocks.is_empty()).then_some(Selection::Blocks(blocks))
             }
+        }
+    }
+
+    fn anchor_block(&self, id: BlockId) -> BlockAnchor {
+        BlockAnchor {
+            id,
+            node: self.node(id),
+        }
+    }
+
+    fn resolve_block(&self, block: &BlockAnchor) -> Option<BlockId> {
+        if self.node_depth(block.node).is_ok() {
+            Some(self.id_of(block.node))
+        } else {
+            // A local undo can recreate the node under its original public ID.
+            self.contains(block.id).then_some(block.id)
         }
     }
 
@@ -123,11 +151,15 @@ impl Document {
     fn anchor(&self, pos: Pos, range_start: bool) -> Anchor {
         let after = range_start && pos.offset > 0;
         let cursor = self.inline(pos.block).ok().and_then(|text| {
+            if range_start && pos.offset == 0 {
+                return Some(Cursor::new(None, text.id(), Side::Left, 0));
+            }
             let offset = text.convert_pos(pos.offset, PosType::Bytes, PosType::Unicode)?;
             text.get_cursor(offset - usize::from(after), Side::Middle)
         });
         Anchor {
-            pos,
+            block: self.anchor_block(pos.block),
+            offset: pos.offset,
             cursor,
             after,
             moved: false,
@@ -135,7 +167,8 @@ impl Document {
     }
 
     fn resolve_anchor(&self, anchor: &Anchor) -> Option<Pos> {
-        let text = self.inline(anchor.pos.block).ok()?;
+        let block = self.resolve_block(&anchor.block)?;
+        let text = self.inline(block).ok()?;
         // Undo brings a removed block back with new text, which the cursor
         // does not know. The offset it was made at is the best place then.
         let cursor = anchor
@@ -150,7 +183,7 @@ impl Document {
                 position.current.pos + usize::from(anchor.after && position.update.is_none());
             text.convert_pos(unicode, PosType::Unicode, PosType::Bytes)
         });
-        let pos = Pos::new(anchor.pos.block, moved.unwrap_or(anchor.pos.offset));
+        let pos = Pos::new(block, moved.unwrap_or(anchor.offset));
         self.check_pos(pos).ok().map(|()| pos)
     }
 }

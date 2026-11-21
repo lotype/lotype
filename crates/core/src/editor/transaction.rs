@@ -36,6 +36,7 @@ impl Editor {
             self.doc = draft;
             self.forget_history();
             self.selection = after;
+            self.live_anchors = None;
             return Ok(());
         };
         if !Arc::ptr_eq(&record.token, &token) {

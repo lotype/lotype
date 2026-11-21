@@ -288,6 +288,65 @@ fn a_range_command_returns_the_caret_under_the_survivors_new_id() {
 }
 
 #[test]
+fn a_remote_change_in_claims_keeps_the_same_selected_node() {
+    for block_selection in [false, true] {
+        let (mut doc, _) = build(blocks![p!["first"], p!["gone"]]);
+        let [first, gone] = doc.blocks()[..] else {
+            panic!()
+        };
+        doc.remove_block(gone).unwrap();
+        claim(&doc, first, gone);
+        let mut a = Editor::new(doc);
+        let selection = |id| {
+            if block_selection {
+                Selection::Blocks(vec![id])
+            } else {
+                Selection::caret(Pos::new(id, 2))
+            }
+        };
+        a.set_selection(Some(selection(gone))).unwrap();
+        let mut b = Document::new(Schema::builtin());
+        b.import(&a.document().export_snapshot().unwrap()).unwrap();
+
+        let duplicate = b.insert_block(None, 1, "paragraph").unwrap();
+        claim(&b, duplicate, gone);
+        a.import(&b.export_updates(&a.document().version()).unwrap())
+            .unwrap();
+        assert_eq!(a.selection(), Some(&selection(first)));
+
+        b.remove_block(duplicate).unwrap();
+        a.import(&b.export_updates(&a.document().version()).unwrap())
+            .unwrap();
+        assert_eq!(a.selection(), Some(&selection(gone)));
+    }
+}
+
+#[test]
+fn forward_delete_keeps_the_caret_when_the_survivor_gains_an_id() {
+    for block_type in ["paragraph", "divider"] {
+        let (mut doc, _) = build(blocks![p!["first"], p![], p!["gone"]]);
+        let [first, second, gone] = doc.blocks()[..] else {
+            panic!()
+        };
+        doc.set_block_type(second, block_type).unwrap();
+        doc.remove_block(gone).unwrap();
+        claim(&doc, first, gone);
+        claim(&doc, second, gone);
+
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(first, 5))))
+            .unwrap();
+        editor.delete_forward().unwrap();
+        assert_eq!(editor.document().blocks(), [gone]);
+        assert_eq!(
+            editor.selection(),
+            Some(&Selection::caret(Pos::new(gone, 5)))
+        );
+    }
+}
+
+#[test]
 fn structural_deletion_preserves_a_concurrently_hidden_child() {
     for merge in [false, true] {
         let (mut a, _) = build(blocks![p!["root"]]);

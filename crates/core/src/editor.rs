@@ -19,6 +19,9 @@ const MAX_UNDO_STEPS: usize = 100;
 pub struct Editor {
     doc: Document,
     selection: Option<Selection>,
+    /// The endpoints from the last local text selection. An import may
+    /// temporarily collapse a range while its endpoints remain distinct.
+    live_anchors: Option<Anchored>,
     history: UndoManager,
     undo_steps: VecDeque<Step>,
     redo_steps: Vec<Step>,
@@ -43,6 +46,7 @@ impl Editor {
             history: new_history(&doc),
             doc,
             selection: None,
+            live_anchors: None,
             undo_steps: VecDeque::new(),
             redo_steps: Vec::new(),
             run: None,
@@ -69,6 +73,7 @@ impl Editor {
             .selection
             .take()
             .filter(|selection| self.doc.check_selection(selection).is_ok());
+        self.live_anchors = None;
         error.into()
     }
 
@@ -91,6 +96,7 @@ impl Editor {
             self.pending_marks = None;
         }
         self.selection = selection;
+        self.live_anchors = None;
         Ok(())
     }
 
@@ -184,6 +190,7 @@ impl Editor {
                     .selection
                     .take()
                     .filter(|s| doc.check_selection(s).is_ok());
+                self.live_anchors = None;
                 return Err(error);
             }
         };
@@ -197,6 +204,7 @@ impl Editor {
             }
         }
         self.selection = after;
+        self.live_anchors = None;
         Ok(changed)
     }
 
@@ -371,6 +379,7 @@ impl Editor {
     fn restore(&mut self, selection: Option<&Anchored>) {
         self.doc.refresh_ids();
         self.selection = selection.and_then(|anchored| self.doc.resolve(anchored));
+        self.live_anchors = None;
     }
 }
 
