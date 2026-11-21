@@ -14,19 +14,18 @@ impl Editor {
         if self.doc.draft.is_some() {
             return Err(Error::NestedEdit);
         }
+        // The draft and the document must put removed blocks in the same place.
+        self.ensure_trash()?;
         let token = Arc::new(());
         let fork = LoroDoc::new();
         fork.import(&self.doc.export_snapshot()?)?;
-        fork.set_peer_id(self.doc.doc.peer_id())?;
+        let (local, scratch) = (self.doc.doc.peer_id(), fork.peer_id());
         let mut draft = Document::from_loro(fork, self.doc.schema().clone());
-        draft.draft = Some(Draft::new(Arc::clone(&token)));
-        draft.refresh_ids();
+        draft.trash = self.doc.trash.clone();
+        draft.draft = Some(Draft::new(Arc::clone(&token), local, scratch));
 
         let after = edit(&mut draft, self.selection.as_ref())?;
         draft.doc.commit();
-        if draft.draft.is_none() {
-            draft.refresh_ids();
-        }
         if let Some(after) = &after {
             draft.check_selection(after)?;
         }
@@ -42,10 +41,14 @@ impl Editor {
         if !Arc::ptr_eq(&record.token, &token) {
             return Err(Error::NestedEdit);
         }
-        // Replay as local mutations so Loro keeps its undo history and the
-        // IDs allocated by the draft. The callback itself only runs once.
+        // Replay as local mutations so Loro keeps its undo history. The
+        // callback itself only runs once. New blocks come first, outside the
+        // step: undoing it then puts them away, and they stay the same blocks.
+        let (minted, edits) = record.into_parts();
+        self.finish_edit_group();
+        self.doc.mint_all(&minted)?;
         let result = self.step(false, |doc, _| {
-            for edit in record.into_edits() {
+            for edit in edits {
                 edit(doc)?;
             }
             Ok(after)

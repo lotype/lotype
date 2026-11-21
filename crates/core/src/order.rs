@@ -22,9 +22,7 @@ struct Siblings {
 impl Document {
     /// Every block, in document order.
     pub fn blocks(&self) -> Vec<BlockId> {
-        self.raw_blocks()
-            .map(|(node, _)| self.id_of(node))
-            .collect()
+        self.raw_blocks().map(|(node, _)| BlockId(node)).collect()
     }
 
     pub(crate) fn raw_blocks(&self) -> impl Iterator<Item = (TreeID, usize)> + '_ {
@@ -43,17 +41,17 @@ impl Document {
     }
 
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {
-        let mut current = self.node(block);
+        let mut current = block.0;
         if self.depth(block)? < MAX_DEPTH
             && let Some(first_child) = self.child_ids(TreeParentId::Node(current)).first()
         {
-            return Ok(Some(self.id_of(*first_child)));
+            return Ok(Some(BlockId(*first_child)));
         }
         loop {
             let (parent, next) =
                 self.with_siblings(current, |siblings, index| siblings.get(index + 1).copied())?;
             if let Some(next) = next {
-                return Ok(Some(self.id_of(next)));
+                return Ok(Some(BlockId(next)));
             }
             match parent {
                 TreeParentId::Node(parent) => current = parent,
@@ -64,12 +62,12 @@ impl Document {
 
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
         let mut depth = self.depth(block)?;
-        let (parent, prev) = self.with_siblings(self.node(block), |siblings, index| {
+        let (parent, prev) = self.with_siblings(block.0, |siblings, index| {
             index.checked_sub(1).map(|index| siblings[index])
         })?;
         let Some(mut current) = prev else {
             return Ok(match parent {
-                TreeParentId::Node(parent) => Some(self.id_of(parent)),
+                TreeParentId::Node(parent) => Some(BlockId(parent)),
                 _ => None,
             });
         };
@@ -79,7 +77,7 @@ impl Document {
             current = *last_child;
             depth += 1;
         }
-        Ok(Some(self.id_of(current)))
+        Ok(Some(BlockId(current)))
     }
 
     /// The position of `block` among its siblings.

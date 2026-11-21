@@ -8,7 +8,6 @@ mod document;
 mod draft;
 mod editor;
 mod error;
-mod ids;
 mod marks;
 mod order;
 mod schema;
@@ -18,6 +17,7 @@ pub mod test_support;
 #[cfg(test)]
 mod tests;
 mod text;
+mod trash;
 mod value;
 
 pub use collab::Version;

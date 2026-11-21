@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+use loro::TextDelta;
 use loro::event::Diff;
-use loro::{TextDelta, UndoOrRedo};
 
 use super::Editor;
 use crate::Result;
@@ -14,9 +14,7 @@ impl Editor {
     /// gone, and returns if a later import brings them back before the
     /// selection is set again. Remote changes are never part of this editor's
     /// undo history, but one that touches the text being typed ends the
-    /// current typing step. One that changes the text of a block this
-    /// editor's undo brought back clears the undo steps, and likewise for
-    /// redo and the redo steps.
+    /// current typing step.
     /// An import that advances this editor's own peer counter clears its history.
     /// See [`Document::import`](crate::Document::import) for partial imports.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
@@ -56,24 +54,6 @@ impl Editor {
         if self.local_counter() != local_counter {
             self.forget_history();
         } else if !changed_texts.is_empty() {
-            // Undo or redo brought the block back with new text, and Loro
-            // runs the steps from before that at offsets these changes moved.
-            let [undo, redo] = [UndoOrRedo::Undo, UndoOrRedo::Redo].map(|by| {
-                let mut texts = changed_texts.iter();
-                texts.any(|text| self.brought_back.get(text) == Some(&by))
-            });
-            if undo {
-                self.finish_edit_group();
-                self.history.clear_undo();
-                self.undo_steps.clear();
-            }
-            if redo {
-                self.history.clear_redo();
-                self.redo_steps.clear();
-            }
-            self.brought_back.retain(|_, by| {
-                !(undo && *by == UndoOrRedo::Undo || redo && *by == UndoOrRedo::Redo)
-            });
             for step in self.undo_steps.iter_mut().chain(&mut self.redo_steps) {
                 for anchored in step.before.iter_mut().chain(&mut step.after) {
                     anchored.record_import(&changed_texts);
@@ -88,13 +68,6 @@ impl Editor {
         }
         if group_ended || selection != self.selection {
             self.finish_edit_group();
-        }
-        // A block that came back has new text, which cursors made in the old
-        // text do not follow.
-        if let Some(selection) = &selection
-            && anchored.as_ref().is_some_and(|a| self.doc.outdated(a))
-        {
-            anchored = Some(self.doc.anchored(selection));
         }
         // Kept while nothing resolves too: a later update can bring a block back.
         self.live_anchors = anchored;

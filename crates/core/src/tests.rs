@@ -5,8 +5,9 @@ use std::ops::Range;
 
 use loro::TreeParentId;
 
-use crate::document::{ID, TYPE};
+use crate::document::TYPE;
 use crate::test_support::{assert_document, build, outline};
+use crate::trash::TRASH;
 use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Schema, Selection, b, blocks, p};
 
 fn highlight(doc: &Document, block: BlockId, range: Range<usize>) {
@@ -186,184 +187,6 @@ fn blocks_nested_beyond_max_depth_are_not_part_of_the_document() {
     assert_eq!(doc.blocks(), [top, after]);
 }
 
-fn claim(doc: &Document, block: BlockId, id: BlockId) {
-    let meta = doc.tree.get_meta(block.0).unwrap();
-    meta.insert(ID, id.0.to_string()).unwrap();
-}
-
-#[test]
-fn a_block_only_takes_a_removed_id_that_nothing_else_claims() {
-    let (mut doc, _) = build(blocks![
-        p!["a"],
-        p!["b"],
-        p!["c"],
-        p!["d"],
-        p!["x"],
-        p!["y"]
-    ]);
-    let [a, b, c, d, x, y] = doc.blocks()[..] else {
-        panic!()
-    };
-    doc.remove_block(x).unwrap();
-    doc.remove_block(y).unwrap();
-    claim(&doc, a, b);
-    claim(&doc, b, x);
-    claim(&doc, c, x);
-    claim(&doc, d, y);
-    doc.refresh_ids();
-    assert_eq!(doc.blocks(), [a, b, c, y]);
-
-    // An id no node has had yet.
-    let unborn = loro::TreeID::new(d.0.peer, d.0.counter + 1000);
-    claim(&doc, a, BlockId(unborn));
-    doc.refresh_ids();
-    assert_eq!(doc.blocks(), [a, b, c, y]);
-    assert_eq!(doc.text(y).unwrap(), "d");
-    assert_eq!(doc.next_block(c).unwrap(), Some(y));
-    assert!(matches!(doc.text(d), Err(Error::BlockNotFound)));
-    assert!(matches!(doc.text(x), Err(Error::BlockNotFound)));
-}
-
-#[test]
-fn a_claim_that_arrives_without_a_tree_change_takes_effect() {
-    let (mut source, _) = build(blocks![p!["kept"], p!["gone"]]);
-    let [kept, gone] = source.blocks()[..] else {
-        panic!()
-    };
-    source.remove_block(gone).unwrap();
-    let mut doc = Document::new(Schema::builtin());
-    doc.import(&source.export_snapshot().unwrap()).unwrap();
-    assert_eq!(doc.blocks(), [kept]);
-
-    claim(&source, kept, gone);
-    let update = source.export_updates(&doc.version()).unwrap();
-    doc.import(&update).unwrap();
-    assert_eq!(doc.blocks(), [gone]);
-    assert_eq!(doc.text(gone).unwrap(), "kept");
-}
-
-#[test]
-fn moving_a_previously_hidden_claimant_agrees_with_a_peer() {
-    let (mut source, _) = build(blocks![p!["root"], p!["gone"]]);
-    let [root, gone] = source.blocks()[..] else {
-        panic!()
-    };
-    source.remove_block(gone).unwrap();
-    let mut parent = root;
-    let mut first_child = None;
-    for _ in 0..MAX_DEPTH {
-        parent = BlockId(source.tree.create(TreeParentId::Node(parent.0)).unwrap());
-        first_child.get_or_insert(parent);
-    }
-    claim(&source, parent, gone);
-
-    let snapshot = source.export_snapshot().unwrap();
-    let mut a = Document::new(Schema::builtin());
-    let mut b = Document::new(Schema::builtin());
-    a.import(&snapshot).unwrap();
-    b.import(&snapshot).unwrap();
-    assert!(!a.contains(gone));
-
-    a.move_block(first_child.unwrap(), None, 0).unwrap();
-    b.import(&a.export_updates(&b.version()).unwrap()).unwrap();
-    assert!(a.contains(gone));
-    assert_eq!(a.blocks(), b.blocks());
-}
-
-#[test]
-fn a_block_selection_removes_every_claimant_even_if_one_would_gain_the_id() {
-    let (mut doc, _) = build(blocks![p!["first"], p!["second"], p!["gone"]]);
-    let [first, second, gone] = doc.blocks()[..] else {
-        panic!()
-    };
-    doc.remove_block(gone).unwrap();
-    claim(&doc, first, gone);
-    claim(&doc, second, gone);
-    let mut editor = Editor::new(doc);
-    editor
-        .set_selection(Some(Selection::Blocks(vec![first, second])))
-        .unwrap();
-    editor.delete_selection().unwrap();
-    assert!(editor.document().blocks().is_empty());
-}
-
-#[test]
-fn a_range_command_returns_the_caret_under_the_survivors_new_id() {
-    let (mut doc, _) = build(blocks![p!["first"], p!["second"], p!["gone"]]);
-    let [first, second, gone] = doc.blocks()[..] else {
-        panic!()
-    };
-    doc.remove_block(gone).unwrap();
-    claim(&doc, first, gone);
-    claim(&doc, second, gone);
-    doc.refresh_ids();
-
-    let caret = doc
-        .delete_range(Pos::new(first, 5), Pos::new(second, 6))
-        .unwrap();
-    assert_eq!(caret, Pos::new(gone, 5));
-    assert_eq!(doc.blocks(), [gone]);
-}
-
-#[test]
-fn a_remote_change_in_claims_keeps_the_same_selected_node() {
-    for block_selection in [false, true] {
-        let (mut doc, _) = build(blocks![p!["first"], p!["gone"]]);
-        let [first, gone] = doc.blocks()[..] else {
-            panic!()
-        };
-        doc.remove_block(gone).unwrap();
-        claim(&doc, first, gone);
-        let mut a = Editor::new(doc);
-        let selection = |id| {
-            if block_selection {
-                Selection::Blocks(vec![id])
-            } else {
-                Selection::caret(Pos::new(id, 2))
-            }
-        };
-        a.set_selection(Some(selection(gone))).unwrap();
-        let mut b = Document::new(Schema::builtin());
-        b.import(&a.document().export_snapshot().unwrap()).unwrap();
-
-        let duplicate = b.insert_block(None, 1, "paragraph").unwrap();
-        claim(&b, duplicate, gone);
-        a.import(&b.export_updates(&a.document().version()).unwrap())
-            .unwrap();
-        assert_eq!(a.selection(), Some(&selection(first)));
-
-        b.remove_block(duplicate).unwrap();
-        a.import(&b.export_updates(&a.document().version()).unwrap())
-            .unwrap();
-        assert_eq!(a.selection(), Some(&selection(gone)));
-    }
-}
-
-#[test]
-fn forward_delete_keeps_the_caret_when_the_survivor_gains_an_id() {
-    for block_type in ["paragraph", "divider"] {
-        let (mut doc, _) = build(blocks![p!["first"], p![], p!["gone"]]);
-        let [first, second, gone] = doc.blocks()[..] else {
-            panic!()
-        };
-        doc.set_block_type(second, block_type).unwrap();
-        doc.remove_block(gone).unwrap();
-        claim(&doc, first, gone);
-        claim(&doc, second, gone);
-
-        let mut editor = Editor::new(doc);
-        editor
-            .set_selection(Some(Selection::caret(Pos::new(first, 5))))
-            .unwrap();
-        editor.delete_forward().unwrap();
-        assert_eq!(editor.document().blocks(), [gone]);
-        assert_eq!(
-            editor.selection(),
-            Some(&Selection::caret(Pos::new(gone, 5)))
-        );
-    }
-}
-
 #[test]
 fn structural_deletion_preserves_a_concurrently_hidden_child() {
     for merge in [false, true] {
@@ -423,23 +246,115 @@ fn importing_operations_for_the_local_peer_keeps_them_out_of_undo() {
 }
 
 #[test]
-fn a_replacement_document_is_addressed_by_its_restored_ids() {
-    let (mut replacement, _) = build(blocks![p!["a"], p!["gone"]]);
-    let [a, gone] = replacement.blocks()[..] else {
+fn a_removed_block_is_kept_out_of_sight() {
+    let (mut doc, _) = build(blocks![p!["a"], p!["b", p!["child"]], p!["c"]]);
+    let [a, b, child, c] = doc.blocks()[..] else {
         panic!()
     };
-    replacement.remove_block(gone).unwrap();
-    claim(&replacement, a, gone);
-    replacement.commit();
+    doc.remove_block(b).unwrap();
+    assert_eq!(doc.blocks(), [a, c]);
+    assert_eq!(doc.children(None).unwrap(), [a, c]);
+    assert_eq!(doc.index_of(c).unwrap(), 1);
+    assert_eq!(doc.next_block(a).unwrap(), Some(c));
+    for gone in [b, child] {
+        assert!(!doc.contains(gone));
+        assert!(matches!(doc.text(gone), Err(Error::BlockNotFound)));
+        assert!(matches!(doc.remove_block(gone), Err(Error::BlockNotFound)));
+    }
+    // Nothing was deleted: the block and what it held are still shared data.
+    let trash = doc.top_trash().unwrap();
+    assert_eq!(doc.tree.parent(b.0), Some(TreeParentId::Node(trash)));
+    assert_eq!(doc.tree.parent(child.0), Some(TreeParentId::Node(b.0)));
 
-    let original = build(blocks![p!["old"]]).0;
-    let original_ids = original.blocks();
-    let mut editor = Editor::new(original);
-    let result = editor.apply(|doc, _| {
-        *doc = replacement;
-        Ok(Some(Selection::caret(Pos::new(a, 0))))
-    });
-    assert!(matches!(result, Err(Error::BlockNotFound)));
-    assert_eq!(editor.selection(), None);
-    assert_eq!(editor.document().blocks(), original_ids);
+    // The trash node is a top-level node too, which no index counts.
+    for index in 0..=2 {
+        let new = doc.insert_block(None, index, "paragraph").unwrap();
+        assert_eq!(doc.index_of(new).unwrap(), index);
+        doc.move_block(new, None, 2 - index).unwrap();
+        assert_eq!(doc.index_of(new).unwrap(), 2 - index);
+        doc.remove_block(new).unwrap();
+    }
+    assert_eq!(doc.blocks(), [a, c]);
+}
+
+/// Two documents that each made a trash node before they met, so that the
+/// second one's lies among the blocks of the first.
+fn with_two_trash_nodes() -> (Document, Document) {
+    let (mut one, _) = build(blocks![p!["a"], p!["b"]]);
+    let (mut two, _) = build(blocks![p!["c"]]);
+    let (for_one, for_two) = (
+        two.export_snapshot().unwrap(),
+        one.export_snapshot().unwrap(),
+    );
+    one.import(&for_one).unwrap();
+    two.import(&for_two).unwrap();
+    (one, two)
+}
+
+#[test]
+fn indices_do_not_count_the_trash_nodes() {
+    let (mut one, mut two) = with_two_trash_nodes();
+    assert_eq!(one.trash.len(), 2);
+    assert_eq!(one.blocks().len(), 3);
+    assert_eq!(one.blocks(), two.blocks());
+
+    for index in 0..=3 {
+        let new = one.insert_block(None, index, "paragraph").unwrap();
+        assert_eq!(one.index_of(new).unwrap(), index);
+        assert_eq!(one.children(None).unwrap().len(), 4);
+        one.remove_block(new).unwrap();
+    }
+    let out_of_bounds = one.insert_block(None, 4, "paragraph");
+    let expected = Error::OutOfBounds { index: 4, len: 3 };
+    assert_eq!(out_of_bounds.unwrap_err().to_string(), expected.to_string());
+
+    let blocks = one.blocks();
+    for (from, to) in [(0, 2), (2, 0), (1, 1), (2, 1)] {
+        let moved = one.blocks()[from];
+        one.move_block(moved, None, to).unwrap();
+        assert_eq!(one.index_of(moved).unwrap(), to);
+    }
+    assert_eq!(one.blocks().len(), blocks.len());
+
+    two.import(&one.export_updates(&two.version()).unwrap())
+        .unwrap();
+    assert_eq!(one.blocks(), two.blocks());
+}
+
+#[test]
+fn peers_agree_on_a_trash_node_that_one_of_them_tampered_with() {
+    for unmark in [false, true] {
+        let (mut source, _) = build(blocks![p!["a"], p!["gone"]]);
+        let [a, gone] = source.blocks()[..] else {
+            panic!()
+        };
+        source.remove_block(gone).unwrap();
+        let mut early = Document::new(Schema::builtin());
+        early.import(&source.export_snapshot().unwrap()).unwrap();
+
+        let trash = source.top_trash().unwrap();
+        if unmark {
+            let meta = source.tree.get_meta(trash).unwrap();
+            meta.delete(TRASH).unwrap();
+        } else {
+            source.tree.mov(trash, TreeParentId::Node(a.0)).unwrap();
+        }
+        source.commit();
+        early
+            .import(&source.export_updates(&early.version()).unwrap())
+            .unwrap();
+        let mut late = Document::new(Schema::builtin());
+        late.import(&source.export_snapshot().unwrap()).unwrap();
+
+        assert_eq!(early.blocks(), late.blocks());
+        // Without its marker the node is a block like any other, and what
+        // was in it is back. Moved, it still hides what is in it.
+        assert_eq!(early.contains(gone), unmark);
+        assert_eq!(early.children(Some(a)).unwrap(), []);
+        let again = early.insert_block(None, 1, "paragraph").unwrap();
+        early.remove_block(again).unwrap();
+        late.import(&early.export_updates(&late.version()).unwrap())
+            .unwrap();
+        assert_eq!(early.blocks(), late.blocks());
+    }
 }

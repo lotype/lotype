@@ -389,41 +389,36 @@ fn an_edit_in_a_block_a_peer_removed_is_gone_with_it() {
 }
 
 #[test]
-fn a_peers_change_across_a_restored_block_clears_the_undo_steps() {
+fn undo_across_a_peers_merge_of_a_block_that_came_back_keeps_peers_in_step() {
     let mut a = editor(blocks![p!["one<a>"], p!["two", p!["child"]], p!["three"]]);
     let mut b = peer(a.document());
-    let two = b.blocks()[1];
+    let [one, two, child, _] = b.blocks()[..] else {
+        panic!()
+    };
     b.merge_backward(two).unwrap();
 
-    // The successful removal followed by undo brings a copy.
     a.apply(|doc, _| {
         doc.remove_block(two)?;
         Ok(None)
     })
     .unwrap();
     assert!(a.undo().unwrap());
-    a.set_selection(Some(Selection::caret(Pos::new(
-        a.document().blocks()[0],
-        3,
-    ))))
-    .unwrap();
+    assert_eq!(a.document().blocks()[1], two);
+    a.set_selection(Some(Selection::caret(Pos::new(one, 3))))
+        .unwrap();
     a.apply(|doc, selection| {
-        doc.merge_backward(doc.blocks()[2])?;
+        doc.merge_backward(child)?;
         Ok(selection.cloned())
     })
     .unwrap();
-    a.import(&b.export_updates(&a.document().version()).unwrap())
-        .unwrap();
-    let before = outline(a.document(), None);
+    sync(&mut a, &mut b);
 
-    // Loro can no longer undo the merge, and fails when it tries.
-    assert!(!a.can_undo());
-    assert!(!a.undo().unwrap());
-    assert_eq!(outline(a.document(), None), before);
-
-    a.insert_text("!").unwrap();
+    // The peer put `two` away, so what undo gives back to it stays unseen.
     assert!(a.undo().unwrap());
-    assert_eq!(outline(a.document(), None), before);
+    assert!(!a.can_undo());
+    sync(&mut a, &mut b);
+    assert_eq!(outline(a.document(), None), outline(&b, None));
+    assert_eq!(a.document().blocks(), b.blocks());
 }
 
 fn raw_text(doc: &LoroDoc, block: BlockId) -> LoroText {

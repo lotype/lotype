@@ -1,13 +1,14 @@
 use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use loro::cursor::{Cursor, PosType, Side};
 use loro::event::Diff;
 use loro::undo::CursorWithPos;
-use loro::{ContainerID, ContainerTrait, ExportMode, TreeID, UndoItemMeta, VersionVector};
+use loro::{
+    ContainerID, ContainerTrait, ContainerType, ExportMode, TreeID, UndoItemMeta, VersionVector,
+};
 
-use crate::document::ID;
+use crate::trash::TRASH;
 use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
 /// How much of a document's history a peer has. The default is none of it.
@@ -17,16 +18,11 @@ pub struct Version(VersionVector);
 /// A selection that follows its text through changes from other peers.
 pub(crate) enum Anchored {
     Text { anchor: Anchor, head: Anchor },
-    Blocks(Vec<BlockAnchor>),
-}
-
-pub(crate) struct BlockAnchor {
-    id: BlockId,
-    node: TreeID,
+    Blocks(Vec<BlockId>),
 }
 
 pub(crate) struct Anchor {
-    block: BlockAnchor,
+    block: BlockId,
     offset: usize,
     cursor: Option<Cursor>,
     /// The cursor is on the character before the position.
@@ -99,24 +95,29 @@ impl Document {
         if self.draft.is_some() {
             return Err(Error::ImportDuringEdit);
         }
-        // Only the tree and `$id` decide which block has which id. Text,
-        // the bulk of what peers send, leaves the ids as they are.
-        let stale = Arc::new(AtomicBool::new(false));
-        let seen = Arc::clone(&stale);
+        // A peer can make a trash node, or take the marker off one.
+        let marked = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&marked);
         let subscription = self.doc.subscribe_root(Arc::new(move |event| {
-            let ids_changed = event.events.iter().any(|change| match &change.diff {
-                Diff::Tree(_) => true,
-                Diff::Map(map) => map.updated.contains_key(ID),
-                _ => false,
-            });
-            if ids_changed {
-                seen.store(true, Ordering::Relaxed);
+            for change in event.events {
+                // A node's metadata has the id of the node.
+                if let Diff::Map(map) = &change.diff
+                    && let Some(marker) = map.updated.get(TRASH)
+                    && let ContainerID::Normal {
+                        peer,
+                        counter,
+                        container_type: ContainerType::Map,
+                    } = change.target
+                {
+                    let node = TreeID::new(*peer, *counter);
+                    seen.lock().unwrap().push((node, marker.is_some()));
+                }
             }
         }));
         let imported = self.doc.import(update);
         drop(subscription);
-        if stale.load(Ordering::Relaxed) {
-            self.refresh_ids();
+        for (node, marker) in std::mem::take(&mut *marked.lock().unwrap()) {
+            self.note_trash(node, marker);
         }
         imported
             .map(drop)
@@ -135,12 +136,7 @@ impl Document {
                     head: self.anchor(*head, start == Some(*head)),
                 }
             }
-            Selection::Blocks(blocks) => Anchored::Blocks(
-                blocks
-                    .iter()
-                    .map(|&block| self.anchor_block(block))
-                    .collect(),
-            ),
+            Selection::Blocks(blocks) => Anchored::Blocks(blocks.clone()),
         }
     }
 
@@ -161,30 +157,13 @@ impl Document {
                 head: self.resolve_anchor(head, cursors.get(1))?,
             }),
             Anchored::Blocks(blocks) => {
-                let mut seen = HashSet::new();
                 let blocks: Vec<_> = blocks
                     .iter()
-                    .filter_map(|block| self.resolve_block(block))
-                    .filter(|block| seen.insert(*block))
+                    .copied()
+                    .filter(|block| self.contains(*block))
                     .collect();
                 (!blocks.is_empty()).then_some(Selection::Blocks(blocks))
             }
-        }
-    }
-
-    fn anchor_block(&self, id: BlockId) -> BlockAnchor {
-        BlockAnchor {
-            id,
-            node: self.node(id),
-        }
-    }
-
-    fn resolve_block(&self, block: &BlockAnchor) -> Option<BlockId> {
-        if self.node_depth(block.node).is_ok() {
-            Some(self.id_of(block.node))
-        } else {
-            // A local undo can recreate the node under its original public ID.
-            self.contains(block.id).then_some(block.id)
         }
     }
 
@@ -201,28 +180,13 @@ impl Document {
             text.get_cursor(offset - usize::from(after), Side::Middle)
         });
         Anchor {
-            block: self.anchor_block(pos.block),
+            block: pos.block,
             offset: pos.offset,
             cursor,
             after,
             moved: false,
             cut: false,
         }
-    }
-
-    /// Whether a block of the selection came back with new text, which the
-    /// cursors made in the old text do not follow.
-    pub(crate) fn outdated(&self, anchored: &Anchored) -> bool {
-        let Anchored::Text { anchor, head } = anchored else {
-            return false;
-        };
-        [anchor, head].into_iter().any(|endpoint| {
-            let block = self.resolve_block(&endpoint.block);
-            let text = block.and_then(|block| self.inline(block).ok());
-            let cursor = endpoint.cursor.as_ref();
-            text.zip(cursor)
-                .is_some_and(|(text, cursor)| cursor.container != text.id())
-        })
     }
 
     /// Notes the endpoints whose character is gone. Call it right after the
@@ -239,10 +203,11 @@ impl Document {
     }
 
     fn resolve_anchor(&self, anchor: &Anchor, restored: Option<&CursorWithPos>) -> Option<Pos> {
-        let block = self.resolve_block(&anchor.block)?;
+        let block = anchor.block;
         let text = self.inline(block).ok()?;
-        // Undo brings a removed block back with new text, which the cursor
-        // does not know. The offset it was made at is the best place then.
+        // The offset the anchor was made at is exact until a peer changes
+        // the text. A cursor is also no use once a peer has put another text
+        // in the block.
         let cursor = anchor
             .cursor
             .as_ref()

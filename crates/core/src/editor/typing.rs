@@ -155,12 +155,11 @@ fn join_forward(doc: &mut Document, caret: Pos) -> Result<Pos> {
     if doc.text_len(next).is_ok() {
         return Ok(doc.merge_backward(next)?.unwrap_or(caret));
     }
-    let node = doc.live(caret.block)?;
     if doc
         .child_ids(TreeParentId::Node(doc.live(next)?))
         .is_empty()
     {
         doc.remove_block(next)?;
     }
-    Ok(Pos::new(doc.id_of(node), caret.offset))
+    Ok(caret)
 }
