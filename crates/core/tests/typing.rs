@@ -169,6 +169,23 @@ fn setting_a_valued_mark_on_a_range_is_undoable() {
 }
 
 #[test]
+fn setting_the_same_selection_ends_the_run_but_keeps_pending_marks() {
+    let code = |text: &str| marked("code", true, vec![text.into()]);
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.toggle_mark("code").unwrap();
+    ed.insert_text("a").unwrap();
+
+    ed.set_selection(ed.selection().cloned()).unwrap();
+    ed.insert_text("b").unwrap();
+    assert_editor(&ed, blocks![p![code("ab<a>")]]);
+
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p![code("a<a>")]]);
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["<a>"]]);
+}
+
+#[test]
 fn moving_the_caret_drops_pending_marks() {
     let mut ed = editor(blocks![p!["ab<a>"]]);
     ed.toggle_mark("bold").unwrap();

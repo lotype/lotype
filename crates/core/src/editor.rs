@@ -86,12 +86,16 @@ impl Editor {
         self.selection.as_ref()
     }
 
+    /// Sets the selection and ends the current typing or deletion run.
+    /// Pending marks are cleared when the selection changes.
     pub fn set_selection(&mut self, selection: Option<Selection>) -> Result<()> {
         if let Some(selection) = &selection {
             self.doc.check_selection(selection)?;
         }
         self.end_run();
-        self.pending_marks = None;
+        if self.selection != selection {
+            self.pending_marks = None;
+        }
         self.selection = selection;
         Ok(())
     }
