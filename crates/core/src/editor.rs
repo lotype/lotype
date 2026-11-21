@@ -9,6 +9,7 @@ use crate::marks::{TypingMarks, visible_marks};
 use crate::trash::SYSTEM_ORIGIN;
 use crate::{Document, Error, Pos, Result, Selection, Value};
 
+mod blocks;
 mod changes;
 mod history;
 mod input;

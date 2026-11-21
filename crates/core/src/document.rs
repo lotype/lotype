@@ -293,6 +293,11 @@ impl Document {
         Ok(())
     }
 
+    /// Whether blocks of this type hold text.
+    pub(crate) fn holds_text(&self, block_type: &str) -> Result<bool> {
+        Ok(self.spec_named(block_type)?.content() == Content::Inline)
+    }
+
     pub(crate) fn spec(&self, block: BlockId) -> Result<&BlockSpec> {
         self.spec_named(&self.block_type(block)?)
     }

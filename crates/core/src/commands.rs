@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use loro::TreeParentId;
 
-use crate::{BlockId, Document, Error, Pos, Result, Value};
+use crate::{BlockId, BlockSpec, Document, Error, Pos, Result, Value};
 
 /// Edits that span more than one primitive operation.
 ///
@@ -114,6 +114,57 @@ impl Document {
         } else {
             self.mark_range(a, b, name, true)
         }
+    }
+
+    /// Makes `block` the last child of the sibling before it, as Tab does.
+    /// Returns whether it could: there must be such a sibling, it must take
+    /// children, and the block must not end up too deep.
+    pub fn indent_block(&mut self, block: BlockId) -> Result<bool> {
+        let (parent, index) = (self.parent(block)?, self.index_of(block)?);
+        let Some(before) = index.checked_sub(1) else {
+            return Ok(false);
+        };
+        let before = self.children(parent)?[before];
+        let end = self.children(Some(before))?.len();
+        match self.move_block(block, Some(before), end) {
+            Err(Error::ChildrenNotAllowed(_) | Error::TooDeep | Error::UnknownBlockType(_)) => {
+                Ok(false)
+            }
+            moved => moved.map(|()| true),
+        }
+    }
+
+    /// Moves `block` out to follow its parent, as Shift-Tab does. The
+    /// siblings after it become its children, so every block stays where it
+    /// reads. Returns whether it could: the block must have a parent, and
+    /// must take children if it has siblings after it.
+    pub fn outdent_block(&mut self, block: BlockId) -> Result<bool> {
+        let Some(parent) = self.parent(block)? else {
+            return Ok(false);
+        };
+        let siblings = self.children(Some(parent))?;
+        let after = &siblings[self.index_of(block)? + 1..];
+        if !after.is_empty() && !self.spec(block).is_ok_and(BlockSpec::allows_children) {
+            return Ok(false);
+        }
+        let end = self.children(Some(block))?.len();
+        for (offset, sibling) in after.iter().enumerate() {
+            self.relocate_block(*sibling, Some(block), end + offset)?;
+        }
+        let (grandparent, index) = (self.parent(parent)?, self.index_of(parent)?);
+        self.relocate_block(block, grandparent, index + 1)?;
+        Ok(true)
+    }
+
+    /// The blocks from `first` to `last`, which comes later, in document order.
+    pub(crate) fn span(&self, first: BlockId, last: BlockId) -> Result<Vec<BlockId>> {
+        if first == last {
+            return Ok(vec![first]);
+        }
+        let mut blocks = vec![first];
+        blocks.extend(self.blocks_between(first, last)?);
+        blocks.push(last);
+        Ok(blocks)
     }
 
     /// Removes the blocks between the ends of a range, and the last block.
