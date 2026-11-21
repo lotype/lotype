@@ -203,3 +203,66 @@ fn history_is_capped() {
     assert_eq!(undone, 100);
     assert_editor(&ed, blocks![p!["xxxxx<a>"]]);
 }
+
+#[test]
+fn undo_restores_a_block_selection() {
+    let mut ed = editor(blocks![p!["a"], p!["b", p!["b1"]], p!["c"]]);
+    let all = ed.document().blocks();
+    ed.set_selection(Some(Selection::Blocks(vec![all[1], all[3]])))
+        .unwrap();
+    ed.delete_selection().unwrap();
+    assert_editor(&ed, blocks![p!["a"]]);
+    ed.undo().unwrap();
+    assert_editor(&ed, blocks![p!["a"], p!["b", p!["b1"]], p!["c"]]);
+    let restored = ed.document().blocks();
+    assert_eq!(
+        ed.selection(),
+        Some(&Selection::Blocks(vec![restored[1], restored[3]]))
+    );
+}
+
+#[test]
+fn a_step_with_no_net_effect_does_not_break_undo() {
+    let mut ed = editor(blocks![p!["a<a>"]]);
+    ed.insert_text("b").unwrap();
+    ed.apply(|doc, selection| {
+        let block = doc.blocks()[0];
+        doc.insert_text(block, 0, "x")?;
+        doc.delete_text(block, 0..1)?;
+        Ok(selection.cloned())
+    })
+    .unwrap();
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
+
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert!(!ed.undo().unwrap());
+    assert!(ed.redo().unwrap());
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
+    assert!(!ed.redo().unwrap());
+}
+
+#[test]
+fn a_panicking_edit_does_not_leave_the_editor_stuck() {
+    let mut ed = editor(blocks![p!["a<a>"]]);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = ed.apply(|doc, _| {
+            let block = doc.blocks()[0];
+            doc.insert_text(block, 0, "x")?;
+            panic!("edit failed");
+        });
+    }));
+    assert!(panicked.is_err());
+    assert_eq!(ed.selection(), None);
+    assert!(!ed.can_undo());
+    assert_editor(&ed, blocks![p!["xa"]]);
+
+    let block = ed.document().blocks()[0];
+    ed.set_selection(Some(Selection::caret(Pos::new(block, 2))))
+        .unwrap();
+    ed.insert_text("b").unwrap();
+    assert_editor(&ed, blocks![p!["xab<a>"]]);
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["xa<a>"]]);
+    assert!(!ed.undo().unwrap());
+}

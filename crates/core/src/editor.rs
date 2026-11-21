@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use loro::UndoManager;
 
@@ -24,14 +24,33 @@ struct Step {
     after: Option<Anchor>,
 }
 
-/// A selection stored as block paths. Undoing a removal restores the block
-/// under a new id, so ids cannot be used here.
+/// A selection stored by each block's position in document order. Undoing a
+/// removal restores the block under a new id, so ids cannot be used here.
 enum Anchor {
     Text {
-        anchor: (Vec<usize>, usize),
-        head: (Vec<usize>, usize),
+        anchor: (usize, usize),
+        head: (usize, usize),
     },
-    Blocks(Vec<Vec<usize>>),
+    Blocks(Vec<usize>),
+}
+
+/// Closes the undo step when dropped. If the edit panicked, the document
+/// keeps whatever the edit did, and the history and selection, which can no
+/// longer be trusted to match it, are cleared.
+struct OpenStep<'a>(&'a mut Editor);
+
+impl Drop for OpenStep<'_> {
+    fn drop(&mut self) {
+        let editor = &mut *self.0;
+        editor.doc.commit();
+        editor.history.group_end();
+        if std::thread::panicking() {
+            editor.history.clear();
+            editor.undo_steps.clear();
+            editor.redo_steps.clear();
+            editor.selection = None;
+        }
+    }
 }
 
 impl Editor {
@@ -67,17 +86,19 @@ impl Editor {
     /// Runs `edit` as one undo step. `edit` returns the selection to set.
     ///
     /// If `edit` fails, the changes it made before failing stay in the
-    /// document as an undo step.
+    /// document as an undo step. If it panics, they stay too, and the undo
+    /// history and the selection are cleared.
     pub fn apply(
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
     ) -> Result<()> {
         let before = self.anchor();
         let version = self.doc.doc.oplog_frontiers();
+        let selection = self.selection.clone();
         self.history.group_start()?;
-        let result = edit(&mut self.doc, self.selection.as_ref());
-        self.doc.commit();
-        self.history.group_end();
+        let step = OpenStep(self);
+        let result = edit(&mut step.0.doc, selection.as_ref());
+        drop(step);
 
         let result = result.and_then(|selection| {
             if let Some(selection) = &selection {
@@ -95,10 +116,7 @@ impl Editor {
         };
         if self.doc.doc.oplog_frontiers() != version {
             let after = self.anchor();
-            self.undo_steps.push_back(Step { before, after });
-            if self.undo_steps.len() > MAX_UNDO_STEPS {
-                self.undo_steps.pop_front();
-            }
+            self.push_undo_step(Step { before, after });
             self.redo_steps.clear();
         }
         result.map(drop)
@@ -175,53 +193,81 @@ impl Editor {
 
     /// Undoes the last step. Returns whether there was one.
     pub fn undo(&mut self) -> Result<bool> {
-        if !self.history.undo()? {
-            return Ok(false);
+        loop {
+            let count = self.history.undo_count();
+            let changed = self.history.undo()?;
+            if self.history.undo_count() == count {
+                return Ok(false);
+            }
+            let step = self.undo_steps.pop_back();
+            if changed {
+                self.restore(step.as_ref().and_then(|step| step.before.as_ref()));
+                self.redo_steps.extend(step);
+                return Ok(true);
+            }
+            // The step had no net effect, so Loro dropped it without changing
+            // anything. Go on to the step before it.
         }
-        let step = self.undo_steps.pop_back();
-        self.restore(step.as_ref().and_then(|step| step.before.as_ref()));
-        self.redo_steps.extend(step);
-        Ok(true)
     }
 
     /// Redoes the last undone step. Returns whether there was one.
     pub fn redo(&mut self) -> Result<bool> {
-        if !self.history.redo()? {
-            return Ok(false);
+        loop {
+            let count = self.history.redo_count();
+            let changed = self.history.redo()?;
+            if self.history.redo_count() == count {
+                return Ok(false);
+            }
+            let step = self.redo_steps.pop();
+            if changed {
+                self.restore(step.as_ref().and_then(|step| step.after.as_ref()));
+                step.into_iter().for_each(|step| self.push_undo_step(step));
+                return Ok(true);
+            }
         }
-        let step = self.redo_steps.pop();
-        self.restore(step.as_ref().and_then(|step| step.after.as_ref()));
-        self.undo_steps.extend(step);
-        Ok(true)
+    }
+
+    fn push_undo_step(&mut self, step: Step) {
+        self.undo_steps.push_back(step);
+        if self.undo_steps.len() > MAX_UNDO_STEPS {
+            self.undo_steps.pop_front();
+        }
     }
 
     fn anchor(&self) -> Option<Anchor> {
-        let pos = |pos: &Pos| Some((self.doc.path(pos.block).ok()?, pos.offset));
-        match self.selection.as_ref()? {
-            Selection::Text { anchor, head } => Some(Anchor::Text {
-                anchor: pos(anchor)?,
-                head: pos(head)?,
-            }),
+        let selection = self.selection.as_ref()?;
+        let order = self.doc.blocks();
+        match selection {
+            Selection::Text { anchor, head } => {
+                let pos = |pos: &Pos| {
+                    let index = order.iter().position(|block| *block == pos.block)?;
+                    Some((index, pos.offset))
+                };
+                Some(Anchor::Text {
+                    anchor: pos(anchor)?,
+                    head: pos(head)?,
+                })
+            }
             Selection::Blocks(blocks) => {
-                let paths = blocks.iter().map(|block| self.doc.path(*block).ok());
-                Some(Anchor::Blocks(paths.collect::<Option<_>>()?))
+                let order: HashMap<BlockId, usize> = order.into_iter().zip(0..).collect();
+                let indices = blocks.iter().map(|block| order.get(block).copied());
+                Some(Anchor::Blocks(indices.collect::<Option<_>>()?))
             }
         }
     }
 
     /// Sets the selection from a stored one, or clears it when it no longer fits the document.
     fn restore(&mut self, anchor: Option<&Anchor>) {
-        let pos = |(path, offset): &(Vec<usize>, usize)| {
-            Some(Pos::new(self.doc.block_at(path)?, *offset))
-        };
+        let order = self.doc.blocks();
+        let pos = |(index, offset): &(usize, usize)| Some(Pos::new(*order.get(*index)?, *offset));
         let selection = anchor.and_then(|anchor| match anchor {
             Anchor::Text { anchor, head } => Some(Selection::Text {
                 anchor: pos(anchor)?,
                 head: pos(head)?,
             }),
-            Anchor::Blocks(paths) => {
-                let blocks = paths.iter().map(|path| self.doc.block_at(path));
-                Some(Selection::Blocks(blocks.collect::<Option<Vec<BlockId>>>()?))
+            Anchor::Blocks(indices) => {
+                let blocks = indices.iter().map(|index| order.get(*index).copied());
+                Some(Selection::Blocks(blocks.collect::<Option<_>>()?))
             }
         });
         self.selection = selection.filter(|s| self.doc.check_selection(s).is_ok());
