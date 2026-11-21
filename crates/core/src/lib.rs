@@ -6,6 +6,7 @@ mod commands;
 mod document;
 mod editor;
 mod error;
+mod ids;
 mod marks;
 mod order;
 mod schema;

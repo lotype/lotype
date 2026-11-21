@@ -28,7 +28,7 @@ impl Document {
         let roots = self.child_ids(TreeParentId::Root);
         stack.extend(roots.into_iter().rev().map(|id| (id, 1)));
         while let Some((id, depth)) = stack.pop() {
-            ordered.push(BlockId(id));
+            ordered.push(self.id_of(id));
             if depth < MAX_DEPTH {
                 let children = self.child_ids(TreeParentId::Node(id));
                 stack.extend(children.into_iter().rev().map(|child| (child, depth + 1)));
@@ -38,17 +38,17 @@ impl Document {
     }
 
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {
-        let mut current = block.0;
+        let mut current = self.node(block);
         if self.depth(block)? < MAX_DEPTH
             && let Some(first_child) = self.child_ids(TreeParentId::Node(current)).first()
         {
-            return Ok(Some(BlockId(*first_child)));
+            return Ok(Some(self.id_of(*first_child)));
         }
         loop {
             let (parent, next) =
                 self.with_siblings(current, |siblings, index| siblings.get(index + 1).copied())?;
             if let Some(next) = next {
-                return Ok(Some(BlockId(next)));
+                return Ok(Some(self.id_of(next)));
             }
             match parent {
                 TreeParentId::Node(parent) => current = parent,
@@ -59,12 +59,12 @@ impl Document {
 
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
         let mut depth = self.depth(block)?;
-        let (parent, prev) = self.with_siblings(block.0, |siblings, index| {
+        let (parent, prev) = self.with_siblings(self.node(block), |siblings, index| {
             index.checked_sub(1).map(|index| siblings[index])
         })?;
         let Some(mut current) = prev else {
             return Ok(match parent {
-                TreeParentId::Node(parent) => Some(BlockId(parent)),
+                TreeParentId::Node(parent) => Some(self.id_of(parent)),
                 _ => None,
             });
         };
@@ -74,7 +74,7 @@ impl Document {
             current = *last_child;
             depth += 1;
         }
-        Ok(Some(BlockId(current)))
+        Ok(Some(self.id_of(current)))
     }
 
     /// The position of `block` among its siblings.

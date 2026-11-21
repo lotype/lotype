@@ -7,6 +7,10 @@ use crate::{BlockId, Document, Error, Pos, Result, Value};
 ///
 /// They copy text and attributes as stored, so marks and values this peer's
 /// schema does not know survive, and they skip blocks they cannot read.
+///
+/// Each checks its arguments before it changes anything. Only
+/// [`Error::Internal`] can stop one halfway; [`Editor::apply`](crate::Editor::apply)
+/// rolls that back as well.
 impl Document {
     /// Splits a block at `pos`. The text after `pos` and the block's children
     /// move to a new sibling of the same type. Returns the start of that sibling.

@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use loro::{LoroValue, UndoManager};
 
 use crate::marks::{TypingMarks, visible_marks};
-use crate::{BlockId, Document, Error, Pos, Result, Selection, Value};
+use crate::{Document, Error, Pos, Result, Selection, Value};
 
 mod typing;
 
@@ -29,18 +29,8 @@ pub struct Editor {
 
 /// The selection around one undo step.
 struct Step {
-    before: Option<Anchor>,
-    after: Option<Anchor>,
-}
-
-/// A selection stored by each block's position in document order. Undoing a
-/// removal restores the block under a new id, so ids cannot be used here.
-enum Anchor {
-    Text {
-        anchor: (usize, usize),
-        head: (usize, usize),
-    },
-    Blocks(Vec<usize>),
+    before: Option<Selection>,
+    after: Option<Selection>,
 }
 
 /// Commits the edit and resets history if the edit replaced the document or panicked.
@@ -55,18 +45,14 @@ impl Drop for OpenStep<'_> {
         editor.doc.commit();
         let replaced = !Arc::ptr_eq(self.original_document, &editor.doc.identity);
         if replaced || std::thread::panicking() {
-            editor.history = new_history(&editor.doc);
-            editor.undo_steps.clear();
-            editor.redo_steps.clear();
-            editor.selection = None;
-            editor.run = None;
-            editor.pending_marks = None;
+            editor.reset_history();
         }
     }
 }
 
 impl Editor {
-    pub fn new(doc: Document) -> Self {
+    pub fn new(mut doc: Document) -> Self {
+        doc.refresh_ids();
         Self {
             history: new_history(&doc),
             doc,
@@ -76,6 +62,17 @@ impl Editor {
             run: None,
             pending_marks: None,
         }
+    }
+
+    /// Starts over with the document as it is now: no undo or redo steps and no selection.
+    fn reset_history(&mut self) {
+        self.doc.refresh_ids();
+        self.history = new_history(&self.doc);
+        self.undo_steps.clear();
+        self.redo_steps.clear();
+        self.selection = None;
+        self.run = None;
+        self.pending_marks = None;
     }
 
     pub fn document(&self) -> &Document {
@@ -102,10 +99,13 @@ impl Editor {
 
     /// Runs `edit` as one undo step. `edit` returns the selection to set.
     ///
-    /// If `edit` fails, the changes it made before failing stay in the
-    /// document as an undo step. If it panics, they stay too, and the undo
-    /// history and the selection are cleared.
-    /// Replacing the document starts a new history with the replacement as its baseline.
+    /// If `edit` fails, the changes it made before failing are rolled back:
+    /// the document, the selection and the undo history stay as they were.
+    /// Only the redo history is lost, when `edit` had changed the document.
+    /// If `edit` panics, or the rollback itself fails, the changes stay, and
+    /// the undo history and the selection are cleared.
+    /// Replacing the document starts a new history with the replacement as its
+    /// baseline, whether `edit` then fails or not.
     ///
     /// ```
     /// use lotype_core::{Document, Editor, Error, Schema};
@@ -120,10 +120,8 @@ impl Editor {
     /// });
     ///
     /// assert!(matches!(result, Err(Error::UnknownMark(_))));
-    /// let block = editor.document().blocks()[0];
-    /// assert_eq!(editor.document().text(block)?, "draft");
-    /// assert!(editor.undo()?);
     /// assert!(editor.document().blocks().is_empty());
+    /// assert!(!editor.can_undo());
     /// # Ok(())
     /// # }
     /// ```
@@ -149,7 +147,6 @@ impl Editor {
             self.finish_edit_group();
         }
         let new_step = self.run.is_none();
-        let before = if new_step { self.anchor() } else { None };
         let original_document = Arc::clone(&self.doc.identity);
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
@@ -163,33 +160,51 @@ impl Editor {
         let result = edit(&mut open.editor.doc, selection.as_ref());
         drop(open);
 
-        let result = result.and_then(|selection| {
-            if let Some(selection) = &selection {
-                self.doc.check_selection(selection)?;
+        let result = result.and_then(|after| {
+            if let Some(after) = &after {
+                self.doc.check_selection(after)?;
             }
-            Ok(selection)
+            Ok(after)
         });
-        let doc = &self.doc;
-        self.selection = match &result {
-            Ok(selection) => selection.clone(),
-            Err(_) => self
-                .selection
-                .take()
-                .filter(|s| doc.check_selection(s).is_ok()),
-        };
         let changed = Arc::ptr_eq(&original_document, &self.doc.identity)
             && self.doc.doc.oplog_frontiers() != version;
-        if changed && new_step {
-            let after = self.anchor();
-            self.push_undo_step(Step { before, after });
-            self.redo_steps.clear();
-        } else if changed {
-            let after = self.anchor();
-            if let Some(step) = self.undo_steps.back_mut() {
-                step.after = after;
+        let after = match result {
+            Ok(after) => after,
+            Err(error) => {
+                // Loro cannot abort a change, so the step is undone instead.
+                // A keystroke that extends a run is a single operation, which
+                // cannot fail halfway.
+                if changed && new_step {
+                    self.history.group_end();
+                    if let Err(error) = self.history.undo() {
+                        self.reset_history();
+                        return Err(error.into());
+                    }
+                    // Loro dropped its redo steps when it recorded the edit,
+                    // and now holds the undone edit as one. Emptying this
+                    // list keeps `redo` away from it.
+                    self.redo_steps.clear();
+                    self.doc.refresh_ids();
+                }
+                let doc = &self.doc;
+                self.selection = self
+                    .selection
+                    .take()
+                    .filter(|s| doc.check_selection(s).is_ok());
+                return Err(error);
             }
+        };
+        self.selection = after.clone();
+        if changed && new_step {
+            self.push_undo_step(Step {
+                before: selection,
+                after,
+            });
+            self.redo_steps.clear();
+        } else if changed && let Some(step) = self.undo_steps.back_mut() {
+            step.after = after;
         }
-        result.map(|_| changed)
+        Ok(changed)
     }
 
     /// Deletes the selected text or blocks.
@@ -302,52 +317,50 @@ impl Editor {
         }
     }
 
+    /// Whether there is a step to undo. A step that changed nothing in the
+    /// end, such as text inserted and deleted again in one [`Self::apply`],
+    /// counts here, though [`Self::undo`] skips it.
     pub fn can_undo(&self) -> bool {
-        self.history.can_undo()
+        !self.undo_steps.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        self.history.can_redo()
+        !self.redo_steps.is_empty()
     }
 
-    /// Undoes the last step. Returns whether there was one.
+    /// Undoes the last step that changed the document. Returns whether there was one.
     pub fn undo(&mut self) -> Result<bool> {
         self.finish_edit_group();
         self.pending_marks = None;
-        loop {
-            let count = self.history.undo_count();
+        while !self.undo_steps.is_empty() {
+            // A step with no net effect changes nothing. Go on to the one before it.
             let changed = self.history.undo()?;
-            if self.history.undo_count() == count {
-                return Ok(false);
-            }
-            let step = self.undo_steps.pop_back();
-            if changed {
-                self.restore(step.as_ref().and_then(|step| step.before.as_ref()));
-                self.redo_steps.extend(step);
+            if let Some(step) = self.undo_steps.pop_back()
+                && changed
+            {
+                self.restore(step.before.clone());
+                self.redo_steps.push(step);
                 return Ok(true);
             }
-            // The step had no net effect, so Loro dropped it without changing
-            // anything. Go on to the step before it.
         }
+        Ok(false)
     }
 
     /// Redoes the last undone step. Returns whether there was one.
     pub fn redo(&mut self) -> Result<bool> {
         self.finish_edit_group();
         self.pending_marks = None;
-        loop {
-            let count = self.history.redo_count();
+        while !self.redo_steps.is_empty() {
             let changed = self.history.redo()?;
-            if self.history.redo_count() == count {
-                return Ok(false);
-            }
-            let step = self.redo_steps.pop();
-            if changed {
-                self.restore(step.as_ref().and_then(|step| step.after.as_ref()));
-                step.into_iter().for_each(|step| self.push_undo_step(step));
+            if let Some(step) = self.redo_steps.pop()
+                && changed
+            {
+                self.restore(step.after.clone());
+                self.push_undo_step(step);
                 return Ok(true);
             }
         }
+        Ok(false)
     }
 
     fn push_undo_step(&mut self, step: Step) {
@@ -357,49 +370,18 @@ impl Editor {
         }
     }
 
-    fn anchor(&self) -> Option<Anchor> {
-        let selection = self.selection.as_ref()?;
-        let order = self.doc.blocks();
-        match selection {
-            Selection::Text { anchor, head } => {
-                let pos = |pos: &Pos| {
-                    let index = order.iter().position(|block| *block == pos.block)?;
-                    Some((index, pos.offset))
-                };
-                Some(Anchor::Text {
-                    anchor: pos(anchor)?,
-                    head: pos(head)?,
-                })
-            }
-            Selection::Blocks(blocks) => {
-                let order: HashMap<BlockId, usize> = order.into_iter().zip(0..).collect();
-                let indices = blocks.iter().map(|block| order.get(block).copied());
-                Some(Anchor::Blocks(indices.collect::<Option<_>>()?))
-            }
-        }
-    }
-
     /// Sets the selection from a stored one, or clears it when it no longer fits the document.
-    fn restore(&mut self, anchor: Option<&Anchor>) {
-        let order = self.doc.blocks();
-        let pos = |(index, offset): &(usize, usize)| Some(Pos::new(*order.get(*index)?, *offset));
-        let selection = anchor.and_then(|anchor| match anchor {
-            Anchor::Text { anchor, head } => Some(Selection::Text {
-                anchor: pos(anchor)?,
-                head: pos(head)?,
-            }),
-            Anchor::Blocks(indices) => {
-                let blocks = indices.iter().map(|index| order.get(*index).copied());
-                Some(Selection::Blocks(blocks.collect::<Option<_>>()?))
-            }
-        });
+    fn restore(&mut self, selection: Option<Selection>) {
+        self.doc.refresh_ids();
         self.selection = selection.filter(|s| self.doc.check_selection(s).is_ok());
     }
 }
 
 fn new_history(doc: &Document) -> UndoManager {
     let mut history = UndoManager::new(&doc.doc);
-    history.set_max_undo_steps(MAX_UNDO_STEPS);
+    // One more than the editor offers: Loro makes room for a step as it
+    // records it, and a failed step that is rolled back must not cost a real one.
+    history.set_max_undo_steps(MAX_UNDO_STEPS + 1);
     history.set_merge_interval(0);
     history
 }

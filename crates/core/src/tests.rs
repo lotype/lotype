@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use loro::TreeParentId;
 
-use crate::document::TYPE;
+use crate::document::{ID, TYPE};
 use crate::test_support::{assert_document, build, outline};
 use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Selection, b, blocks, p};
 
@@ -184,4 +184,62 @@ fn blocks_nested_beyond_max_depth_are_not_part_of_the_document() {
     doc.set_block_type(last_visible, "heading").unwrap();
     doc.remove_block(chain[1]).unwrap();
     assert_eq!(doc.blocks(), [top, after]);
+}
+
+fn claim(doc: &Document, block: BlockId, id: BlockId) {
+    let meta = doc.tree.get_meta(block.0).unwrap();
+    meta.insert(ID, id.0.to_string()).unwrap();
+}
+
+#[test]
+fn a_block_only_takes_a_removed_id_that_nothing_else_claims() {
+    let (mut doc, _) = build(blocks![
+        p!["a"],
+        p!["b"],
+        p!["c"],
+        p!["d"],
+        p!["x"],
+        p!["y"]
+    ]);
+    let [a, b, c, d, x, y] = doc.blocks()[..] else {
+        panic!()
+    };
+    doc.remove_block(x).unwrap();
+    doc.remove_block(y).unwrap();
+    claim(&doc, a, b);
+    claim(&doc, b, x);
+    claim(&doc, c, x);
+    claim(&doc, d, y);
+    doc.refresh_ids();
+    assert_eq!(doc.blocks(), [a, b, c, y]);
+
+    // An id no node has had yet.
+    let unborn = loro::TreeID::new(d.0.peer, d.0.counter + 1000);
+    claim(&doc, a, BlockId(unborn));
+    doc.refresh_ids();
+    assert_eq!(doc.blocks(), [a, b, c, y]);
+    assert_eq!(doc.text(y).unwrap(), "d");
+    assert_eq!(doc.next_block(c).unwrap(), Some(y));
+    assert!(matches!(doc.text(d), Err(Error::BlockNotFound)));
+    assert!(matches!(doc.text(x), Err(Error::BlockNotFound)));
+}
+
+#[test]
+fn a_replacement_document_is_addressed_by_its_restored_ids() {
+    let (mut replacement, _) = build(blocks![p!["a"], p!["gone"]]);
+    let [a, gone] = replacement.blocks()[..] else {
+        panic!()
+    };
+    replacement.remove_block(gone).unwrap();
+    claim(&replacement, a, gone);
+    replacement.commit();
+
+    let mut editor = Editor::new(build(blocks![p!["old"]]).0);
+    let result = editor.apply(|doc, _| {
+        *doc = replacement;
+        Ok(Some(Selection::caret(Pos::new(a, 0))))
+    });
+    assert!(matches!(result, Err(Error::BlockNotFound)));
+    assert_eq!(editor.selection(), None);
+    assert_eq!(editor.document().blocks(), [gone]);
 }

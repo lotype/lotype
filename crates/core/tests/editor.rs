@@ -160,20 +160,142 @@ fn a_new_edit_clears_redo() {
 }
 
 #[test]
-fn a_failed_command_leaves_a_valid_selection() {
-    let mut ed = editor(blocks![p!["a<a>b<b>c"]]);
-    let result = ed.apply(|doc, selection| {
-        let Some(Selection::Text { anchor, .. }) = selection else {
-            unreachable!()
-        };
-        doc.delete_text(anchor.block, 0..3)?;
+fn a_failed_edit_is_rolled_back() {
+    let mut ed = editor(blocks![p!["one"], p!["a<a>b<b>c", p!["child"]]]);
+    ed.insert_text("x").unwrap();
+    let before = ed.document().blocks();
+
+    let result = ed.apply(|doc, _| {
+        doc.delete_text(before[0], 0..3)?;
+        doc.set_attr(before[0], "align", "center")?;
+        doc.remove_block(before[1])?;
+        doc.insert_block(None, 0, "paragraph")?;
         Err(Error::NoSelection)
     });
     assert!(matches!(result, Err(Error::NoSelection)));
-    assert_eq!(ed.selection(), None);
-    assert_editor(&ed, blocks![p![]]);
+    assert_editor(&ed, blocks![p!["one"], p!["ax<a>c", p!["child"]]]);
+    assert_eq!(ed.document().blocks(), before);
+    assert_eq!(ed.document().attr(before[0], "align").unwrap(), None);
+    assert!(!ed.can_redo());
+    assert!(!ed.redo().unwrap());
+
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["one"], p!["a<a>b<b>c", p!["child"]]]);
+    assert!(!ed.can_undo());
+}
+
+#[test]
+fn a_failed_edit_at_the_history_cap_costs_no_undo_step() {
+    let mut ed = editor(blocks![p!["<a>"]]);
+    for _ in 0..105 {
+        ed.insert_text("x").unwrap();
+        ed.insert_text(" ").unwrap();
+    }
+    let result = ed.apply(|doc, _| {
+        doc.insert_block(None, 0, "paragraph")?;
+        Err(Error::NoSelection)
+    });
+    assert!(result.is_err());
+    let mut undone = 0;
+    while ed.undo().unwrap() {
+        undone += 1;
+    }
+    assert_eq!(undone, 100);
+    assert_editor(&ed, blocks![p!["x x x x x <a>"]]);
+    assert!(!ed.can_undo());
+}
+
+#[test]
+fn a_failed_edit_cannot_be_redone() {
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.insert_text("a").unwrap();
+    ed.split_block().unwrap();
     ed.undo().unwrap();
-    assert_editor(&ed, blocks![p!["a<a>b<b>c"]]);
+    let result = ed.apply(|doc, _| {
+        doc.insert_block(None, 0, "paragraph")?;
+        Err(Error::NoSelection)
+    });
+    assert!(result.is_err());
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert!(!ed.can_redo());
+
+    assert!(ed.undo().unwrap());
+    assert!(ed.redo().unwrap());
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert!(!ed.can_redo());
+    assert!(!ed.redo().unwrap());
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+}
+
+#[test]
+fn a_failed_edit_that_committed_is_rolled_back() {
+    let mut ed = editor(blocks![p!["a<a>"]]);
+    ed.insert_text("b").unwrap();
+    let result = ed.apply(|doc, _| {
+        let block = doc.blocks()[0];
+        doc.insert_text(block, 0, "x")?;
+        doc.commit();
+        doc.insert_text(block, 0, "y")?;
+        Err(Error::NoSelection)
+    });
+    assert!(result.is_err());
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
+
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert!(!ed.undo().unwrap());
+    assert!(ed.redo().unwrap());
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
+}
+
+#[test]
+fn a_failed_keystroke_keeps_the_typing_before_it() {
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.insert_text("a").unwrap();
+    ed.insert_text("b").unwrap();
+    assert!(ed.apply(|_, _| Err(Error::NoSelection)).is_err());
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
+    assert!(ed.undo().unwrap());
+    assert_editor(&ed, blocks![p!["<a>"]]);
+}
+
+#[test]
+fn block_ids_survive_undo_and_redo() {
+    let mut ed = editor(blocks![p!["a"], p!["b<a>c", p!["child"]]]);
+    let before = ed.document().blocks();
+    ed.set_selection(Some(Selection::Blocks(vec![before[1]])))
+        .unwrap();
+    ed.delete_selection().unwrap();
+    assert!(!ed.document().contains(before[1]));
+    assert!(!ed.document().contains(before[2]));
+
+    for _ in 0..2 {
+        ed.undo().unwrap();
+        assert_eq!(ed.document().blocks(), before);
+        assert_eq!(ed.document().text(before[2]).unwrap(), "child");
+        assert_eq!(ed.document().parent(before[2]).unwrap(), Some(before[1]));
+        assert_eq!(ed.document().children(None).unwrap(), before[..2]);
+        assert_eq!(
+            ed.document().next_block(before[0]).unwrap(),
+            Some(before[1])
+        );
+        assert_eq!(
+            ed.document().prev_block(before[2]).unwrap(),
+            Some(before[1])
+        );
+        ed.redo().unwrap();
+        assert_eq!(ed.document().blocks(), before[..1]);
+    }
+
+    // A block that redo creates again is the one the step created first.
+    let mut ed = editor(blocks![p!["a<a>b"]]);
+    ed.split_block().unwrap();
+    let split = ed.document().blocks();
+    ed.undo().unwrap();
+    ed.redo().unwrap();
+    assert_eq!(ed.document().blocks(), split);
+    ed.insert_text("x").unwrap();
+    assert_editor(&ed, blocks![p!["a"], p!["x<a>b"]]);
 }
 
 #[test]
@@ -215,10 +337,9 @@ fn undo_restores_a_block_selection() {
     assert_editor(&ed, blocks![p!["a"]]);
     ed.undo().unwrap();
     assert_editor(&ed, blocks![p!["a"], p!["b", p!["b1"]], p!["c"]]);
-    let restored = ed.document().blocks();
     assert_eq!(
         ed.selection(),
-        Some(&Selection::Blocks(vec![restored[1], restored[3]]))
+        Some(&Selection::Blocks(vec![all[1], all[3]]))
     );
 }
 

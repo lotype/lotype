@@ -12,6 +12,8 @@ pub enum Error {
     /// The mark requires a string or integer value.
     MarkValueRequired(String),
     BlockNotFound,
+    /// The text is not a block id as [`BlockId`](crate::BlockId) prints it.
+    InvalidBlockId(String),
     /// The block's type holds no inline text.
     NoInlineContent,
     /// The block type named here cannot have child blocks.
@@ -47,6 +49,7 @@ impl fmt::Display for Error {
                 write!(f, "mark `{name}` needs a string or integer value")
             }
             Self::BlockNotFound => f.write_str("block not found"),
+            Self::InvalidBlockId(text) => write!(f, "`{text}` is not a block id"),
             Self::NoInlineContent => f.write_str("block has no inline content"),
             Self::ChildrenNotAllowed(name) => {
                 write!(f, "block type `{name}` cannot have children")

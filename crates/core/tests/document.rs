@@ -282,3 +282,17 @@ fn a_cyclic_move_is_reported_as_such_even_in_a_tall_tree() {
     }
     assert_eq!(doc.blocks().len(), MAX_DEPTH);
 }
+
+#[test]
+fn a_block_id_round_trips_through_text() {
+    let mut doc = doc();
+    let block = paragraph(&mut doc, None, 0);
+    let parsed: BlockId = block.to_string().parse().unwrap();
+    assert_eq!(parsed, block);
+    assert!(doc.contains(parsed));
+
+    for text in ["", "block", "1@", "1@2@3"] {
+        let error = text.parse::<BlockId>().unwrap_err();
+        assert!(matches!(error, Error::InvalidBlockId(found) if found == text));
+    }
+}

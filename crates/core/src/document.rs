@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use loro::{ExpandType, LoroDoc, LoroMap, LoroText, LoroTree, StyleConfig, TreeID, TreeParentId};
 
+use crate::ids::Restored;
 use crate::order::OrderCache;
 use crate::{BlockSpec, Content, Error, Result, Schema, Value};
 
@@ -15,13 +18,30 @@ pub const MAX_DEPTH: usize = 128;
 const TREE: &str = "blocks";
 pub(crate) const TYPE: &str = "$type";
 pub(crate) const TEXT: &str = "$text";
+pub(crate) const ID: &str = "$id";
 
-/// A handle to a live block in a document.
+/// The identity of a block. It stays the same when undo or redo brings a
+/// removed block back.
 ///
-/// Undoing a removal restores the block under a new ID. Refresh cached IDs
-/// from [`Document::blocks`] after undo restores removed blocks.
+/// To keep a reference outside the document, store the id as text with
+/// `to_string` and read it back with `parse`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockId(pub(crate) TreeID);
+
+impl fmt::Display for BlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for BlockId {
+    type Err = Error;
+
+    fn from_str(text: &str) -> Result<Self> {
+        let id = TreeID::try_from(text).map_err(|_| Error::InvalidBlockId(text.to_owned()))?;
+        Ok(Self(id))
+    }
+}
 
 /// A tree of blocks.
 pub struct Document {
@@ -29,6 +49,7 @@ pub struct Document {
     pub(crate) tree: LoroTree,
     pub(crate) order: Mutex<OrderCache>,
     pub(crate) identity: Arc<()>,
+    pub(crate) restored: Restored,
     schema: Schema,
 }
 
@@ -46,6 +67,7 @@ impl Document {
             tree,
             order: Mutex::default(),
             identity: Arc::new(()),
+            restored: Restored::default(),
             schema,
         }
     }
@@ -65,13 +87,14 @@ impl Document {
         if depth == MAX_DEPTH {
             return Ok(Vec::new());
         }
-        Ok(self.child_ids(parent).into_iter().map(BlockId).collect())
+        let children = self.child_ids(parent);
+        Ok(children.into_iter().map(|id| self.id_of(id)).collect())
     }
 
     /// The parent of `block`, or `None` for a top-level block.
     pub fn parent(&self, block: BlockId) -> Result<Option<BlockId>> {
         match self.tree.parent(self.live(block)?) {
-            Some(TreeParentId::Node(id)) => Ok(Some(BlockId(id))),
+            Some(TreeParentId::Node(id)) => Ok(Some(self.id_of(id))),
             Some(TreeParentId::Root) => Ok(None),
             _ => Err(Error::BlockNotFound),
         }
@@ -108,6 +131,8 @@ impl Document {
         let id = self.tree.create_at(self.slot(parent)?.0, index)?;
         let meta = self.tree.get_meta(id)?;
         meta.insert(TYPE, block_type)?;
+        // Undo recreates a removed block as a new node; this tells which block it was.
+        meta.insert(ID, id.to_string())?;
         // Created up front for every block: creating it later from two peers
         // at once would leave two containers and lose one side's text.
         meta.insert_container(TEXT, LoroText::new())?;
@@ -251,7 +276,11 @@ impl Document {
     /// below [`MAX_DEPTH`], is not found. The walk is bounded by `MAX_DEPTH`
     /// no matter how deep a peer has nested the block.
     pub(crate) fn depth(&self, block: BlockId) -> Result<usize> {
-        let mut current = block.0;
+        // A block that came back answers only to its first id.
+        if self.restored.is_restored(block.0) {
+            return Err(Error::BlockNotFound);
+        }
+        let mut current = self.node(block);
         for depth in 1..=MAX_DEPTH {
             match self.tree.parent(current) {
                 Some(TreeParentId::Node(parent)) => current = parent,
@@ -263,22 +292,23 @@ impl Document {
     }
 
     pub(crate) fn live(&self, block: BlockId) -> Result<TreeID> {
-        self.depth(block).map(|_| block.0)
+        self.depth(block).map(|_| self.node(block))
     }
 
     /// A parent as Loro names it, with its nesting level (0 for the top level).
     fn slot(&self, parent: Option<BlockId>) -> Result<(TreeParentId, usize)> {
         match parent {
-            Some(block) => Ok((TreeParentId::Node(block.0), self.depth(block)?)),
+            Some(block) => Ok((TreeParentId::Node(self.node(block)), self.depth(block)?)),
             None => Ok((TreeParentId::Root, 0)),
         }
     }
 
     /// Whether `block` is `ancestor` or lies inside it.
     fn is_within(&self, block: BlockId, ancestor: BlockId) -> bool {
-        let mut current = block.0;
+        let ancestor = self.node(ancestor);
+        let mut current = self.node(block);
         for _ in 0..MAX_DEPTH {
-            if current == ancestor.0 {
+            if current == ancestor {
                 return true;
             }
             match self.tree.parent(current) {
@@ -293,7 +323,7 @@ impl Document {
     fn height(&self, block: BlockId) -> Result<usize> {
         let base = self.depth(block)?;
         let mut height = 1;
-        let mut stack = vec![(block.0, 1)];
+        let mut stack = vec![(self.node(block), 1)];
         while let Some((id, level)) = stack.pop() {
             height = height.max(level);
             if base + level <= MAX_DEPTH {
@@ -323,7 +353,8 @@ impl Document {
         moving: Option<BlockId>,
     ) -> Result<()> {
         let parent_id = self.slot(parent)?.0;
-        let already_here = moving.is_some_and(|block| self.tree.parent(block.0) == Some(parent_id));
+        let already_here =
+            moving.is_some_and(|block| self.tree.parent(self.node(block)) == Some(parent_id));
         let len = self.tree.children_num(parent_id).unwrap_or(0) - usize::from(already_here);
         if index > len {
             return Err(Error::OutOfBounds { index, len });
