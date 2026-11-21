@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use loro::{ExpandType, LoroDoc, LoroMap, LoroText, LoroTree, StyleConfig, TreeID, TreeParentId};
@@ -48,7 +49,8 @@ pub struct Document {
     pub(crate) doc: LoroDoc,
     pub(crate) tree: LoroTree,
     pub(crate) order: Mutex<OrderCache>,
-    pub(crate) identity: Arc<()>,
+    /// Also identifies the document when an editor's edit replaces it.
+    pub(crate) editing: Arc<AtomicBool>,
     pub(crate) restored: Restored,
     schema: Schema,
 }
@@ -66,7 +68,7 @@ impl Document {
             doc,
             tree,
             order: Mutex::default(),
-            identity: Arc::new(()),
+            editing: Arc::new(AtomicBool::new(false)),
             restored: Restored::default(),
             schema,
         }
@@ -142,7 +144,34 @@ impl Document {
     /// Removes `block` and all of its descendants.
     pub fn remove_block(&mut self, block: BlockId) -> Result<()> {
         self.tree.delete(self.live(block)?)?;
+        // Peers with the same blocks must agree on their ids, and removing a
+        // block can settle who gets an id that several blocks claimed.
+        if self.restored.claims || self.restored.hidden {
+            self.refresh_ids();
+        }
         Ok(())
+    }
+
+    pub(crate) fn remove_blocks(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockId>,
+    ) -> Result<()> {
+        // Resolve the public ids up front: removing a claimant can change
+        // the id of a block later in this same deletion.
+        let nodes: Vec<_> = blocks
+            .into_iter()
+            .filter_map(|block| self.live(block).ok())
+            .collect();
+        let result = nodes.into_iter().try_for_each(|node| {
+            if self.node_depth(node).is_ok() {
+                self.tree.delete(node)?;
+            }
+            Ok(())
+        });
+        if self.restored.claims || self.restored.hidden {
+            self.refresh_ids();
+        }
+        result
     }
 
     /// Moves `block` so that it ends up at `index` among the children of `parent`.
@@ -157,14 +186,21 @@ impl Document {
         if parent.is_some_and(|parent| self.is_within(parent, block)) {
             return Err(Error::CyclicMove);
         }
-        if self.slot(parent)?.1 + self.height(block)? > MAX_DEPTH {
+        let parent_depth = self.slot(parent)?.1;
+        if parent_depth + self.height(block)? > MAX_DEPTH {
             return Err(Error::TooDeep);
         }
-        self.relocate_block(block, parent, index)
+        let visibility_changed = self.restored.hidden && self.depth(block)? != parent_depth + 1;
+        self.relocate_block(block, parent, index)?;
+        if visibility_changed {
+            self.refresh_ids();
+        }
+        Ok(())
     }
 
     /// [`Self::move_block`] without the rules on the parent's type and on
-    /// depth, like [`Self::create_block`].
+    /// depth, like [`Self::create_block`]. Commands that lift children
+    /// refresh ids when they remove the source block at the end.
     pub(crate) fn relocate_block(
         &mut self,
         block: BlockId,
@@ -280,7 +316,10 @@ impl Document {
         if self.restored.is_restored(block.0) {
             return Err(Error::BlockNotFound);
         }
-        let mut current = self.node(block);
+        self.node_depth(self.node(block))
+    }
+
+    fn node_depth(&self, mut current: TreeID) -> Result<usize> {
         for depth in 1..=MAX_DEPTH {
             match self.tree.parent(current) {
                 Some(TreeParentId::Node(parent)) => current = parent,

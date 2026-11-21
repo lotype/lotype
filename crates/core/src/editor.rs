@@ -1,11 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use loro::{LoroValue, UndoManager};
 
+use crate::collab::Anchored;
 use crate::marks::{TypingMarks, visible_marks};
 use crate::{Document, Error, Pos, Result, Selection, Value};
 
+mod remote;
 mod typing;
 
 const MAX_UNDO_STEPS: usize = 100;
@@ -27,25 +30,28 @@ pub struct Editor {
     pending_marks: Option<TypingMarks>,
 }
 
-/// The selection around one undo step.
+/// The selection around one undo step. Anchored, so that it is still in the
+/// right place when changes from other peers came in before the step is undone.
 struct Step {
-    before: Option<Selection>,
-    after: Option<Selection>,
+    before: Option<Anchored>,
+    after: Option<Anchored>,
 }
 
 /// Commits the edit and resets history if the edit replaced the document or panicked.
 struct OpenStep<'a> {
     editor: &'a mut Editor,
-    original_document: &'a Arc<()>,
+    original_document: &'a Arc<AtomicBool>,
 }
 
 impl Drop for OpenStep<'_> {
     fn drop(&mut self) {
+        self.original_document.store(false, Ordering::Relaxed);
         let editor = &mut *self.editor;
         editor.doc.commit();
-        let replaced = !Arc::ptr_eq(self.original_document, &editor.doc.identity);
+        let replaced = !Arc::ptr_eq(self.original_document, &editor.doc.editing);
         if replaced || std::thread::panicking() {
-            editor.reset_history();
+            editor.forget_history();
+            editor.selection = None;
         }
     }
 }
@@ -64,15 +70,26 @@ impl Editor {
         }
     }
 
-    /// Starts over with the document as it is now: no undo or redo steps and no selection.
-    fn reset_history(&mut self) {
+    /// Starts over with the document as it is now, with no undo or redo steps.
+    fn forget_history(&mut self) {
         self.doc.refresh_ids();
         self.history = new_history(&self.doc);
         self.undo_steps.clear();
         self.redo_steps.clear();
-        self.selection = None;
         self.run = None;
         self.pending_marks = None;
+    }
+
+    /// Loro can fail to undo a step that changes from other peers have cut
+    /// across, and it keeps such a step. No step under it can be reached
+    /// then, so the history starts over.
+    fn history_failed(&mut self, error: loro::LoroError) -> Error {
+        self.forget_history();
+        self.selection = self
+            .selection
+            .take()
+            .filter(|selection| self.doc.check_selection(selection).is_ok());
+        error.into()
     }
 
     pub fn document(&self) -> &Document {
@@ -106,6 +123,7 @@ impl Editor {
     /// the undo history and the selection are cleared.
     /// Replacing the document starts a new history with the replacement as its
     /// baseline, whether `edit` then fails or not.
+    /// Use [`Self::import`] outside the edit to merge remote changes.
     ///
     /// ```
     /// use lotype_core::{Document, Editor, Error, Schema};
@@ -147,12 +165,14 @@ impl Editor {
             self.finish_edit_group();
         }
         let new_step = self.run.is_none();
-        let original_document = Arc::clone(&self.doc.identity);
+        let original_document = Arc::clone(&self.doc.editing);
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
+        let before = selection.as_ref().map(|s| self.doc.anchored(s));
         if new_step {
             self.history.group_start()?;
         }
+        original_document.store(true, Ordering::Relaxed);
         let open = OpenStep {
             editor: self,
             original_document: &original_document,
@@ -166,7 +186,7 @@ impl Editor {
             }
             Ok(after)
         });
-        let changed = Arc::ptr_eq(&original_document, &self.doc.identity)
+        let changed = Arc::ptr_eq(&original_document, &self.doc.editing)
             && self.doc.doc.oplog_frontiers() != version;
         let after = match result {
             Ok(after) => after,
@@ -177,8 +197,8 @@ impl Editor {
                 if changed && new_step {
                     self.history.group_end();
                     if let Err(error) = self.history.undo() {
-                        self.reset_history();
-                        return Err(error.into());
+                        self.selection = None;
+                        return Err(self.history_failed(error));
                     }
                     // Loro dropped its redo steps when it recorded the edit,
                     // and now holds the undone edit as one. Emptying this
@@ -194,16 +214,16 @@ impl Editor {
                 return Err(error);
             }
         };
-        self.selection = after.clone();
-        if changed && new_step {
-            self.push_undo_step(Step {
-                before: selection,
-                after,
-            });
-            self.redo_steps.clear();
-        } else if changed && let Some(step) = self.undo_steps.back_mut() {
-            step.after = after;
+        if changed {
+            let after = after.as_ref().map(|s| self.doc.anchored(s));
+            if new_step {
+                self.push_undo_step(Step { before, after });
+                self.redo_steps.clear();
+            } else if let Some(step) = self.undo_steps.back_mut() {
+                step.after = after;
+            }
         }
+        self.selection = after;
         Ok(changed)
     }
 
@@ -214,12 +234,7 @@ impl Editor {
                 Ok(Some(Selection::caret(doc.delete_range(*anchor, *head)?)))
             }
             Some(Selection::Blocks(blocks)) => {
-                // A block may already be gone as a descendant of an earlier one.
-                for block in blocks {
-                    if doc.contains(*block) {
-                        doc.remove_block(*block)?;
-                    }
-                }
+                doc.remove_blocks(blocks.iter().copied())?;
                 Ok(None)
             }
             None => Err(Error::NoSelection),
@@ -329,16 +344,22 @@ impl Editor {
     }
 
     /// Undoes the last step that changed the document. Returns whether there was one.
+    ///
+    /// Changes from other peers can leave a step that cannot be undone. That
+    /// is an error, and it clears the undo and redo history.
     pub fn undo(&mut self) -> Result<bool> {
         self.finish_edit_group();
         self.pending_marks = None;
         while !self.undo_steps.is_empty() {
             // A step with no net effect changes nothing. Go on to the one before it.
-            let changed = self.history.undo()?;
+            let changed = match self.history.undo() {
+                Ok(changed) => changed,
+                Err(error) => return Err(self.history_failed(error)),
+            };
             if let Some(step) = self.undo_steps.pop_back()
                 && changed
             {
-                self.restore(step.before.clone());
+                self.restore(step.before.as_ref());
                 self.redo_steps.push(step);
                 return Ok(true);
             }
@@ -351,11 +372,14 @@ impl Editor {
         self.finish_edit_group();
         self.pending_marks = None;
         while !self.redo_steps.is_empty() {
-            let changed = self.history.redo()?;
+            let changed = match self.history.redo() {
+                Ok(changed) => changed,
+                Err(error) => return Err(self.history_failed(error)),
+            };
             if let Some(step) = self.redo_steps.pop()
                 && changed
             {
-                self.restore(step.after.clone());
+                self.restore(step.after.as_ref());
                 self.push_undo_step(step);
                 return Ok(true);
             }
@@ -371,9 +395,9 @@ impl Editor {
     }
 
     /// Sets the selection from a stored one, or clears it when it no longer fits the document.
-    fn restore(&mut self, selection: Option<Selection>) {
+    fn restore(&mut self, selection: Option<&Anchored>) {
         self.doc.refresh_ids();
-        self.selection = selection.filter(|s| self.doc.check_selection(s).is_ok());
+        self.selection = selection.and_then(|anchored| self.doc.resolve(anchored));
     }
 }
 

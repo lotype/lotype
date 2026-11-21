@@ -215,7 +215,8 @@ pub fn outline(doc: &Document, selection: Option<&Selection>) -> String {
             matches!(selection, Some(Selection::Blocks(blocks)) if blocks.contains(&block));
         out.push_str(&"  ".repeat(depth));
         out.push_str(if selected { "* " } else { "" });
-        out.push_str(&doc.block_type(block).unwrap());
+        // A block another peer left without a readable type prints as `?`.
+        out.push_str(&doc.block_type(block).unwrap_or_else(|_| "?".to_owned()));
         for (key, value) in doc.attrs(block).unwrap() {
             write!(out, " {key}={}", display(&value)).unwrap();
         }

@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod collab;
 mod commands;
 mod document;
 mod editor;
@@ -18,6 +19,7 @@ mod tests;
 mod text;
 mod value;
 
+pub use collab::Version;
 pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::Editor;
 pub use error::{Error, Result};

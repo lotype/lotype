@@ -22,19 +22,24 @@ struct Siblings {
 impl Document {
     /// Every block, in document order.
     pub fn blocks(&self) -> Vec<BlockId> {
-        let mut ordered = Vec::new();
+        self.raw_blocks()
+            .map(|(node, _)| self.id_of(node))
+            .collect()
+    }
+
+    pub(crate) fn raw_blocks(&self) -> impl Iterator<Item = (TreeID, usize)> + '_ {
         // An explicit stack: nesting depth is controlled by remote peers.
         let mut stack = Vec::new();
         let roots = self.child_ids(TreeParentId::Root);
         stack.extend(roots.into_iter().rev().map(|id| (id, 1)));
-        while let Some((id, depth)) = stack.pop() {
-            ordered.push(self.id_of(id));
+        std::iter::from_fn(move || {
+            let (id, depth) = stack.pop()?;
             if depth < MAX_DEPTH {
                 let children = self.child_ids(TreeParentId::Node(id));
                 stack.extend(children.into_iter().rev().map(|child| (child, depth + 1)));
             }
-        }
-        ordered
+            Some((id, depth))
+        })
     }
 
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {

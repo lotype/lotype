@@ -12,6 +12,9 @@ use crate::{BlockId, Document, MAX_DEPTH};
 pub(crate) struct Restored {
     nodes: HashMap<TreeID, TreeID>,
     ids: HashMap<TreeID, TreeID>,
+    /// Some block carries the id of another node, whether it got that id or not.
+    pub(crate) claims: bool,
+    pub(crate) hidden: bool,
 }
 
 impl Restored {
@@ -30,30 +33,42 @@ impl Document {
     }
 
     /// Finds the blocks that came back. Run it after anything that can
-    /// recreate blocks: undo and redo.
+    /// recreate blocks or change which block gets an id: undo, redo, an
+    /// import, removing a claimant, or moving a subtree across the depth cap.
     ///
     /// `$id` is shared data a peer can set to anything, so a block only gets
     /// the id of a removed node, and only when no other block claims it too.
     /// A forged id can then cost a block the id it had, but never gives a
     /// block the id of another block in the document.
     pub(crate) fn refresh_ids(&mut self) {
-        self.restored = Restored::default();
+        let mut restored = Restored::default();
         let mut claims: HashMap<TreeID, Option<TreeID>> = HashMap::new();
-        for BlockId(node) in self.blocks() {
-            if let Some(first) = self.first_id(node)
-                && first != node
-                && self.is_removed(first)
+        for (node, depth) in self.raw_blocks() {
+            if depth == MAX_DEPTH
+                && self
+                    .tree
+                    .children_num(TreeParentId::Node(node))
+                    .unwrap_or(0)
+                    > 0
             {
+                restored.hidden = true;
+            }
+            let Some(first) = self.first_id(node).filter(|first| *first != node) else {
+                continue;
+            };
+            restored.claims = true;
+            if self.is_removed(first) {
                 let claim = claims.entry(first);
                 claim.and_modify(|node| *node = None).or_insert(Some(node));
             }
         }
         for (first, node) in claims {
             if let Some(node) = node {
-                self.restored.nodes.insert(first, node);
-                self.restored.ids.insert(node, first);
+                restored.nodes.insert(first, node);
+                restored.ids.insert(node, first);
             }
         }
+        self.restored = restored;
     }
 
     /// Whether a node that was in the document has been removed. Bounded like

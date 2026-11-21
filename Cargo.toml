@@ -16,4 +16,5 @@ categories = ["text-editors", "gui", "asynchronous"]
 
 [workspace.dependencies]
 loro = "1.18.0"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 unicode-segmentation = "1.13.3"

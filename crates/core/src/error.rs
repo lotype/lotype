@@ -37,6 +37,10 @@ pub enum Error {
     ReservedAttr(String),
     CyclicMove,
     NoSelection,
+    /// Loro could not read or fully merge a snapshot or update.
+    InvalidUpdate(Box<dyn std::error::Error + Send + Sync>),
+    /// Importing into a document while its editor is running a local edit.
+    ImportDuringEdit,
     Internal(Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -68,6 +72,8 @@ impl fmt::Display for Error {
             Self::ReservedAttr(key) => write!(f, "attribute key `{key}` is reserved"),
             Self::CyclicMove => f.write_str("a block cannot be moved into itself"),
             Self::NoSelection => f.write_str("no selection"),
+            Self::InvalidUpdate(source) => write!(f, "invalid update: {source}"),
+            Self::ImportDuringEdit => f.write_str("use Editor::import outside the edit"),
             Self::Internal(source) => write!(f, "internal error: {source}"),
         }
     }
@@ -76,7 +82,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Internal(source) => Some(source.as_ref()),
+            Self::InvalidUpdate(source) | Self::Internal(source) => Some(source.as_ref()),
             _ => None,
         }
     }

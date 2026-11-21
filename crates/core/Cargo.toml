@@ -21,3 +21,4 @@ test-support = []
 
 [dev-dependencies]
 lotype-core = { path = ".", features = ["test-support"] }
+proptest.workspace = true

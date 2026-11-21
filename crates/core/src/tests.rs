@@ -7,7 +7,7 @@ use loro::TreeParentId;
 
 use crate::document::{ID, TYPE};
 use crate::test_support::{assert_document, build, outline};
-use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Selection, b, blocks, p};
+use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Schema, Selection, b, blocks, p};
 
 fn highlight(doc: &Document, block: BlockId, range: Range<usize>) {
     let text = doc.raw_text(block).unwrap();
@@ -222,6 +222,97 @@ fn a_block_only_takes_a_removed_id_that_nothing_else_claims() {
     assert_eq!(doc.next_block(c).unwrap(), Some(y));
     assert!(matches!(doc.text(d), Err(Error::BlockNotFound)));
     assert!(matches!(doc.text(x), Err(Error::BlockNotFound)));
+}
+
+#[test]
+fn moving_a_previously_hidden_claimant_agrees_with_a_peer() {
+    let (mut source, _) = build(blocks![p!["root"], p!["gone"]]);
+    let [root, gone] = source.blocks()[..] else {
+        panic!()
+    };
+    source.remove_block(gone).unwrap();
+    let mut parent = root;
+    let mut first_child = None;
+    for _ in 0..MAX_DEPTH {
+        parent = BlockId(source.tree.create(TreeParentId::Node(parent.0)).unwrap());
+        first_child.get_or_insert(parent);
+    }
+    claim(&source, parent, gone);
+
+    let snapshot = source.export_snapshot().unwrap();
+    let mut a = Document::new(Schema::builtin());
+    let mut b = Document::new(Schema::builtin());
+    a.import(&snapshot).unwrap();
+    b.import(&snapshot).unwrap();
+    assert!(!a.contains(gone));
+
+    a.move_block(first_child.unwrap(), None, 0).unwrap();
+    b.import(&a.export_updates(&b.version()).unwrap()).unwrap();
+    assert!(a.contains(gone));
+    assert_eq!(a.blocks(), b.blocks());
+}
+
+#[test]
+fn a_block_selection_removes_every_claimant_even_if_one_would_gain_the_id() {
+    let (mut doc, _) = build(blocks![p!["first"], p!["second"], p!["gone"]]);
+    let [first, second, gone] = doc.blocks()[..] else {
+        panic!()
+    };
+    doc.remove_block(gone).unwrap();
+    claim(&doc, first, gone);
+    claim(&doc, second, gone);
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::Blocks(vec![first, second])))
+        .unwrap();
+    editor.delete_selection().unwrap();
+    assert!(editor.document().blocks().is_empty());
+}
+
+#[test]
+fn a_range_command_returns_the_caret_under_the_survivors_new_id() {
+    let (mut doc, _) = build(blocks![p!["first"], p!["second"], p!["gone"]]);
+    let [first, second, gone] = doc.blocks()[..] else {
+        panic!()
+    };
+    doc.remove_block(gone).unwrap();
+    claim(&doc, first, gone);
+    claim(&doc, second, gone);
+    doc.refresh_ids();
+
+    let caret = doc
+        .delete_range(Pos::new(first, 5), Pos::new(second, 6))
+        .unwrap();
+    assert_eq!(caret, Pos::new(gone, 5));
+    assert_eq!(doc.blocks(), [gone]);
+}
+
+#[test]
+fn importing_operations_for_the_local_peer_keeps_them_out_of_undo() {
+    let (doc, selection) = build(blocks![p!["x<a>"], p!["other"]]);
+    let other = doc.blocks()[1];
+    let local_peer = doc.doc.peer_id();
+    let mut editor = Editor::new(doc);
+    editor.set_selection(selection).unwrap();
+    editor.insert_text("y").unwrap();
+
+    let update = {
+        let mut replica = Document::new(Schema::builtin());
+        replica
+            .import(&editor.document().export_snapshot().unwrap())
+            .unwrap();
+        replica.doc.set_peer_id(local_peer).unwrap();
+        replica.insert_text(other, 0, "the ").unwrap();
+        replica
+            .export_updates(&editor.document().version())
+            .unwrap()
+    };
+    editor.import(&update).unwrap();
+
+    assert!(!editor.can_undo());
+    editor.insert_text("z").unwrap();
+    assert!(editor.undo().unwrap());
+    assert_document(editor.document(), None, blocks![p!["xy"], p!["the other"]]);
 }
 
 #[test]

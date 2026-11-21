@@ -42,16 +42,18 @@ impl Document {
         let Some(prev) = self.prev_block(block)? else {
             return Ok(None);
         };
+        let block_node = self.node(block);
+        let prev_node = self.node(prev);
         let Ok(join) = self.text_len(prev) else {
             if self.parent(block)? == Some(prev) {
                 return Ok(None);
             }
             self.remove_block(prev)?;
-            return Ok(Some(Pos::new(block, 0)));
+            return Ok(Some(Pos::new(self.id_of(block_node), 0)));
         };
         self.copy_text(block, 0..len, prev, join)?;
         self.dissolve_block(block)?;
-        Ok(Some(Pos::new(prev, join)))
+        Ok(Some(Pos::new(self.id_of(prev_node), join)))
     }
 
     /// Deletes everything between two positions and joins what is left of the
@@ -63,12 +65,13 @@ impl Document {
             return Ok(start);
         }
         let between = self.blocks_between(start.block, end.block)?;
+        let start_node = self.node(start.block);
         let start_len = self.text_len(start.block)?;
         let end_len = self.text_len(end.block)?;
         self.delete_text(start.block, start.offset..start_len)?;
         self.copy_text(end.block, end.offset..end_len, start.block, start.offset)?;
         self.remove_keeping_survivors(between, end.block)?;
-        Ok(start)
+        Ok(Pos::new(self.id_of(start_node), start.offset))
     }
 
     /// Applies a mark to the text between two positions, across blocks.
@@ -135,13 +138,7 @@ impl Document {
         for (offset, survivor) in survivors.into_iter().enumerate() {
             self.relocate_block(survivor, parent, index + 1 + offset)?;
         }
-        // In document order, so a block inside one already removed is skipped.
-        for block in between.into_iter().chain([last]) {
-            if self.contains(block) {
-                self.remove_block(block)?;
-            }
-        }
-        Ok(())
+        self.remove_blocks(between.into_iter().chain([last]))
     }
 
     /// Removes `block`, leaving its children where it was.

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3b88bc0657616964ef7f35ce8675b56f61b7877c0f4f882cd5610f9774da573b # shrinks to steps = [Edit(0, Merge { block: 1 }), Send { from: 0, to: 2 }, Edit(1, Fail { block: 1 }), Edit(0, InsertBlock { parent: 0, index: 0 }), Edit(1, Merge { block: 2 }), Send { from: 2, to: 1 }, Undo(1)]
