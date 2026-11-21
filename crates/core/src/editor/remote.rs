@@ -89,6 +89,13 @@ impl Editor {
         if group_ended || selection != self.selection {
             self.finish_edit_group();
         }
+        // A block that came back has new text, which cursors made in the old
+        // text do not follow.
+        if let Some(selection) = &selection
+            && anchored.as_ref().is_some_and(|a| self.doc.outdated(a))
+        {
+            anchored = Some(self.doc.anchored(selection));
+        }
         // Kept while nothing resolves too: a later update can bring a block back.
         self.live_anchors = anchored;
         self.selection = selection;

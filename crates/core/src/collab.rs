@@ -210,6 +210,21 @@ impl Document {
         }
     }
 
+    /// Whether a block of the selection came back with new text, which the
+    /// cursors made in the old text do not follow.
+    pub(crate) fn outdated(&self, anchored: &Anchored) -> bool {
+        let Anchored::Text { anchor, head } = anchored else {
+            return false;
+        };
+        [anchor, head].into_iter().any(|endpoint| {
+            let block = self.resolve_block(&endpoint.block);
+            let text = block.and_then(|block| self.inline(block).ok());
+            let cursor = endpoint.cursor.as_ref();
+            text.zip(cursor)
+                .is_some_and(|(text, cursor)| cursor.container != text.id())
+        })
+    }
+
     /// Notes the endpoints whose character is gone. Call it right after the
     /// step the selection is stored with, before any other change.
     pub(crate) fn record_cut(&self, anchored: &mut Anchored) {

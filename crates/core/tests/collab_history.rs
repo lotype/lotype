@@ -173,3 +173,24 @@ fn undo_restores_a_caret_whose_character_a_later_keystroke_removed() {
     assert_editor(&a, blocks![p![">a🇦x<a>🇧z"]]);
     assert!(!a.can_undo());
 }
+
+#[test]
+fn a_selection_that_returns_follows_the_text_of_its_new_block() {
+    let mut a = editor(blocks![p!["keep"], p!["ca<a>ret"]]);
+    let mut b = Editor::new(peer(a.document()));
+    let block = b.document().blocks()[1];
+    b.set_selection(Some(Selection::Blocks(vec![block])))
+        .unwrap();
+    b.delete_selection().unwrap();
+    pull(&mut a, b.document());
+    b.undo().unwrap();
+    pull(&mut a, b.document());
+    b.apply(|doc, _| {
+        doc.insert_text(block, 0, ">>")?;
+        Ok(None)
+    })
+    .unwrap();
+    pull(&mut a, b.document());
+
+    assert_editor(&a, blocks![p!["keep"], p![">>ca<a>ret"]]);
+}
