@@ -13,3 +13,10 @@ categories.workspace = true
 
 [dependencies]
 loro.workspace = true
+
+[features]
+# Builders and assertions for tests of code that uses this crate.
+test-support = []
+
+[dev-dependencies]
+lotype-core = { path = ".", features = ["test-support"] }
