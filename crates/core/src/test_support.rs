@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::{BlockId, Document, Pos, Schema, Selection, Span, Value};
+use crate::{BlockId, Document, Editor, Pos, Schema, Selection, Span, Value};
 
 const ANCHOR: &str = "<a>";
 const HEAD: &str = "<b>";
@@ -164,6 +164,20 @@ pub fn assert_document(doc: &Document, selection: Option<&Selection>, expected: 
         outline(doc, selection),
         outline(&expected_doc, expected_selection.as_ref())
     );
+}
+
+/// Builds an editor whose history starts after the built content.
+pub fn editor(blocks: Vec<BlockNode>) -> Editor {
+    let (doc, selection) = build(blocks);
+    let mut editor = Editor::new(doc);
+    editor.set_selection(selection).unwrap();
+    editor
+}
+
+/// [`assert_document`] for an editor's document and selection.
+#[track_caller]
+pub fn assert_editor(editor: &Editor, expected: Vec<BlockNode>) {
+    assert_document(editor.document(), editor.selection(), expected);
 }
 
 /// One line per block, indented by depth: `type attr=value "text"`.

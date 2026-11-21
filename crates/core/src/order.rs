@@ -73,6 +73,18 @@ impl Document {
         Ok(path)
     }
 
+    /// The block at `path`, as returned by [`Document::path`].
+    pub fn block_at(&self, path: &[usize]) -> Option<BlockId> {
+        let mut parent = TreeParentId::Root;
+        for index in path {
+            parent = TreeParentId::Node(*self.child_ids(parent).get(*index)?);
+        }
+        match parent {
+            TreeParentId::Node(id) => Some(BlockId(id)),
+            _ => None,
+        }
+    }
+
     /// The parent of a live block, its children, and the block's index among them.
     fn siblings(&self, id: TreeID) -> Result<(TreeParentId, Vec<TreeID>, usize)> {
         let parent = self.tree.parent(id).ok_or(Error::BlockNotFound)?;

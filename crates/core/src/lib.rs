@@ -4,6 +4,7 @@
 
 mod commands;
 mod document;
+mod editor;
 mod error;
 mod order;
 mod schema;
@@ -14,6 +15,7 @@ mod text;
 mod value;
 
 pub use document::{BlockId, Document};
+pub use editor::Editor;
 pub use error::{Error, Result};
 pub use schema::{BlockSpec, Content, Expand, MarkSpec, Schema};
 pub use selection::{Pos, Selection};
