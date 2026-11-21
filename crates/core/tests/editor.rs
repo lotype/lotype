@@ -206,7 +206,7 @@ fn a_failed_edit_at_the_history_cap_costs_no_undo_step() {
 }
 
 #[test]
-fn a_failed_edit_cannot_be_redone() {
+fn a_failed_edit_preserves_the_existing_redo() {
     let mut ed = editor(blocks![p!["<a>"]]);
     ed.insert_text("a").unwrap();
     ed.split_block().unwrap();
@@ -217,14 +217,12 @@ fn a_failed_edit_cannot_be_redone() {
     });
     assert!(result.is_err());
     assert_editor(&ed, blocks![p!["a<a>"]]);
-    assert!(!ed.can_redo());
-
-    assert!(ed.undo().unwrap());
+    assert!(ed.can_redo());
     assert!(ed.redo().unwrap());
-    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert_editor(&ed, blocks![p!["a"], p!["<a>"]]);
     assert!(!ed.can_redo());
     assert!(!ed.redo().unwrap());
-    assert_editor(&ed, blocks![p!["a<a>"]]);
+    assert_editor(&ed, blocks![p!["a"], p!["<a>"]]);
 }
 
 #[test]
@@ -392,9 +390,9 @@ fn replacing_the_document_restarts_undo_and_redo() {
 }
 
 #[test]
-fn replacing_the_document_before_a_panic_rebinds_undo() {
+fn a_panicking_edit_discards_its_replacement_document() {
     let mut ed = editor(blocks![p!["old<a>"]]);
-    let (replacement, selection) = build(blocks![p!["new<a>"]]);
+    let (replacement, _) = build(blocks![p!["new<a>"]]);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = ed.apply(|doc, _| {
             *doc = replacement;
@@ -402,11 +400,10 @@ fn replacing_the_document_before_a_panic_rebinds_undo() {
         });
     }));
     assert!(result.is_err());
-    assert_eq!(ed.selection(), None);
-    ed.set_selection(selection).unwrap();
+    assert_editor(&ed, blocks![p!["old<a>"]]);
     ed.insert_text("!").unwrap();
     assert!(ed.undo().unwrap());
-    assert_editor(&ed, blocks![p!["new<a>"]]);
+    assert_editor(&ed, blocks![p!["old<a>"]]);
 }
 
 #[test]
@@ -439,16 +436,12 @@ fn a_panicking_edit_does_not_leave_the_editor_stuck() {
         });
     }));
     assert!(panicked.is_err());
-    assert_eq!(ed.selection(), None);
     assert!(!ed.can_undo());
-    assert_editor(&ed, blocks![p!["xa"]]);
+    assert_editor(&ed, blocks![p!["a<a>"]]);
 
-    let block = ed.document().blocks()[0];
-    ed.set_selection(Some(Selection::caret(Pos::new(block, 2))))
-        .unwrap();
     ed.insert_text("b").unwrap();
-    assert_editor(&ed, blocks![p!["xab<a>"]]);
+    assert_editor(&ed, blocks![p!["ab<a>"]]);
     assert!(ed.undo().unwrap());
-    assert_editor(&ed, blocks![p!["xa<a>"]]);
+    assert_editor(&ed, blocks![p!["a<a>"]]);
     assert!(!ed.undo().unwrap());
 }

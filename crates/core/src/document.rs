@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use loro::{ExpandType, LoroDoc, LoroMap, LoroText, LoroTree, StyleConfig, TreeID, TreeParentId};
 
+use crate::draft::Draft;
 use crate::ids::Restored;
 use crate::order::OrderCache;
 use crate::{BlockSpec, Content, Error, Result, Schema, Value};
@@ -49,15 +49,17 @@ pub struct Document {
     pub(crate) doc: LoroDoc,
     pub(crate) tree: LoroTree,
     pub(crate) order: Mutex<OrderCache>,
-    /// Also identifies the document when an editor's edit replaces it.
-    pub(crate) editing: Arc<AtomicBool>,
+    pub(crate) draft: Option<Draft>,
     pub(crate) restored: Restored,
     schema: Schema,
 }
 
 impl Document {
     pub fn new(schema: Schema) -> Self {
-        let doc = LoroDoc::new();
+        Self::from_loro(LoroDoc::new(), schema)
+    }
+
+    pub(crate) fn from_loro(doc: LoroDoc, schema: Schema) -> Self {
         doc.config_text_style(schema.style_config());
         // Marks from a peer with a different schema must stay readable and
         // copyable; without a default, Loro rejects every edit that meets one.
@@ -68,7 +70,7 @@ impl Document {
             doc,
             tree,
             order: Mutex::default(),
-            editing: Arc::new(AtomicBool::new(false)),
+            draft: None,
             restored: Restored::default(),
             schema,
         }
@@ -80,7 +82,17 @@ impl Document {
 
     /// Ends the current change. Each commit is one undo step.
     pub fn commit(&mut self) {
+        self.commit_change();
+    }
+
+    pub(crate) fn commit_change(&self) {
         self.doc.commit();
+        self.record(|| {
+            Box::new(|doc| {
+                doc.commit();
+                Ok(())
+            })
+        });
     }
 
     /// Child blocks of `parent`, or the top-level blocks when `parent` is `None`.
@@ -138,6 +150,10 @@ impl Document {
         // Created up front for every block: creating it later from two peers
         // at once would leave two containers and lose one side's text.
         meta.insert_container(TEXT, LoroText::new())?;
+        self.record(|| {
+            let block_type = block_type.to_owned();
+            Box::new(move |doc| doc.create_block(parent, index, &block_type).map(drop))
+        });
         Ok(BlockId(id))
     }
 
@@ -149,6 +165,7 @@ impl Document {
         if self.restored.claims || self.restored.hidden {
             self.refresh_ids();
         }
+        self.record(|| Box::new(move |doc| doc.remove_block(block)));
         Ok(())
     }
 
@@ -162,14 +179,25 @@ impl Document {
             .into_iter()
             .filter_map(|block| self.live(block).ok())
             .collect();
-        let result = nodes.into_iter().try_for_each(|node| {
+        self.remove_nodes(nodes)
+    }
+
+    fn remove_nodes(&mut self, nodes: Vec<TreeID>) -> Result<()> {
+        let result = nodes.iter().copied().try_for_each(|node| {
             if self.node_depth(node).is_ok() {
                 self.tree.delete(node)?;
+                self.record(|| Box::new(move |doc| doc.tree.delete(node).map_err(Into::into)));
             }
             Ok(())
         });
         if self.restored.claims || self.restored.hidden {
             self.refresh_ids();
+            self.record(|| {
+                Box::new(|doc| {
+                    doc.refresh_ids();
+                    Ok(())
+                })
+            });
         }
         result
     }
@@ -194,6 +222,12 @@ impl Document {
         self.relocate_block(block, parent, index)?;
         if visibility_changed {
             self.refresh_ids();
+            self.record(|| {
+                Box::new(|doc| {
+                    doc.refresh_ids();
+                    Ok(())
+                })
+            });
         }
         Ok(())
     }
@@ -220,6 +254,7 @@ impl Document {
     ) -> Result<()> {
         self.check_index(parent, index, Some(node))?;
         self.tree.mov_to(node, self.slot(parent)?.0, index)?;
+        self.record(|| Box::new(move |doc| doc.relocate_node(node, parent, index)));
         Ok(())
     }
 
@@ -242,6 +277,10 @@ impl Document {
             return Err(Error::TextNotAllowed(block_type.to_owned()));
         }
         self.meta(block)?.insert(TYPE, block_type)?;
+        self.record(|| {
+            let block_type = block_type.to_owned();
+            Box::new(move |doc| doc.set_block_type(block, &block_type))
+        });
         Ok(())
     }
 
@@ -265,13 +304,21 @@ impl Document {
     }
 
     pub fn set_attr(&mut self, block: BlockId, key: &str, value: impl Into<Value>) -> Result<()> {
-        self.meta(block)?
-            .insert(attr_key(key)?, value.into().to_loro())?;
+        let value = value.into();
+        self.meta(block)?.insert(attr_key(key)?, value.to_loro())?;
+        self.record(|| {
+            let key = key.to_owned();
+            Box::new(move |doc| doc.set_attr(block, &key, value))
+        });
         Ok(())
     }
 
     pub fn remove_attr(&mut self, block: BlockId, key: &str) -> Result<()> {
         self.meta(block)?.delete(attr_key(key)?)?;
+        self.record(|| {
+            let key = key.to_owned();
+            Box::new(move |doc| doc.remove_attr(block, &key))
+        });
         Ok(())
     }
 
@@ -287,7 +334,9 @@ impl Document {
                 result = target.insert(key, value);
             }
         });
-        Ok(result?)
+        result?;
+        self.record(|| Box::new(move |doc| doc.copy_attrs(from, to)));
+        Ok(())
     }
 
     pub(crate) fn spec(&self, block: BlockId) -> Result<&BlockSpec> {

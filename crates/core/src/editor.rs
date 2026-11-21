@@ -1,6 +1,4 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use loro::{LoroValue, UndoManager};
 
@@ -9,6 +7,7 @@ use crate::marks::{TypingMarks, visible_marks};
 use crate::{Document, Error, Pos, Result, Selection, Value};
 
 mod remote;
+mod transaction;
 mod typing;
 
 const MAX_UNDO_STEPS: usize = 100;
@@ -35,25 +34,6 @@ pub struct Editor {
 struct Step {
     before: Option<Anchored>,
     after: Option<Anchored>,
-}
-
-/// Commits the edit and resets history if the edit replaced the document or panicked.
-struct OpenStep<'a> {
-    editor: &'a mut Editor,
-    original_document: &'a Arc<AtomicBool>,
-}
-
-impl Drop for OpenStep<'_> {
-    fn drop(&mut self) {
-        self.original_document.store(false, Ordering::Relaxed);
-        let editor = &mut *self.editor;
-        editor.doc.commit();
-        let replaced = !Arc::ptr_eq(self.original_document, &editor.doc.editing);
-        if replaced || std::thread::panicking() {
-            editor.forget_history();
-            editor.selection = None;
-        }
-    }
 }
 
 impl Editor {
@@ -116,14 +96,10 @@ impl Editor {
 
     /// Runs `edit` as one undo step. `edit` returns the selection to set.
     ///
-    /// If `edit` fails, the changes it made before failing are rolled back:
-    /// the document, the selection and the undo history stay as they were.
-    /// Only the redo history is lost, when `edit` had changed the document.
-    /// If `edit` panics, or the rollback itself fails, the changes stay, and
-    /// the undo history and the selection are cleared.
-    /// Replacing the document starts a new history with the replacement as its
-    /// baseline, whether `edit` then fails or not.
-    /// Use [`Self::import`] outside the edit to merge remote changes.
+    /// The callback edits a draft. An error or panic discards the draft,
+    /// including any replacement document, and preserves selection and history.
+    /// A successful replacement starts a new history with that document.
+    /// Import and export through the editor outside the callback.
     ///
     /// ```
     /// use lotype_core::{Document, Editor, Error, Schema};
@@ -147,10 +123,7 @@ impl Editor {
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
     ) -> Result<()> {
-        self.pending_marks = None;
-        let result = self.step(false, edit);
-        self.history.group_end();
-        result.map(drop)
+        self.apply_draft(edit)
     }
 
     /// Runs `edit` and records it for undo: as a new step, or as part of the
@@ -161,24 +134,25 @@ impl Editor {
         extend_run: bool,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
     ) -> Result<bool> {
+        if self.doc.draft.is_some() {
+            return Err(Error::NestedEdit);
+        }
         if !extend_run {
             self.finish_edit_group();
         }
         let new_step = self.run.is_none();
-        let original_document = Arc::clone(&self.doc.editing);
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
-        let before = selection.as_ref().map(|s| self.doc.anchored(s));
+        let before = if new_step {
+            selection.as_ref().map(|s| self.doc.anchored(s))
+        } else {
+            None
+        };
         if new_step {
             self.history.group_start()?;
         }
-        original_document.store(true, Ordering::Relaxed);
-        let open = OpenStep {
-            editor: self,
-            original_document: &original_document,
-        };
-        let result = edit(&mut open.editor.doc, selection.as_ref());
-        drop(open);
+        let result = edit(&mut self.doc, selection.as_ref());
+        self.doc.commit();
 
         let result = result.and_then(|after| {
             if let Some(after) = &after {
@@ -186,8 +160,7 @@ impl Editor {
             }
             Ok(after)
         });
-        let changed = Arc::ptr_eq(&original_document, &self.doc.editing)
-            && self.doc.doc.oplog_frontiers() != version;
+        let changed = self.doc.doc.oplog_frontiers() != version;
         let after = match result {
             Ok(after) => after,
             Err(error) => {

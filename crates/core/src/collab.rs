@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
 
 use loro::cursor::{Cursor, PosType, Side};
 use loro::{ContainerID, ContainerTrait, ExportMode, VersionVector};
@@ -41,7 +40,7 @@ impl Anchored {
 /// Exchanging changes with other peers, as bytes. How they travel is up to the application.
 impl Document {
     pub fn version(&self) -> Version {
-        self.doc.commit();
+        self.commit_change();
         Version(self.doc.oplog_vv())
     }
 
@@ -56,6 +55,9 @@ impl Document {
     }
 
     fn export(&self, mode: ExportMode) -> Result<Vec<u8>> {
+        if self.draft.is_some() {
+            return Err(Error::ExportDuringEdit);
+        }
         let bytes = self.doc.export(mode);
         bytes.map_err(|error| Error::Internal(Box::new(error)))
     }
@@ -67,7 +69,7 @@ impl Document {
     ///
     /// Use [`Editor::import`](crate::Editor::import) for a document in an editor.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
-        if self.editing.load(Ordering::Relaxed) {
+        if self.draft.is_some() {
             return Err(Error::ImportDuringEdit);
         }
         let before = self.doc.state_frontiers();

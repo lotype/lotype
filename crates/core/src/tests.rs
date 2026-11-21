@@ -355,12 +355,14 @@ fn a_replacement_document_is_addressed_by_its_restored_ids() {
     claim(&replacement, a, gone);
     replacement.commit();
 
-    let mut editor = Editor::new(build(blocks![p!["old"]]).0);
+    let original = build(blocks![p!["old"]]).0;
+    let original_ids = original.blocks();
+    let mut editor = Editor::new(original);
     let result = editor.apply(|doc, _| {
         *doc = replacement;
         Ok(Some(Selection::caret(Pos::new(a, 0))))
     });
     assert!(matches!(result, Err(Error::BlockNotFound)));
     assert_eq!(editor.selection(), None);
-    assert_eq!(editor.document().blocks(), [gone]);
+    assert_eq!(editor.document().blocks(), original_ids);
 }

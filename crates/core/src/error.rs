@@ -41,6 +41,10 @@ pub enum Error {
     InvalidUpdate(Box<dyn std::error::Error + Send + Sync>),
     /// Importing into a document while its editor is running a local edit.
     ImportDuringEdit,
+    /// Exporting an unpublished edit.
+    ExportDuringEdit,
+    /// Starting an editor edit on a document that is already a draft.
+    NestedEdit,
     Internal(Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -74,6 +78,8 @@ impl fmt::Display for Error {
             Self::NoSelection => f.write_str("no selection"),
             Self::InvalidUpdate(source) => write!(f, "invalid update: {source}"),
             Self::ImportDuringEdit => f.write_str("use Editor::import outside the edit"),
+            Self::ExportDuringEdit => f.write_str("export the document after Editor::apply"),
+            Self::NestedEdit => f.write_str("a draft cannot start another editor edit"),
             Self::Internal(source) => write!(f, "internal error: {source}"),
         }
     }

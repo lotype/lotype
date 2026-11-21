@@ -5,6 +5,7 @@
 mod collab;
 mod commands;
 mod document;
+mod draft;
 mod editor;
 mod error;
 mod ids;

@@ -88,6 +88,55 @@ fn importing_inside_an_edit_cannot_undo_an_earlier_step() {
 }
 
 #[test]
+fn rejecting_a_removal_leaves_the_original_block_for_remote_edits() {
+    let mut a = editor(blocks![p!["shared"]]);
+    let mut b = peer(a.document());
+    let block = b.blocks()[0];
+    let before = a.document().version();
+    b.insert_text(block, 6, " remote").unwrap();
+
+    let rejected = a.apply(|draft, _| {
+        draft.remove_block(block)?;
+        draft.commit();
+        assert!(matches!(
+            draft.export_snapshot(),
+            Err(Error::ExportDuringEdit)
+        ));
+        Err(Error::NoSelection)
+    });
+    assert!(matches!(rejected, Err(Error::NoSelection)));
+    assert_eq!(a.document().version(), before);
+    sync(&mut a, &mut b);
+    assert_document(&b, None, blocks![p!["shared remote"]]);
+    assert_editor(&a, blocks![p!["shared remote"]]);
+    assert_eq!(a.document().blocks(), [block]);
+}
+
+#[test]
+fn moving_a_draft_into_a_nested_editor_cannot_allow_import() {
+    let mut a = editor(blocks![p!["shared"]]);
+    let mut b = peer(a.document());
+    b.insert_text(b.blocks()[0], 6, " remote").unwrap();
+    let update = b.export_updates(&a.document().version()).unwrap();
+
+    a.apply(|doc, _| {
+        let staged = std::mem::replace(doc, Document::new(Schema::builtin()));
+        let mut nested = Editor::new(staged);
+        assert!(matches!(
+            nested.apply(|_, _| panic!("a nested edit ran")),
+            Err(Error::NestedEdit)
+        ));
+        assert!(matches!(
+            nested.import(&update),
+            Err(Error::ImportDuringEdit)
+        ));
+        Err(Error::NoSelection)
+    })
+    .unwrap_err();
+    assert_editor(&a, blocks![p!["shared"]]);
+}
+
+#[test]
 fn a_block_a_peer_brings_back_keeps_its_id() {
     let mut a = editor(blocks![p!["keep"], p!["gone", p!["child"]]]);
     let mut b = peer(a.document());
@@ -276,13 +325,18 @@ fn an_undo_that_loro_cannot_do_clears_the_history() {
     let two = b.blocks()[1];
     b.merge_backward(two).unwrap();
 
-    // The failed edit removes a block, and rolling it back brings a copy.
-    let failed = a.apply(|doc, _| {
+    // The successful removal followed by undo brings a copy.
+    a.apply(|doc, _| {
         doc.remove_block(two)?;
-        doc.insert_block(None, 0, "no such type")?;
         Ok(None)
-    });
-    assert!(failed.is_err());
+    })
+    .unwrap();
+    assert!(a.undo().unwrap());
+    a.set_selection(Some(Selection::caret(Pos::new(
+        a.document().blocks()[0],
+        3,
+    ))))
+    .unwrap();
     a.apply(|doc, selection| {
         doc.merge_backward(doc.blocks()[2])?;
         Ok(selection.cloned())
@@ -313,6 +367,28 @@ fn raw_text(doc: &LoroDoc, block: BlockId) -> LoroText {
         .unwrap()
         .into_text()
         .unwrap()
+}
+
+#[test]
+fn a_draft_remains_undoable_on_a_document_loaded_from_shallow_history() {
+    let (base, _) = build(blocks![p!["shared"]]);
+    let block = base.blocks()[0];
+    let raw = LoroDoc::new();
+    raw.import(&base.export_snapshot().unwrap()).unwrap();
+    let snapshot = raw
+        .export(ExportMode::shallow_snapshot(&raw.oplog_frontiers()))
+        .unwrap();
+    let mut doc = Document::new(Schema::builtin());
+    doc.import(&snapshot).unwrap();
+    let mut editor = Editor::new(doc);
+    editor
+        .apply(|doc, _| {
+            doc.insert_text(block, 6, " edit")?;
+            Ok(None)
+        })
+        .unwrap();
+    assert!(editor.undo().unwrap());
+    assert_editor(&editor, blocks![p!["shared"]]);
 }
 
 #[test]

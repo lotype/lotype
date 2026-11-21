@@ -37,9 +37,13 @@ impl Document {
 
     pub fn insert_text(&mut self, block: BlockId, offset: usize, content: &str) -> Result<()> {
         let text = self.inline(block)?;
-        let offset = unicode_offset(&text, offset)?;
+        let index = unicode_offset(&text, offset)?;
         if !content.is_empty() {
-            text.insert(offset, content)?;
+            text.insert(index, content)?;
+            self.record(|| {
+                let content = content.to_owned();
+                Box::new(move |doc| doc.insert_text(block, offset, &content))
+            });
         }
         Ok(())
     }
@@ -47,7 +51,7 @@ impl Document {
     /// Inserts text carrying exactly the given marks, whatever the marks around `offset`.
     pub fn insert_spans(&mut self, block: BlockId, offset: usize, spans: &[Span]) -> Result<()> {
         let text = self.inline(block)?;
-        let offset = unicode_offset(&text, offset)?;
+        let index = unicode_offset(&text, offset)?;
         for (name, value) in spans.iter().flat_map(|span| &span.marks) {
             self.mark_spec(name)?.check_value(value)?;
         }
@@ -60,7 +64,12 @@ impl Document {
                     .collect(),
             ),
         });
-        insert_delta(&text, offset, inserts.collect())
+        insert_delta(&text, index, inserts.collect())?;
+        self.record(|| {
+            let spans = spans.to_vec();
+            Box::new(move |doc| doc.insert_spans(block, offset, &spans))
+        });
+        Ok(())
     }
 
     pub(crate) fn insert_typed(
@@ -95,24 +104,27 @@ impl Document {
         offset: usize,
     ) -> Result<()> {
         let source = self.inline(from)?;
-        let range = unicode_range(&source, range)?;
+        let indices = unicode_range(&source, range.clone())?;
         let target = self.inline(to)?;
-        let offset = unicode_offset(&target, offset)?;
-        let mut delta = source.slice_delta(range.start, range.end, PosType::Unicode)?;
+        let index = unicode_offset(&target, offset)?;
+        let mut delta = source.slice_delta(indices.start, indices.end, PosType::Unicode)?;
         // Without attributes an insert would take on the marks around it.
         for item in &mut delta {
             if let TextDelta::Insert { attributes, .. } = item {
                 attributes.get_or_insert_default();
             }
         }
-        insert_delta(&target, offset, delta)
+        insert_delta(&target, index, delta)?;
+        self.record(|| Box::new(move |doc| doc.copy_text(from, range, to, offset)));
+        Ok(())
     }
 
     pub fn delete_text(&mut self, block: BlockId, range: Range<usize>) -> Result<()> {
         let text = self.inline(block)?;
-        let range = unicode_range(&text, range)?;
-        if !range.is_empty() {
-            text.delete(range.start, range.len())?;
+        let indices = unicode_range(&text, range.clone())?;
+        if !indices.is_empty() {
+            text.delete(indices.start, indices.len())?;
+            self.record(|| Box::new(move |doc| doc.delete_text(block, range)));
         }
         Ok(())
     }
@@ -127,9 +139,13 @@ impl Document {
         let value = value.into();
         self.mark_spec(name)?.check_value(&value)?;
         let text = self.inline(block)?;
-        let range = unicode_range(&text, range)?;
-        if !range.is_empty() {
-            text.mark(range, name, value.to_loro())?;
+        let indices = unicode_range(&text, range.clone())?;
+        if !indices.is_empty() {
+            text.mark(indices, name, value.to_loro())?;
+            self.record(|| {
+                let name = name.to_owned();
+                Box::new(move |doc| doc.mark(block, range, &name, value))
+            });
         }
         Ok(())
     }
@@ -137,9 +153,13 @@ impl Document {
     pub fn unmark(&mut self, block: BlockId, range: Range<usize>, name: &str) -> Result<()> {
         self.mark_spec(name)?;
         let text = self.inline(block)?;
-        let range = unicode_range(&text, range)?;
-        if !range.is_empty() {
-            text.unmark(range, name)?;
+        let indices = unicode_range(&text, range.clone())?;
+        if !indices.is_empty() {
+            text.unmark(indices, name)?;
+            self.record(|| {
+                let name = name.to_owned();
+                Box::new(move |doc| doc.unmark(block, range, &name))
+            });
         }
         Ok(())
     }
