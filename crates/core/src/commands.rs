@@ -164,7 +164,10 @@ impl Document {
         };
         let siblings = self.children(Some(parent))?;
         let after = &siblings[self.index_of(block)? + 1..];
-        if !after.is_empty() && !self.spec(block).is_ok_and(BlockSpec::allows_children) {
+        // A table takes rows and nothing else.
+        let adopts =
+            !self.is_table_part(block) && self.spec(block).is_ok_and(BlockSpec::allows_children);
+        if !after.is_empty() && !adopts {
             return Ok(false);
         }
         // Behind every child it has, also those the depth cap hides.

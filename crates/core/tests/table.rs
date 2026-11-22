@@ -1,5 +1,8 @@
+use loro::{ExportMode, LoroDoc, TreeID};
 use lotype_core::test_support::{build, outline};
-use lotype_core::{BlockId, ColumnId, Document, Editor, Error, Pos, Schema, Selection, blocks, p};
+use lotype_core::{
+    BlockId, ColumnId, Document, Editor, Error, MAX_DEPTH, Pos, Schema, Selection, blocks, p,
+};
 
 /// A paragraph, a table of `rows` by `columns`, and a paragraph.
 fn with_table(rows: usize, columns: usize) -> (Document, BlockId) {
@@ -330,4 +333,138 @@ fn selected_cells_are_emptied_together() {
     };
     ed.set_selection(Some(range)).unwrap();
     assert!(matches!(ed.insert_text("x"), Err(Error::TablePart)));
+}
+
+#[test]
+fn a_column_two_peers_both_brought_back_is_still_one_column() {
+    let (doc, table) = with_table(1, 3);
+    let columns = doc.columns(table).unwrap();
+    let mut a = Editor::new(doc);
+    let mut b = Editor::new(peer(a.document()));
+    for ed in [&mut a, &mut b] {
+        ed.apply(|doc, _| doc.remove_column(table, columns[0]).map(|()| None))
+            .unwrap();
+    }
+    exchange(&mut a, &mut b);
+    assert!(a.undo().unwrap() && b.undo().unwrap());
+    exchange(&mut a, &mut b);
+    assert_eq!(b.document().columns(table).unwrap(), columns);
+
+    // Each edit still finds the column it was asked for.
+    b.apply(|doc, _| {
+        doc.move_column(table, columns[0], 2)?;
+        doc.remove_column(table, columns[2])?;
+        doc.insert_column(table, 2).map(|_| None)
+    })
+    .unwrap();
+    let now = b.document().columns(table).unwrap();
+    assert_eq!(now[..2], [columns[1], columns[0]]);
+    assert_eq!(now.len(), 3);
+    b.apply(|doc, _| doc.remove_column(table, columns[0]).map(|()| None))
+        .unwrap();
+    assert_eq!(b.document().columns(table).unwrap(), [columns[1], now[2]]);
+    exchange(&mut a, &mut b);
+    assert_eq!(
+        a.document().columns(table).unwrap(),
+        b.document().columns(table).unwrap()
+    );
+}
+
+#[test]
+fn what_a_peer_writes_into_the_column_list_does_not_shift_the_columns() {
+    let (mut doc, table) = with_table(1, 3);
+    let columns = doc.columns(table).unwrap();
+    let raw = LoroDoc::new();
+    raw.import(&doc.export_snapshot().unwrap()).unwrap();
+    let node = TreeID::try_from(table.to_string().as_str()).unwrap();
+    let meta = raw.get_tree("blocks").get_meta(node).unwrap();
+    let list = meta.ensure_mergeable_movable_list("$cols").unwrap();
+    list.insert(0, "junk").unwrap();
+    list.insert(2, 7).unwrap();
+    list.insert(3, columns[2].to_string()).unwrap();
+    list.insert(4, format!("+{}", columns[1])).unwrap();
+    raw.commit();
+    doc.import(&raw.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    // The third column counts where it is listed first.
+    assert_eq!(
+        doc.columns(table).unwrap(),
+        [columns[0], columns[2], columns[1]]
+    );
+
+    doc.move_column(table, columns[1], 0).unwrap();
+    assert_eq!(
+        doc.columns(table).unwrap(),
+        [columns[1], columns[0], columns[2]]
+    );
+    let new = doc.insert_column(table, 3).unwrap();
+    doc.remove_column(table, columns[2]).unwrap();
+    assert_eq!(doc.columns(table).unwrap(), [columns[1], columns[0], new]);
+}
+
+#[test]
+fn a_table_and_its_rows_stay_what_they_are() {
+    // Moving a table out of its parent does not make the blocks after it its rows.
+    let (mut doc, _) = build(blocks![p!["top", p!["a"], p!["b"]]]);
+    let top = doc.blocks()[0];
+    let table = doc.insert_table(Some(top), 1, 1, 1).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.set_selection(Some(Selection::Blocks(vec![table])))
+        .unwrap();
+    ed.outdent().unwrap();
+    assert_eq!(ed.document().children(Some(table)).unwrap().len(), 1);
+    assert_eq!(ed.document().parent(table).unwrap(), Some(top));
+
+    // A row does not go to another table, where its cells would be other columns.
+    let (mut doc, table) = with_table(1, 1);
+    let other = doc.insert_table(None, 0, 1, 1).unwrap();
+    let row = doc.children(Some(table)).unwrap()[0];
+    let moved = doc.move_block(row, Some(other), 0);
+    assert!(matches!(moved, Err(Error::TablePart)));
+
+    // A table needs room for its rows.
+    let (mut doc, _) = build(blocks![p!["top"]]);
+    let mut parent = doc.blocks()[0];
+    for _ in 0..MAX_DEPTH - 2 {
+        parent = doc.insert_block(Some(parent), 0, "paragraph").unwrap();
+    }
+    let too_deep = doc.insert_table(Some(parent), 0, 2, 2);
+    assert!(matches!(too_deep, Err(Error::TooDeep)));
+    let above = doc.parent(parent).unwrap();
+    let table = doc.insert_table(above, 0, 2, 2).unwrap();
+    assert_eq!(doc.children(Some(table)).unwrap().len(), 2);
+}
+
+#[test]
+fn enter_in_a_cell_is_a_step_of_its_own() {
+    let (doc, table) = with_table(1, 1);
+    let (rows, columns) = grid(&doc, table);
+    let cell = doc.cell(rows[0], columns[0]).unwrap();
+    let mut ed = Editor::new(doc);
+    caret(&mut ed, cell, 0);
+    ed.insert_text("ab").unwrap();
+    ed.split_block().unwrap();
+    ed.insert_text("cd").unwrap();
+    for expected in ["ab\n", "ab", ""] {
+        assert!(ed.undo().unwrap());
+        assert_eq!(ed.document().text(cell).unwrap(), expected);
+    }
+}
+
+#[test]
+fn every_column_gets_an_id_of_its_own() {
+    let (mut doc, table) = with_table(1, 3);
+    for round in 0..4 {
+        // With and without changes that are not committed yet.
+        if round % 2 == 0 {
+            doc.commit();
+        }
+        let column = doc.insert_column(table, 0).unwrap();
+        doc.move_column(table, column, 1).unwrap();
+        doc.insert_column(table, 2).unwrap();
+        doc.insert_row(table, 0).unwrap();
+    }
+    let columns = doc.columns(table).unwrap();
+    let distinct: std::collections::HashSet<_> = columns.iter().collect();
+    assert_eq!((columns.len(), distinct.len()), (11, 11));
 }

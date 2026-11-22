@@ -209,7 +209,12 @@ impl Document {
         index: usize,
     ) -> Result<()> {
         self.check_allows_children(parent)?;
-        self.check_place(parent, &self.block_type(block).unwrap_or_default())?;
+        let block_type = self.block_type(block).unwrap_or_default();
+        self.check_place(parent, &block_type)?;
+        // A row keeps to its table: its cells are those of that table's columns.
+        if block_type == ROW && self.parent(block)? != parent {
+            return Err(Error::TablePart);
+        }
         // Before the depth rule: a block is always "too deep" for its own subtree.
         if parent.is_some_and(|parent| self.is_within(parent, block)) {
             return Err(Error::CyclicMove);

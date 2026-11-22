@@ -270,7 +270,11 @@ impl Editor {
             _ => None,
         };
         if self.selection.as_ref().and_then(in_cell).is_some() {
-            return self.insert_text("\n");
+            // A step of its own, as Enter is everywhere else.
+            self.finish_edit_group();
+            let typed = self.insert_text("\n");
+            self.finish_edit_group();
+            return typed;
         }
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
