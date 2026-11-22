@@ -37,6 +37,9 @@ enum Container {
     List(Option<i64>),
     /// Whether the item is a task, and done.
     Item(Option<bool>),
+    Table,
+    /// A row of a table, the one with its headings included.
+    Row,
 }
 
 /// The block whose text is being read.
@@ -80,7 +83,8 @@ impl Reader {
             return;
         };
         let mut node = leaf.node;
-        if let Some(url) = leaf.image.filter(|_| !leaf.plain) {
+        let alone = !leaf.plain && node.block_type == "paragraph";
+        if let Some(url) = leaf.image.filter(|_| alone) {
             // An image on its own is a block. The text was its description.
             let caption: String = node.spans.drain(..).map(|span| span.text).collect();
             node = Node::new("image").with("url", url.clone());
@@ -166,6 +170,9 @@ impl Reader {
                 self.enter(Container::List(start));
             }
             Tag::Item => self.enter(Container::Item(None)),
+            Tag::Table(_) => self.enter(Container::Table),
+            Tag::TableHead | Tag::TableRow => self.enter(Container::Row),
+            Tag::TableCell => self.open(Node::new("table_cell")),
             Tag::Emphasis => self.mark(ITALIC, true),
             Tag::Strong => self.mark(BOLD, true),
             Tag::Strikethrough => self.mark(STRIKE, true),
@@ -215,6 +222,8 @@ impl Reader {
                 self.close();
             }
             TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item => self.leave(),
+            TagEnd::Table | TagEnd::TableHead | TagEnd::TableRow => self.leave(),
+            TagEnd::TableCell => self.close(),
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
                 self.unmark();
             }
@@ -252,6 +261,12 @@ impl Reader {
         };
         match container {
             Container::Root => self.stack.push((Container::Root, nodes)),
+            Container::Table | Container::Row => {
+                let row = matches!(container, Container::Row);
+                let mut node = Node::new(if row { "table_row" } else { "table" });
+                node.children = nodes;
+                self.push(node);
+            }
             Container::List(_) => {
                 if let Some((_, parent)) = self.stack.last_mut() {
                     parent.extend(nodes);
@@ -293,6 +308,7 @@ impl Reader {
         let options = Options::ENABLE_GFM
             | Options::ENABLE_STRIKETHROUGH
             | Options::ENABLE_TASKLISTS
+            | Options::ENABLE_TABLES
             | Options::ENABLE_MATH;
         self.stack.push((Container::Root, Vec::new()));
         for event in Parser::new_ext(markdown, options) {
@@ -347,7 +363,10 @@ impl Document {
         let nodes = Reader::default().read(markdown);
         let mut stack: Vec<_> = nodes.into_iter().rev().map(|n| (top, depth, n)).collect();
         while let Some((parent, depth, mut node)) = stack.pop() {
-            if self.schema().block_spec(node.block_type).is_none() {
+            // A table that would reach below the deepest level is read as
+            // what is in it, like one of a type the schema lacks.
+            let too_deep = node.block_type == "table" && depth + 2 > MAX_DEPTH;
+            if too_deep || self.schema().block_spec(node.block_type).is_none() {
                 if node.block_type == "image" {
                     node.spans = image_link(&node.attrs);
                 }
@@ -359,6 +378,13 @@ impl Document {
                     stack.extend(children.map(|child| (parent, depth, child)));
                     continue;
                 }
+            }
+            if node.block_type == "table" {
+                let index = next.entry(parent).or_insert(0);
+                let table = self.insert_rows(parent, *index, node.children)?;
+                *index += 1;
+                made.extend((parent == top).then_some(table));
+                continue;
             }
             let holds_text = self.holds_text(node.block_type)?;
             if !holds_text && !node.spans.is_empty() {
@@ -377,13 +403,7 @@ impl Document {
                 self.set_attr(block, key, value)?;
             }
             if holds_text {
-                for span in &mut node.spans {
-                    let fits = |name: &String, value: &mut Value| {
-                        let spec = self.mark_spec(name);
-                        spec.is_ok_and(|spec| spec.check_value(value).is_ok())
-                    };
-                    span.marks.retain(fits);
-                }
+                self.fit_marks(&mut node.spans);
                 self.insert_spans(block, 0, &node.spans)?;
             }
             let nests = self.spec(block)?.allows_children() && depth + 1 < MAX_DEPTH;
@@ -396,6 +416,38 @@ impl Document {
             stack.extend(children.map(|child| (inside.0, inside.1, child)));
         }
         Ok(made)
+    }
+}
+
+impl Document {
+    /// Leaves off the marks the schema lacks, or has with another kind of value.
+    fn fit_marks(&self, spans: &mut [Span]) {
+        for span in spans {
+            let fits = |name: &String, value: &mut Value| {
+                let spec = self.mark_spec(name);
+                spec.is_ok_and(|spec| spec.check_value(value).is_ok())
+            };
+            span.marks.retain(fits);
+        }
+    }
+
+    /// Inserts a table with these rows of cells, as wide as its widest row.
+    fn insert_rows(
+        &mut self,
+        parent: Option<BlockId>,
+        index: usize,
+        rows: Vec<Node>,
+    ) -> Result<BlockId> {
+        let width = rows.iter().map(|row| row.children.len()).max();
+        let table = self.insert_table(parent, index, rows.len(), width.unwrap_or(0))?;
+        let (blocks, columns) = (self.children(Some(table))?, self.columns(table)?);
+        for (row, block) in rows.into_iter().zip(blocks) {
+            for (mut cell, column) in row.children.into_iter().zip(&columns) {
+                self.fit_marks(&mut cell.spans);
+                self.insert_spans(self.cell(block, *column)?, 0, &cell.spans)?;
+            }
+        }
+        Ok(table)
     }
 }
 

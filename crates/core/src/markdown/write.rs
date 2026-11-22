@@ -114,6 +114,23 @@ impl Document {
                     attr("language").replace(|c: char| c == '`' || c.is_whitespace(), "");
                 format!("{fence}{language}\n{code}\n{fence}")
             }
+            "table" => {
+                let (rows, columns) = (self.children(Some(block)).ok()?, self.columns(block).ok()?);
+                let line = |row: &BlockId| {
+                    let cells = columns.iter().map(|column| {
+                        let cell = self.cell(*row, *column);
+                        let spans = cell.and_then(|cell| self.spans(cell)).unwrap_or_default();
+                        // A cell is one line, and a bar ends it even in code.
+                        inline(&spans).replace("\\\n", " ").replace('|', "\\|")
+                    });
+                    format!("| {} |", cells.collect::<Vec<_>>().join(" | "))
+                };
+                // The first row is the one Markdown wants headings in.
+                let (head, body) = rows.split_first().filter(|_| !columns.is_empty())?;
+                let mut lines = vec![line(head), format!("|{}", " --- |".repeat(columns.len()))];
+                lines.extend(body.iter().map(line));
+                lines.join("\n")
+            }
             "heading" => {
                 let level = match self.attr(block, "level") {
                     Ok(Some(Value::Int(level))) => level.clamp(1, 6) as usize,

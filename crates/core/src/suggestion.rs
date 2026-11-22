@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::table::TABLE;
 use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
 
 /// An entry of the slash menu: a block to insert.
@@ -117,6 +118,13 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "page_break",
         ),
         item(
+            "table",
+            "Table",
+            "Basic blocks",
+            &["grid", "rows", "columns"],
+            "table",
+        ),
+        item(
             "image",
             "Image",
             "Media",
@@ -196,6 +204,16 @@ impl Editor {
             let holds_text = doc.holds_text(&item.block_type)?;
             let (parent, below) = (doc.parent(block)?, doc.index_of(block)? + 1);
             let empty = doc.text_len(block)? == 0 && doc.children(Some(block))?.is_empty();
+            if item.block_type == TABLE {
+                // Three by three to start with, and typing goes on in the first cell.
+                let table = doc.insert_table(parent, below, 3, 3)?;
+                if empty {
+                    doc.remove_block(block)?;
+                }
+                let (rows, columns) = (doc.children(Some(table))?, doc.columns(table)?);
+                let first = doc.cell(rows[0], columns[0])?;
+                return Ok(Some(Selection::caret(Pos::new(first, 0))));
+            }
             let target = if empty {
                 for key in doc.attrs(block)?.into_keys() {
                     doc.remove_attr(block, &key)?;
