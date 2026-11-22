@@ -36,7 +36,7 @@ impl Document {
     }
 
     pub fn insert_text(&mut self, block: BlockId, offset: usize, content: &str) -> Result<()> {
-        let text = self.inline(block)?;
+        let text = self.editable(block)?;
         let index = unicode_offset(&text, offset)?;
         if !content.is_empty() {
             text.insert(index, content)?;
@@ -50,7 +50,7 @@ impl Document {
 
     /// Inserts text carrying exactly the given marks, whatever the marks around `offset`.
     pub fn insert_spans(&mut self, block: BlockId, offset: usize, spans: &[Span]) -> Result<()> {
-        let text = self.inline(block)?;
+        let text = self.editable(block)?;
         let index = unicode_offset(&text, offset)?;
         for (name, value) in spans.iter().flat_map(|span| &span.marks) {
             self.mark_spec(name)?.check_value(value)?;
@@ -81,7 +81,7 @@ impl Document {
         if content.is_empty() {
             return Ok(());
         }
-        let text = self.inline(pos.block)?;
+        let text = self.editable(pos.block)?;
         let offset = unicode_offset(&text, pos.offset)?;
         let marks = match pending {
             Some(marks) => marks,
@@ -105,7 +105,7 @@ impl Document {
     ) -> Result<()> {
         let source = self.inline(from)?;
         let indices = unicode_range(&source, range.clone())?;
-        let target = self.inline(to)?;
+        let target = self.editable(to)?;
         let index = unicode_offset(&target, offset)?;
         let mut delta = source.slice_delta(indices.start, indices.end, PosType::Unicode)?;
         // Without attributes an insert would take on the marks around it.
@@ -173,6 +173,16 @@ impl Document {
             return Err(Error::NoInlineContent);
         }
         self.raw_text(block)
+    }
+
+    /// The text of a block, to insert into. A cell gets its text here: it
+    /// has none of its own until something is written in it.
+    pub(crate) fn editable(&self, block: BlockId) -> Result<LoroText> {
+        let text = self.inline(block)?;
+        match block.1.filter(|_| !text.is_attached()) {
+            Some(column) => self.make_cell(block.0, column),
+            None => Ok(text),
+        }
     }
 
     pub(crate) fn mark_spec(&self, name: &str) -> Result<&MarkSpec> {

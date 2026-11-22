@@ -37,6 +37,11 @@ pub enum Error {
     ReservedAttr(String),
     CyclicMove,
     NoSelection,
+    /// The block is no table, or no row of one.
+    NotATable,
+    /// A table, its rows and its cells are only shaped through the table
+    /// methods, and a cell is no block to move, remove or put blocks in.
+    TablePart,
     /// Loro could not read or fully merge a snapshot or update.
     InvalidUpdate(Box<dyn std::error::Error + Send + Sync>),
     /// Importing into a document while its editor is running a local edit.
@@ -76,6 +81,8 @@ impl fmt::Display for Error {
             Self::ReservedAttr(key) => write!(f, "attribute key `{key}` is reserved"),
             Self::CyclicMove => f.write_str("a block cannot be moved into itself"),
             Self::NoSelection => f.write_str("no selection"),
+            Self::NotATable => f.write_str("the block is not a table"),
+            Self::TablePart => f.write_str("not something a table, a row or a cell can do"),
             Self::InvalidUpdate(source) => write!(f, "invalid update: {source}"),
             Self::ImportDuringEdit => f.write_str("use Editor::import outside the edit"),
             Self::ExportDuringEdit => f.write_str("export the document after Editor::apply"),

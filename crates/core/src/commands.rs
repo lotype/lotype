@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use loro::TreeParentId;
 
+use crate::table::TABLE;
 use crate::{BlockId, BlockSpec, Document, Error, Pos, Result, Value};
 
 /// Edits that span more than one primitive operation.
@@ -19,6 +20,9 @@ impl Document {
     pub fn split_block(&mut self, pos: Pos) -> Result<Pos> {
         self.check_pos(pos)?;
         let block = pos.block;
+        if block.1.is_some() {
+            return Err(Error::TablePart);
+        }
         let len = self.text_len(block)?;
         let block_type = self.block_type(block)?;
         let index = self.index_of(block)?;
@@ -41,7 +45,10 @@ impl Document {
     /// Returns the caret position, or `None` when there is nothing to join with.
     pub fn merge_backward(&mut self, block: BlockId) -> Result<Option<Pos>> {
         let len = self.text_len(block)?;
-        let Some(prev) = self.prev_block(block)? else {
+        // Nothing joins with a table: a cell has no block before it, and
+        // the block after a table does not take a row away.
+        let before = self.prev_block(block)?;
+        let Some(prev) = before.filter(|prev| !self.is_table_part(*prev)) else {
             return Ok(None);
         };
         let Ok(join) = self.text_len(prev) else {
@@ -63,6 +70,10 @@ impl Document {
         if start.block == end.block {
             self.delete_text(start.block, start.offset..end.offset)?;
             return Ok(start);
+        }
+        // A range that ends in a cell would take the table apart.
+        if start.block.1.is_some() || end.block.1.is_some() {
+            return Err(Error::TablePart);
         }
         let between = self.blocks_between(start.block, end.block)?;
         let start_len = self.text_len(start.block)?;
@@ -120,6 +131,9 @@ impl Document {
     /// Returns whether it could: there must be such a sibling, it must take
     /// children, and the block must not end up too deep.
     pub fn indent_block(&mut self, block: BlockId) -> Result<bool> {
+        if self.is_table_part(block) && self.block_type(block)? != TABLE {
+            return Ok(false);
+        }
         let (parent, index) = (self.parent(block)?, self.index_of(block)?);
         let Some(before) = index.checked_sub(1) else {
             return Ok(false);
@@ -127,9 +141,12 @@ impl Document {
         let before = self.children(parent)?[before];
         let end = self.children(Some(before))?.len();
         match self.move_block(block, Some(before), end) {
-            Err(Error::ChildrenNotAllowed(_) | Error::TooDeep | Error::UnknownBlockType(_)) => {
-                Ok(false)
-            }
+            Err(
+                Error::ChildrenNotAllowed(_)
+                | Error::TooDeep
+                | Error::UnknownBlockType(_)
+                | Error::TablePart,
+            ) => Ok(false),
             moved => moved.map(|()| true),
         }
     }
@@ -139,6 +156,9 @@ impl Document {
     /// reads. Returns whether it could: the block must have a parent, and
     /// must take children if it has siblings after it.
     pub fn outdent_block(&mut self, block: BlockId) -> Result<bool> {
+        if self.is_table_part(block) && self.block_type(block)? != TABLE {
+            return Ok(false);
+        }
         let Some(parent) = self.parent(block)? else {
             return Ok(false);
         };
@@ -230,6 +250,8 @@ impl Document {
         let mut segments = Vec::new();
         if start.block == end.block {
             segments.push((start.block, start.offset..end.offset));
+        } else if start.block.1.is_some() || end.block.1.is_some() {
+            return Err(Error::TablePart);
         } else {
             segments.push((start.block, start.offset..self.text_len(start.block)?));
             for block in self.blocks_between(start.block, end.block)? {

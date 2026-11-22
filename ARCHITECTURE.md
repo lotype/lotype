@@ -167,14 +167,16 @@ Design decisions:
 - **Pending marks.** Toggling a mark on a caret sets the formatting for subsequent typing until the selection changes or another editing command runs. Use `Editor::set_mark` with an explicit value for links and colors. By default the editor uses the marks shared by the neighboring characters and the marks whose expand rules reach the caret. If both sides expand a mark with different values, the preceding value wins. `Editor::active_marks` reports the formatting for the next insertion at a caret or the shared formatting across a text selection.
 - **Traversal.** Use `Document::blocks()` for a snapshot in document order. Neighbor and path queries share sibling indexes for the current document state.
 - **Characters.** Backspace and Delete remove a whole grapheme cluster, including when the caret is between two scalars in that cluster. With a selection they delete the selection. At a block boundary they use a separate undo step for the structural edit.
-- **Tables** use a grid model so concurrent edits merge cleanly:
+- **Tables** are rows by columns, so that edits made at the same time cannot leave rows of different lengths:
   ```text
-  table block
-  ├── rows:  LoroMovableList<RowId>
-  ├── cols:  LoroMovableList<ColId>
-  └── cells: LoroMap<"row:col" → LoroText>
+  table block ── $cols: LoroMovableList<ColumnId>     (a mergeable child of its metadata)
+  ├── table_row block ── $cell:<ColumnId>: LoroText   (mergeable children of its metadata)
+  └── table_row block ── ...
   ```
-  Adding a row and a column concurrently cannot produce rows of different lengths. Merged cells are deferred.
+  A row is a block, so it is inserted, moved, removed and brought back by undo like any block. A column is an id in the table's list. A cell is a row and a column and is no node of its own: when one peer adds a row while another adds a column, the cell where the two meet needs nobody to make it. Its text is a *mergeable* child of the row's metadata (`LoroMap::ensure_mergeable_text`), which Loro gives the same identity on every peer, so what two peers type into a cell neither had before merges like any other text. Removing a column removes its id and keeps the text, which undo shows again.
+  A cell has a `BlockId` (its row with a column), and everything that reads or edits a block's text takes it: typing, marks, selections, undo, change notifications. It is not among `Document::blocks` or the children of its row; `Document::cell` gives it. `Selection::Cells` selects the cells between two corners. A cell cannot split, join, nest or change type: Enter in a cell is a line break, and a text range may not run from a cell into another block. A table, its rows and its cells are only shaped through the table methods.
+  Loro notes that a cell has text in the row's metadata. An undo step holding that note would take the cell's text from view when undone, together with what any peer wrote there, so the editor writes the note before the step that first types in the cell, as it makes new blocks before the step that inserts them. Merged cells are deferred.
+  This is not ProseMirror's model, in which each row holds its cells: there, a row and a column added at the same time leave the new row one cell short, and `prosemirror-tables` repairs that in every peer's `appendTransaction`, each peer writing its own fix.
 - **Schema normalization.** A concurrent merge can produce a schema violation, such as a heading with children. Such violations are tolerated when rendering and are never written back to the document. If every peer wrote its own fix, the fixes could conflict with each other.
 - **IME.** Text that is still being composed (*marked text*) lives in `ui` as a preview. It is committed to core only when composition ends, and its anchor is kept as a `loro::Cursor` in case remote edits arrive meanwhile.
 - **Markdown.** `Document::insert_markdown` reads CommonMark with GitHub's alerts, task lists and strikethrough into blocks, using `pulldown-cmark` 0.13.6 (`ENABLE_GFM`, `ENABLE_STRIKETHROUGH`, `ENABLE_TASKLISTS`, `ENABLE_MATH`), and `Document::to_markdown` writes a document out. Block attributes carry what Markdown says beyond the type: `level` on a heading, `start` on the first item of a numbered list that does not start at 1, `checked` on a check list item, `language` on a code block, `kind` on an alert, `url` and `caption` on an image, `url` and `name` on a file. The first paragraph of a list item or a quote is its text and the rest are its children. An image alone in a paragraph is an image block. A page break is written as `<!-- page-break -->`. Reading keeps what the schema lacks as plainly as it can: a block of a missing type becomes a paragraph, a missing mark is left off, math stays as its source text, and blocks nested deeper than `MAX_DEPTH` follow the block they could not go into. Writing escapes what Markdown would read as markup in text, and writes the character next to an emphasis sign as a character reference where the sign would not count otherwise; property tests check both by reading the result back. It leaves off what Markdown cannot say: underline and colors, the difference between a toggle list item and a bullet, a file block (written as a link), nesting under a block that is no list item, quote or alert, empty paragraphs, space at the ends of a block's text, and marks on space next to unmarked text.
@@ -366,6 +368,7 @@ lotype/
     │   ├── document.rs     # LoroDoc wrapper: block tree, types, attributes
     │   ├── order.rs        # Document order: traversal, paths
     │   ├── trash.rs        # Removed and new blocks: the trash node
+    │   ├── table.rs        # Tables: rows, columns, cells
     │   ├── text.rs         # Rich text and marks
     │   ├── marks.rs        # Marks in effect at a position and over a range
     │   ├── selection.rs    # Pos, Selection

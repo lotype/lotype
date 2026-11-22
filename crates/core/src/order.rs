@@ -22,7 +22,9 @@ struct Siblings {
 impl Document {
     /// Every block, in document order.
     pub fn blocks(&self) -> Vec<BlockId> {
-        self.raw_blocks().map(|(node, _)| BlockId(node)).collect()
+        self.raw_blocks()
+            .map(|(node, _)| BlockId(node, None))
+            .collect()
     }
 
     pub(crate) fn raw_blocks(&self) -> impl Iterator<Item = (TreeID, usize)> + '_ {
@@ -41,17 +43,21 @@ impl Document {
     }
 
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {
+        // A cell stands on its own: no block comes before or after it.
+        if block.1.is_some() {
+            return self.depth(block).map(|_| None);
+        }
         let mut current = block.0;
         if self.depth(block)? < MAX_DEPTH
             && let Some(first_child) = self.child_ids(TreeParentId::Node(current)).first()
         {
-            return Ok(Some(BlockId(*first_child)));
+            return Ok(Some(BlockId(*first_child, None)));
         }
         loop {
             let (parent, next) =
                 self.with_siblings(current, |siblings, index| siblings.get(index + 1).copied())?;
             if let Some(next) = next {
-                return Ok(Some(BlockId(next)));
+                return Ok(Some(BlockId(next, None)));
             }
             match parent {
                 TreeParentId::Node(parent) => current = parent,
@@ -61,13 +67,16 @@ impl Document {
     }
 
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
+        if block.1.is_some() {
+            return self.depth(block).map(|_| None);
+        }
         let mut depth = self.depth(block)?;
         let (parent, prev) = self.with_siblings(block.0, |siblings, index| {
             index.checked_sub(1).map(|index| siblings[index])
         })?;
         let Some(mut current) = prev else {
             return Ok(match parent {
-                TreeParentId::Node(parent) => Some(BlockId(parent)),
+                TreeParentId::Node(parent) => Some(BlockId(parent, None)),
                 _ => None,
             });
         };
@@ -77,11 +86,19 @@ impl Document {
             current = *last_child;
             depth += 1;
         }
-        Ok(Some(BlockId(current)))
+        Ok(Some(BlockId(current, None)))
     }
 
-    /// The position of `block` among its siblings.
+    /// The position of `block` among its siblings. For a cell, that of its column.
     pub fn index_of(&self, block: BlockId) -> Result<usize> {
+        if let Some(column) = block.1 {
+            let table = self.table_of(block.0, column).ok_or(Error::BlockNotFound)?;
+            let at = self
+                .column_ids(table)
+                .iter()
+                .position(|other| *other == column);
+            return at.ok_or(Error::BlockNotFound);
+        }
         let (_, index) = self.with_siblings(self.live(block)?, |_, index| index)?;
         Ok(index)
     }
@@ -89,7 +106,11 @@ impl Document {
     /// Sibling indices from the top level down to `block`. Paths sort in document order.
     pub fn path(&self, block: BlockId) -> Result<Vec<usize>> {
         let mut path = Vec::new();
-        let mut current = self.live(block)?;
+        // A cell sorts within its row by its column.
+        if block.1.is_some() {
+            path.push(self.index_of(block)?);
+        }
+        let mut current = self.live(BlockId(block.0, None))?;
         loop {
             let (parent, index) = self.with_siblings(current, |_, index| index)?;
             path.push(index);

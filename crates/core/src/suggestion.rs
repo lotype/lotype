@@ -167,7 +167,9 @@ impl Editor {
             || doc
                 .marks_at(*head)
                 .is_ok_and(|marks| marks.contains_key("code"));
-        let text = (anchor == head && !code).then(|| doc.text(head.block).ok())??;
+        // Nor is there a menu in a cell, which is no block to turn into another.
+        let plain = anchor == head && !code && head.block.column().is_none();
+        let text = plain.then(|| doc.text(head.block).ok())??;
         let typed = text.get(..head.offset)?;
         let slash = typed.rfind('/')?;
         let query = &typed[slash + 1..];

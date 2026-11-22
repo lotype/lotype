@@ -20,6 +20,9 @@ pub enum Selection {
     Text { anchor: Pos, head: Pos },
     /// Whole blocks, including their descendants.
     Blocks(Vec<BlockId>),
+    /// The cells of one table from `anchor` to `head`: those in their rows
+    /// and the rows between, and in their columns and the columns between.
+    Cells { anchor: BlockId, head: BlockId },
 }
 
 impl Selection {
@@ -34,7 +37,7 @@ impl Selection {
     pub fn is_collapsed(&self) -> bool {
         match self {
             Self::Text { anchor, head } => anchor == head,
-            Self::Blocks(_) => false,
+            Self::Blocks(_) | Self::Cells { .. } => false,
         }
     }
 }
@@ -52,6 +55,7 @@ impl Document {
                 self.check_pos(*head)
             }
             Selection::Blocks(blocks) => blocks.iter().try_for_each(|b| self.live(*b).map(drop)),
+            Selection::Cells { anchor, head } => self.cells_between(*anchor, *head).map(drop),
         }
     }
 

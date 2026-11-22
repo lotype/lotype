@@ -16,6 +16,7 @@ mod rules;
 mod schema;
 mod selection;
 mod suggestion;
+mod table;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 #[cfg(test)]
@@ -32,5 +33,6 @@ pub use keymap::{Command, KeyBinding, default_keymap};
 pub use schema::{BlockSpec, Content, Expand, MarkSpec, Schema};
 pub use selection::{Pos, Selection};
 pub use suggestion::{SlashItem, SlashQuery, default_slash_items, filter_slash_items};
+pub use table::ColumnId;
 pub use text::Span;
 pub use value::Value;

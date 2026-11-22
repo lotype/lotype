@@ -1,6 +1,7 @@
 use loro::{CommitOptions, LoroText, TreeID, TreeParentId};
 
 use crate::document::{TEXT, TYPE};
+use crate::table::{COLUMNS, ColumnId, TABLE};
 use crate::{Document, Error, Result};
 
 /// Marks a trash node in its metadata.
@@ -82,18 +83,29 @@ impl Document {
         // Created up front for every block: creating it later from two peers
         // at once would leave two containers and lose one side's text.
         meta.insert_container(TEXT, LoroText::new())?;
+        if block_type == TABLE {
+            // With the table, and with one identity for every peer: its
+            // columns are listed before anything else can happen to it.
+            meta.ensure_mergeable_movable_list(COLUMNS)?;
+        }
         Ok(id)
     }
 
-    /// Makes the blocks a draft made, under the same ids.
-    pub(crate) fn mint_all(&mut self, minted: &[(Option<TreeID>, String)]) -> Result<()> {
+    /// Makes the blocks a draft made, under the same ids, and gives the
+    /// cells it wrote in their text.
+    pub(crate) fn mint_all(
+        &mut self,
+        minted: &[(Option<TreeID>, String)],
+        cells: &[(TreeID, ColumnId)],
+    ) -> Result<()> {
         self.system(|doc| {
             for (id, block_type) in minted {
                 if Some(doc.mint(block_type)?) != *id {
                     return Err(Error::Internal("a draft block got another id".into()));
                 }
             }
-            Ok(())
+            let mut cells = cells.iter();
+            cells.try_for_each(|(row, column)| doc.make_cell(*row, *column).map(drop))
         })
     }
 

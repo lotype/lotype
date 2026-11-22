@@ -19,6 +19,7 @@ impl Editor {
             };
             for block in blocks {
                 let fits = doc.spec(block).is_ok()
+                    && !doc.is_table_part(block)
                     && doc.text_len(block).is_ok() == holds_text
                     && (nests || doc.children(Some(block))?.is_empty());
                 if !fits {
@@ -118,7 +119,8 @@ impl Editor {
                 self.doc.span(start.block, end.block)
             }
             Some(Selection::Blocks(blocks)) => Ok(blocks.clone()),
-            None => Err(Error::NoSelection),
+            // Cells are no blocks to retype or move.
+            Some(Selection::Cells { .. }) | None => Err(Error::NoSelection),
         }
     }
 }

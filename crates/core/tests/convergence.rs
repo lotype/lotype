@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use lotype_core::test_support::{editor, outline};
-use lotype_core::{Document, Editor, Pos, Result, Schema, Selection, blocks, p};
+use lotype_core::{BlockId, Document, Editor, Pos, Result, Schema, Selection, blocks, p};
 use proptest::prelude::*;
 
 const PEERS: usize = 3;
@@ -54,6 +54,16 @@ enum Edit {
     Fail {
         block: usize,
     },
+    InsertTable {
+        index: usize,
+    },
+    /// Something done to the `table`-th table, with numbers to pick by.
+    Table {
+        table: usize,
+        what: usize,
+        a: usize,
+        b: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +74,7 @@ enum Step {
     Send { from: usize, to: usize },
 }
 
-fn edit() -> impl Strategy<Value = Edit> {
+fn block_edit() -> impl Strategy<Value = Edit> {
     let n = 0..8usize;
     prop_oneof![
         (n.clone(), n.clone()).prop_map(|(parent, index)| Edit::InsertBlock { parent, index }),
@@ -93,6 +103,16 @@ fn edit() -> impl Strategy<Value = Edit> {
         n.clone().prop_map(|block| Edit::Merge { block }),
         (n.clone(), 0..3i64).prop_map(|(block, value)| Edit::SetAttr { block, value }),
         n.prop_map(|block| Edit::Fail { block }),
+    ]
+}
+
+fn edit() -> impl Strategy<Value = Edit> {
+    let n = 0..8usize;
+    let table = (n.clone(), 0..8usize, n.clone(), n.clone());
+    prop_oneof![
+        6 => block_edit(),
+        1 => n.prop_map(|index| Edit::InsertTable { index }),
+        4 => table.prop_map(|(table, what, a, b)| Edit::Table { table, what, a, b }),
     ]
 }
 
@@ -176,6 +196,41 @@ fn apply(doc: &mut Document, edit: &Edit) -> Result<()> {
         Edit::SetAttr { block, value } => {
             if let Some(block) = pick(block) {
                 doc.set_attr(block, "level", value)?;
+            }
+        }
+        Edit::InsertTable { index } => {
+            let index = index % (doc.children(None)?.len() + 1);
+            doc.insert_table(None, index, 1 + index % 2, 2)?;
+        }
+        Edit::Table { table, what, a, b } => {
+            let is_table = |block: &BlockId| doc.columns(*block).is_ok();
+            let tables: Vec<BlockId> = all.iter().copied().filter(is_table).collect();
+            let Some(table) = tables.get(table % (tables.len() + 1)).copied() else {
+                return Ok(());
+            };
+            let (rows, columns) = (doc.children(Some(table))?, doc.columns(table)?);
+            let row = rows.get(a % (rows.len() + 1)).copied();
+            let column = columns.get(b % (columns.len() + 1)).copied();
+            match (what, row, column) {
+                (0, _, _) => drop(doc.insert_row(table, a % (rows.len() + 1))?),
+                (1, _, _) => drop(doc.insert_column(table, b % (columns.len() + 1))?),
+                (2, _, Some(column)) => doc.remove_column(table, column)?,
+                (3, _, Some(column)) => doc.move_column(table, column, a % columns.len())?,
+                (4, Some(row), _) => doc.move_block(row, Some(table), b % rows.len())?,
+                (5, Some(row), Some(column)) => {
+                    let cell = doc.cell(row, column)?;
+                    let at = boundary(&text_of(doc, cell), a);
+                    doc.insert_text(cell, at, TEXTS[b % TEXTS.len()])?;
+                }
+                (6, Some(row), Some(column)) => {
+                    let cell = doc.cell(row, column)?;
+                    let text = text_of(doc, cell);
+                    let (start, end) = (boundary(&text, a), boundary(&text, a + 1 + b));
+                    doc.delete_text(cell, start.min(end)..start.max(end))?;
+                    doc.mark(cell, 0..start.min(end), "bold", true)?;
+                }
+                (_, Some(row), _) => doc.remove_block(row)?,
+                _ => {}
             }
         }
         Edit::Fail { block } => {

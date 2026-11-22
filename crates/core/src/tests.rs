@@ -166,7 +166,7 @@ fn blocks_nested_beyond_max_depth_are_not_part_of_the_document() {
             .unwrap()
             .insert(TYPE, "paragraph")
             .unwrap();
-        chain.push(BlockId(id));
+        chain.push(BlockId(id, None));
     }
     let last_visible = chain[MAX_DEPTH - 1];
     let hidden = chain[MAX_DEPTH];

@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use loro::event::Diff;
-use loro::{Index, Subscription, TreeExternalDiff, TreeID, TreeParentId};
+use loro::{Index, Subscription, TreeExternalDiff, TreeParentId};
 
 use super::Editor;
+use crate::table::CELL_KEY;
 use crate::trash::TRASH;
 use crate::{BlockId, Document};
 
@@ -34,8 +35,8 @@ impl Changes {
 /// bounded by the size of the document, however long nobody takes them.
 #[derive(Default)]
 pub(super) struct Seen {
-    /// Nodes with a change in their metadata or in a container inside it.
-    contents: HashSet<TreeID>,
+    /// Blocks with a change in their metadata or in a container inside it.
+    contents: HashSet<BlockId>,
     /// Where nodes came from and went to.
     parents: HashSet<TreeParentId>,
     /// A node became a trash node or stopped being one, with all that is in it.
@@ -61,15 +62,27 @@ pub(super) fn watch(doc: &Document) -> (Arc<Mutex<Seen>>, Subscription) {
                 }
                 continue;
             }
-            if let Diff::Map(map) = &change.diff {
-                seen.marked |= map.updated.contains_key(TRASH);
+            match &change.diff {
+                Diff::Map(map) => seen.marked |= map.updated.contains_key(TRASH),
+                // The columns of a table.
+                Diff::List(_) => seen.marked = true,
+                _ => {}
             }
-            // The node whose metadata the changed container is in.
-            let node = change.path.iter().rev().find_map(|(_, index)| match index {
-                Index::Node(node) => Some(*node),
+            // The node whose metadata the changed container is in, and the
+            // cell when the container is the text of one.
+            let node = change
+                .path
+                .iter()
+                .rposition(|(_, index)| matches!(index, Index::Node(_)));
+            let block = node.and_then(|at| match (&change.path[at].1, change.path.get(at + 1)) {
+                (Index::Node(node), Some((_, Index::Key(key)))) => {
+                    let column = key.strip_prefix(CELL_KEY).and_then(|id| id.parse().ok());
+                    Some(BlockId(*node, column))
+                }
+                (Index::Node(node), _) => Some(BlockId(*node, None)),
                 _ => None,
             });
-            seen.contents.extend(node);
+            seen.contents.extend(block);
         }
     }));
     (seen, subscription)
@@ -79,7 +92,7 @@ impl Editor {
     /// What changed since this was last called, or since the editor was made.
     pub fn take_changes(&mut self) -> Changes {
         let seen = std::mem::take(&mut *self.seen.lock().unwrap());
-        let blocks = seen.contents.into_iter().map(BlockId);
+        let blocks = seen.contents.into_iter();
         Changes {
             blocks: blocks.filter(|block| self.doc.contains(*block)).collect(),
             // A move inside the trash has no end in the document.

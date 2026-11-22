@@ -128,9 +128,11 @@ impl Schema {
         for name in ["heading", "code_block"] {
             schema = schema.block(BlockSpec::new(name, Inline));
         }
-        for name in ["image", "file", "divider", "page_break"] {
+        for name in ["image", "file", "divider", "page_break", "table_row"] {
             schema = schema.block(BlockSpec::new(name, None));
         }
+        schema = schema.block(BlockSpec::new("table", None).with_children());
+        schema = schema.block(BlockSpec::new("table_cell", Inline));
         for name in ["bold", "italic", "underline", "strike"] {
             schema = schema.mark(MarkSpec::new(name, Expand::After));
         }

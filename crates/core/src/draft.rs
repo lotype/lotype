@@ -2,7 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use loro::{PeerID, TreeID};
 
+use crate::table::ColumnId;
 use crate::{Document, Result};
+
+pub(crate) type Minted = Vec<(Option<TreeID>, String)>;
 
 pub(crate) type Edit = Box<dyn FnOnce(&mut Document) -> Result<()> + Send + Sync>;
 
@@ -15,6 +18,8 @@ pub(crate) struct Draft {
     /// The peer every other change of the draft is made under.
     pub(crate) scratch: PeerID,
     minted: Mutex<Vec<(Option<TreeID>, String)>>,
+    /// The cells that got their text, each a row and a column.
+    cells: Mutex<Vec<(TreeID, ColumnId)>>,
     edits: Mutex<Vec<Edit>>,
 }
 
@@ -25,6 +30,7 @@ impl Draft {
             local,
             scratch,
             minted: Mutex::default(),
+            cells: Mutex::default(),
             edits: Mutex::default(),
         }
     }
@@ -34,10 +40,16 @@ impl Draft {
         minted.push((id, block_type.to_owned()));
     }
 
-    /// The blocks made, with their types, and the edits, both in order.
-    pub(crate) fn into_parts(self) -> (Vec<(Option<TreeID>, String)>, Vec<Edit>) {
+    pub(crate) fn made_cell(&self, row: TreeID, column: ColumnId) {
+        self.cells.lock().unwrap().push((row, column));
+    }
+
+    /// The blocks made, with their types, the cells that got their text,
+    /// and the edits, each in order.
+    pub(crate) fn into_parts(self) -> (Minted, Vec<(TreeID, ColumnId)>, Vec<Edit>) {
         let minted = self.minted.into_inner().unwrap();
-        (minted, self.edits.into_inner().unwrap())
+        let cells = self.cells.into_inner().unwrap();
+        (minted, cells, self.edits.into_inner().unwrap())
     }
 }
 

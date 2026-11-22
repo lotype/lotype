@@ -7,6 +7,7 @@ use loro::{ExpandType, LoroDoc, LoroMap, LoroText, LoroTree, StyleConfig, TreeID
 
 use crate::draft::Draft;
 use crate::order::OrderCache;
+use crate::table::{CELL, ColumnId, ROW, TABLE};
 use crate::{BlockSpec, Content, Error, Result, Schema, Value};
 
 /// The deepest nesting level a document has. Top-level blocks are at level 1.
@@ -23,14 +24,24 @@ pub(crate) const TEXT: &str = "$text";
 /// The identity of a block. It stays the same when undo or redo brings a
 /// removed block back.
 ///
+/// A cell of a table has one as well: its row together with a column.
+///
 /// To keep a reference outside the document, store the id as text with
 /// `to_string` and read it back with `parse`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlockId(pub(crate) TreeID);
+pub struct BlockId(pub(crate) TreeID, pub(crate) Option<ColumnId>);
+
+impl BlockId {
+    /// The column, when this is a cell of a table.
+    pub fn column(self) -> Option<ColumnId> {
+        self.1
+    }
+}
 
 impl fmt::Display for BlockId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.0.fmt(f)?;
+        self.1.map_or(Ok(()), |column| write!(f, "/{column}"))
     }
 }
 
@@ -38,8 +49,12 @@ impl FromStr for BlockId {
     type Err = Error;
 
     fn from_str(text: &str) -> Result<Self> {
-        let id = TreeID::try_from(text).map_err(|_| Error::InvalidBlockId(text.to_owned()))?;
-        Ok(Self(id))
+        let invalid = || Error::InvalidBlockId(text.to_owned());
+        let (node, column) = match text.split_once('/') {
+            Some((node, column)) => (node, Some(column.parse().map_err(|_| invalid())?)),
+            None => (text, None),
+        };
+        Ok(Self(TreeID::try_from(node).map_err(|_| invalid())?, column))
     }
 }
 
@@ -97,25 +112,33 @@ impl Document {
 
     /// Child blocks of `parent`, or the top-level blocks when `parent` is `None`.
     pub fn children(&self, parent: Option<BlockId>) -> Result<Vec<BlockId>> {
+        // A cell holds text and nothing else.
+        if let Some(cell) = parent.filter(|parent| parent.1.is_some()) {
+            return self.depth(cell).map(|_| Vec::new());
+        }
         let (parent, depth) = self.slot(parent)?;
         if depth == MAX_DEPTH {
             return Ok(Vec::new());
         }
-        let children = self.child_ids(parent);
-        Ok(children.into_iter().map(BlockId).collect())
+        let children = self.child_ids(parent).into_iter();
+        Ok(children.map(|id| BlockId(id, None)).collect())
     }
 
     /// The parent of `block`, or `None` for a top-level block.
     pub fn parent(&self, block: BlockId) -> Result<Option<BlockId>> {
+        if block.1.is_some() {
+            // The row.
+            return self.depth(block).map(|_| Some(BlockId(block.0, None)));
+        }
         match self.tree.parent(self.live(block)?) {
-            Some(TreeParentId::Node(id)) => Ok(Some(BlockId(id))),
+            Some(TreeParentId::Node(id)) => Ok(Some(BlockId(id, None))),
             Some(TreeParentId::Root) => Ok(None),
             _ => Err(Error::BlockNotFound),
         }
     }
 
     pub fn contains(&self, block: BlockId) -> bool {
-        self.live(block).is_ok()
+        self.depth(block).is_ok()
     }
 
     pub fn insert_block(
@@ -125,10 +148,21 @@ impl Document {
         block_type: &str,
     ) -> Result<BlockId> {
         self.check_allows_children(parent)?;
+        self.check_place(parent, block_type)?;
         if self.slot(parent)?.1 == MAX_DEPTH {
             return Err(Error::TooDeep);
         }
         self.create_block(parent, index, block_type)
+    }
+
+    /// Rows go in tables and nothing else does. A cell is no block to place.
+    fn check_place(&self, parent: Option<BlockId>, block_type: &str) -> Result<()> {
+        let table = |parent| self.block_type(parent).is_ok_and(|parent| parent == TABLE);
+        let in_table = parent.is_some_and(table);
+        if block_type == CELL || in_table != (block_type == ROW) {
+            return Err(Error::TablePart);
+        }
+        Ok(())
     }
 
     /// [`Self::insert_block`] without the rules on the parent's type and on
@@ -144,7 +178,7 @@ impl Document {
         self.check_index(parent, index, None)?;
         let id = self.mint(block_type)?;
         self.relocate_node(id, parent, index)?;
-        Ok(BlockId(id))
+        Ok(BlockId(id, None))
     }
 
     /// Removes `block` and all of its descendants. The shared data keeps
@@ -160,7 +194,7 @@ impl Document {
     ) -> Result<()> {
         blocks.into_iter().try_for_each(|block| {
             // One of them can be inside another that has just gone.
-            if self.contains(block) {
+            if block.1.is_none() && self.contains(block) {
                 self.discard(block.0)?;
             }
             Ok(())
@@ -175,6 +209,7 @@ impl Document {
         index: usize,
     ) -> Result<()> {
         self.check_allows_children(parent)?;
+        self.check_place(parent, &self.block_type(block).unwrap_or_default())?;
         // Before the depth rule: a block is always "too deep" for its own subtree.
         if parent.is_some_and(|parent| self.is_within(parent, block)) {
             return Err(Error::CyclicMove);
@@ -213,6 +248,9 @@ impl Document {
     }
 
     pub fn block_type(&self, block: BlockId) -> Result<String> {
+        if block.1.is_some() {
+            return self.depth(block).map(|_| CELL.to_owned());
+        }
         let value = self.meta(block)?.get(TYPE);
         let value = value.and_then(|v| v.into_value().ok());
         match value.as_ref().and_then(Value::from_loro) {
@@ -223,6 +261,9 @@ impl Document {
 
     pub fn set_block_type(&mut self, block: BlockId, block_type: &str) -> Result<()> {
         let spec = self.spec_named(block_type)?;
+        if self.is_table_part(block) || [TABLE, ROW, CELL].contains(&block_type) {
+            return Err(Error::TablePart);
+        }
         if !spec.allows_children() && !self.children(Some(block))?.is_empty() {
             return Err(Error::ChildrenNotAllowed(block_type.to_owned()));
         }
@@ -303,6 +344,10 @@ impl Document {
     }
 
     pub(crate) fn raw_text(&self, block: BlockId) -> Result<LoroText> {
+        if let Some(column) = block.1 {
+            self.depth(block)?;
+            return self.cell_text(block.0, column);
+        }
         let container = self.meta(block)?.get(TEXT);
         container
             .and_then(|v| v.into_container().ok())
@@ -332,7 +377,13 @@ impl Document {
     /// below [`MAX_DEPTH`], is not found. The walk is bounded by `MAX_DEPTH`
     /// no matter how deep a peer has nested the block.
     pub(crate) fn depth(&self, block: BlockId) -> Result<usize> {
-        self.node_depth(block.0)
+        let depth = self.node_depth(block.0)?;
+        // A cell is there while its row is in a table that has its column.
+        // It counts as no level of its own.
+        match block.1.map(|column| self.table_of(block.0, column)) {
+            Some(None) => Err(Error::BlockNotFound),
+            _ => Ok(depth),
+        }
     }
 
     pub(crate) fn node_depth(&self, mut current: TreeID) -> Result<usize> {
@@ -358,14 +409,18 @@ impl Document {
         }
     }
 
+    /// The node of a block in the document. A cell has none.
     pub(crate) fn live(&self, block: BlockId) -> Result<TreeID> {
+        if block.1.is_some() {
+            return Err(Error::TablePart);
+        }
         self.depth(block).map(|_| block.0)
     }
 
     /// A parent as Loro names it, with its nesting level (0 for the top level).
     fn slot(&self, parent: Option<BlockId>) -> Result<(TreeParentId, usize)> {
         match parent {
-            Some(block) => Ok((TreeParentId::Node(block.0), self.depth(block)?)),
+            Some(block) => Ok((TreeParentId::Node(self.live(block)?), self.depth(block)?)),
             None => Ok((TreeParentId::Root, 0)),
         }
     }

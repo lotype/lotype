@@ -228,6 +228,23 @@ pub fn outline(doc: &Document, selection: Option<&Selection>) -> String {
             )
             .unwrap();
         }
+        // A row of a table, with its cells: `table_row | "a" | *"b"`.
+        let table = doc.parent(block).ok().flatten();
+        let columns = table.and_then(|table| doc.columns(table).ok());
+        for column in columns.unwrap_or_default() {
+            let cell = doc.cell(block, column).unwrap();
+            let chosen = match selection {
+                Some(Selection::Cells { anchor, head }) => doc.cells_between(*anchor, *head),
+                _ => Ok(Vec::new()),
+            };
+            let star = if chosen.unwrap().contains(&cell) {
+                "*"
+            } else {
+                ""
+            };
+            let text = inline(&doc.spans(cell).unwrap(), &markers_in(cell, selection));
+            write!(out, " | {star}\"{text}\"").unwrap();
+        }
         out.push('\n');
     }
     out

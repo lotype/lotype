@@ -19,6 +19,7 @@ pub struct Version(VersionVector);
 pub(crate) enum Anchored {
     Text { anchor: Anchor, head: Anchor },
     Blocks(Vec<BlockId>),
+    Cells(BlockId, BlockId),
 }
 
 pub(crate) struct Anchor {
@@ -137,6 +138,7 @@ impl Document {
                 }
             }
             Selection::Blocks(blocks) => Anchored::Blocks(blocks.clone()),
+            Selection::Cells { anchor, head } => Anchored::Cells(*anchor, *head),
         }
     }
 
@@ -163,6 +165,13 @@ impl Document {
                     .filter(|block| self.contains(*block))
                     .collect();
                 (!blocks.is_empty()).then_some(Selection::Blocks(blocks))
+            }
+            // While both corners are there. A row or column that goes or
+            // comes between them only changes what lies between.
+            Anchored::Cells(anchor, head) => {
+                let (anchor, head) = (*anchor, *head);
+                let cells = self.cells_between(anchor, head).ok();
+                cells.map(|_| Selection::Cells { anchor, head })
             }
         }
     }

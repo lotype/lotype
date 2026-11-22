@@ -79,17 +79,6 @@ impl Editor {
         self.pending_marks = None;
     }
 
-    /// Makes sure there is a trash node before a step that may remove
-    /// blocks. Made inside the step, undo would delete it, with everything
-    /// any peer has put in it by then.
-    fn ensure_trash(&mut self) -> Result<()> {
-        if self.doc.top_trash().is_none() {
-            self.finish_edit_group();
-            self.doc.system(|doc| doc.trash_node().map(drop))?;
-        }
-        Ok(())
-    }
-
     /// This peer's next operation counter.
     fn local_counter(&self) -> Counter {
         let versions = self.doc.doc.state_vv();
@@ -181,6 +170,7 @@ impl Editor {
         let new_step = self.run.is_none();
         if new_step {
             self.ensure_trash()?;
+            self.ensure_cells()?;
         }
         let version = self.doc.doc.oplog_frontiers();
         let selection = self.selection.clone();
@@ -252,7 +242,7 @@ impl Editor {
         Ok(changed)
     }
 
-    /// Deletes the selected text or blocks.
+    /// Deletes the selected text or blocks, or empties the selected cells.
     pub fn delete_selection(&mut self) -> Result<()> {
         self.apply(|doc, selection| match selection {
             Some(Selection::Text { anchor, head }) => {
@@ -262,12 +252,26 @@ impl Editor {
                 doc.remove_blocks(blocks.iter().copied())?;
                 Ok(None)
             }
+            Some(Selection::Cells { anchor, head }) => {
+                for cell in doc.cells_between(*anchor, *head)? {
+                    doc.delete_text(cell, 0..doc.text_len(cell)?)?;
+                }
+                Ok(selection.cloned())
+            }
             None => Err(Error::NoSelection),
         })
     }
 
-    /// Replaces the selected text with a block break, as Enter does.
+    /// Replaces the selected text with a block break, as Enter does. In a
+    /// cell of a table, which cannot split, that is a line break.
     pub fn split_block(&mut self) -> Result<()> {
+        let in_cell = |selection: &Selection| match selection {
+            Selection::Text { anchor, head } => anchor.block.column().or(head.block.column()),
+            _ => None,
+        };
+        if self.selection.as_ref().and_then(in_cell).is_some() {
+            return self.insert_text("\n");
+        }
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;

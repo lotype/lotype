@@ -4,9 +4,43 @@ use loro::LoroDoc;
 
 use super::Editor;
 use crate::draft::Draft;
-use crate::{Document, Error, Result, Selection};
+use crate::{BlockId, Document, Error, Result, Selection};
 
 impl Editor {
+    /// Makes sure there is a trash node before a step that may remove
+    /// blocks. Made inside the step, undo would delete it, with everything
+    /// any peer has put in it by then.
+    pub(super) fn ensure_trash(&mut self) -> Result<()> {
+        if self.doc.top_trash().is_none() {
+            self.finish_edit_group();
+            self.doc.system(|doc| doc.trash_node().map(drop))?;
+        }
+        Ok(())
+    }
+
+    /// Gives the cells the selection is in their text before a step that
+    /// may type there, for the same reason.
+    pub(super) fn ensure_cells(&mut self) -> Result<()> {
+        let Some(Selection::Text { anchor, head }) = &self.selection else {
+            return Ok(());
+        };
+        let cells = [anchor.block, head.block];
+        let unmade = |cell: &BlockId| {
+            let text = cell.column().and_then(|_| self.doc.raw_text(*cell).ok());
+            text.is_some_and(|text| !text.is_attached())
+        };
+        if cells.iter().any(unmade) {
+            self.finish_edit_group();
+            let made = |doc: &mut Document| {
+                cells
+                    .iter()
+                    .try_for_each(|cell| doc.editable(*cell).map(drop))
+            };
+            self.doc.system(made)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn apply_draft(
         &mut self,
         edit: impl FnOnce(&mut Document, Option<&Selection>) -> Result<Option<Selection>>,
@@ -46,9 +80,9 @@ impl Editor {
         // Replay as local mutations so Loro keeps its undo history. The
         // callback itself only runs once. New blocks come first, outside the
         // step: undoing it then puts them away, and they stay the same blocks.
-        let (minted, edits) = record.into_parts();
+        let (minted, cells, edits) = record.into_parts();
         self.finish_edit_group();
-        self.doc.mint_all(&minted)?;
+        self.doc.mint_all(&minted, &cells)?;
         let result = self.step(false, |doc, _| {
             for edit in edits {
                 edit(doc)?;
