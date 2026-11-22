@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use loro::{ID, LoroMovableList, LoroText, TreeID, TreeParentId};
 
@@ -28,6 +29,23 @@ impl FromStr for ColumnId {
     fn from_str(text: &str) -> Result<Self> {
         let id = ID::try_from(text).map_err(|_| Error::InvalidBlockId(text.to_owned()))?;
         Ok(Self(id))
+    }
+}
+
+/// The columns a table lists.
+pub(crate) struct Columns {
+    /// Each column, with where in the stored list it is listed first.
+    first: Vec<(ColumnId, usize)>,
+    /// How long the stored list is. It is longer than `first` once it holds
+    /// an id twice, or something that is no id.
+    stored: usize,
+    ids: HashSet<ColumnId>,
+}
+
+impl Columns {
+    /// Where in the stored list the column at `index` is, or its end.
+    fn stored_at(&self, index: usize) -> usize {
+        self.first.get(index).map_or(self.stored, |(_, at)| *at)
     }
 }
 
@@ -65,11 +83,27 @@ impl Document {
         rows: usize,
         columns: usize,
     ) -> Result<BlockId> {
+        self.check_allows_children(parent)?;
+        self.create_table(parent, index, rows, columns)
+    }
+
+    /// [`Self::insert_table`] without the rule on the parent's type, like
+    /// [`Self::create_block`].
+    pub(crate) fn create_table(
+        &mut self,
+        parent: Option<BlockId>,
+        index: usize,
+        rows: usize,
+        columns: usize,
+    ) -> Result<BlockId> {
+        if parent.is_some_and(|parent| self.is_table_part(parent)) {
+            return Err(Error::TablePart);
+        }
         // Its rows are one level further down.
         if parent.map_or(Ok(0), |parent| self.depth(parent))? + 2 > MAX_DEPTH {
             return Err(Error::TooDeep);
         }
-        let table = self.insert_block(parent, index, TABLE)?;
+        let table = self.create_block(parent, index, TABLE)?;
         for at in 0..columns {
             self.insert_column(table, at)?;
         }
@@ -110,11 +144,12 @@ impl Document {
 
     fn put_column(&mut self, table: BlockId, index: usize, column: ColumnId) -> Result<()> {
         let list = self.column_list(table)?;
-        let len = self.column_ids(table.0).len();
+        let columns = self.listed(table.0);
+        let len = columns.first.len();
         if index > len {
             return Err(Error::OutOfBounds { index, len });
         }
-        list.insert(self.stored_at(table.0, index), column.to_string())?;
+        list.insert(columns.stored_at(index), column.to_string())?;
         self.record(|| Box::new(move |doc| doc.put_column(table, index, column)));
         Ok(())
     }
@@ -158,7 +193,7 @@ impl Document {
         for at in places[1..].iter().rev() {
             list.delete(*at, 1)?;
         }
-        list.mov(from, self.stored_at(table.0, index))?;
+        list.mov(from, self.listed(table.0).stored_at(index))?;
         self.record(|| Box::new(move |doc| doc.move_column(table, column, index)));
         Ok(())
     }
@@ -188,40 +223,37 @@ impl Document {
             .collect()
     }
 
-    /// The columns a node lists. An id listed more than once counts where
-    /// it is listed first.
-    pub(crate) fn column_ids(&self, table: TreeID) -> Vec<ColumnId> {
-        let mut seen = HashSet::new();
-        let stored = self.stored_columns(table).into_iter().flatten();
-        stored.filter(|column| seen.insert(*column)).collect()
-    }
-
-    /// Where in the stored list the column at `index` is, or its end. The
-    /// two differ once the list holds an id twice or something that is none.
-    fn stored_at(&self, table: TreeID, index: usize) -> usize {
+    /// The columns a node lists, read once for each state of the document:
+    /// every read of a cell asks whether its column is among them.
+    fn listed(&self, table: TreeID) -> Arc<Columns> {
+        let mut order = self.fresh_order();
+        if let Some(columns) = order.columns.get(&table) {
+            return Arc::clone(columns);
+        }
         let stored = self.stored_columns(table);
-        let mut seen = HashSet::new();
-        let mut first = stored.iter().enumerate();
-        let mut first = first
-            .by_ref()
-            .filter(|(_, id)| id.is_some_and(|id| seen.insert(id)));
-        first.nth(index).map_or(stored.len(), |(at, _)| at)
+        let mut ids = HashSet::new();
+        // An id listed more than once counts where it is listed first.
+        let first = stored.iter().enumerate();
+        let first = first.filter_map(|(at, id)| id.filter(|id| ids.insert(*id)).map(|id| (id, at)));
+        let columns = Arc::new(Columns {
+            first: first.collect(),
+            stored: stored.len(),
+            ids,
+        });
+        order.columns.insert(table, Arc::clone(&columns));
+        columns
     }
 
-    /// The table a row is in, if its parent lists `column`. This is asked
-    /// for every cell that is read, so it reads the list and keeps nothing.
+    pub(crate) fn column_ids(&self, table: TreeID) -> Vec<ColumnId> {
+        self.listed(table).first.iter().map(|(id, _)| *id).collect()
+    }
+
+    /// The table a row is in, if its parent lists `column`.
     pub(crate) fn table_of(&self, row: TreeID, column: ColumnId) -> Option<TreeID> {
         let Some(TreeParentId::Node(table)) = self.tree.parent(row) else {
             return None;
         };
-        let wanted = column.to_string();
-        let stored = self.stored_list(table)?.to_vec();
-        let listed = |entry: &loro::LoroValue| {
-            entry
-                .as_string()
-                .is_some_and(|text| text.as_str() == wanted)
-        };
-        stored.iter().any(listed).then_some(table)
+        self.listed(table).ids.contains(&column).then_some(table)
     }
 
     /// The text of a cell that something was written in, or an empty text

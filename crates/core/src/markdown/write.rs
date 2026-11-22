@@ -22,21 +22,36 @@ impl Document {
         let mut out = String::new();
         let mut stack = self.items(None, "");
         stack.reverse();
+        // The block that follows a marker written on a line of its own.
+        let mut under = None;
         while let Some((block, gap, first, rest)) = stack.pop() {
             let body = self.body(block).unwrap_or_default();
             let mut children = self.items(Some(block), &rest);
             let marker = first != rest;
-            if !body.is_empty() || marker && children.is_empty() {
-                if !out.is_empty() {
+            // A task's box is only read as one when it ends its line or text
+            // follows it, so it keeps a line to itself where a block follows.
+            let boxed = first.ends_with("] ");
+            if !body.is_empty() || marker && (boxed || children.is_empty()) {
+                if !out.is_empty() && under != Some(block) {
                     // Stays inside the quote the block is in, if any.
                     out.push_str(gap.trim_end());
                     out.push('\n');
                 }
                 for (number, line) in body.split('\n').enumerate() {
-                    out.push_str(if number == 0 { &first } else { &rest });
+                    let start = if number == 0 { &first } else { &rest };
+                    out.push_str(if line.is_empty() {
+                        start.trim_end()
+                    } else {
+                        start
+                    });
                     out.push_str(line);
                     out.push('\n');
                 }
+                // No blank line may come between a marker and what is in its item.
+                under = children
+                    .first()
+                    .filter(|_| body.is_empty())
+                    .map(|child| child.0);
             } else if marker && let Some(child) = children.first_mut() {
                 // A list item may not start with a blank line, so what is in
                 // one without text starts on the line of its marker.
@@ -349,7 +364,9 @@ fn line_start(line: &str) -> String {
     let mut out: String = indent.map(reference).collect();
     let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
     let numbered = digits > 0 && text[digits..].starts_with(['.', ')']);
-    if text.starts_with(['#', '>', '-', '+', '=']) {
+    // A line of bars and dashes under another would make the two a table.
+    let ruled = text.contains('-') && text.chars().all(|c| "|:- \t".contains(c));
+    if ruled || text.starts_with(['#', '>', '-', '+', '=']) {
         out.push('\\');
         out.push_str(text);
     } else if numbered {

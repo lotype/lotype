@@ -1,6 +1,7 @@
 use lotype_core::test_support::{editor, outline};
 use lotype_core::{
-    BlockSpec, Content, Document, Schema, Selection, blocks, default_slash_items, p,
+    BlockSpec, Content, Document, Editor, MAX_DEPTH, Pos, Schema, Selection, blocks,
+    default_slash_items, p,
 };
 
 fn read(markdown: &str) -> Document {
@@ -121,4 +122,97 @@ fn the_slash_menu_inserts_a_table_and_goes_to_its_first_cell() {
     let mut ed = editor(blocks![p!["text /table<a>"]]);
     ed.accept_slash_item(table).unwrap();
     assert!(outline(ed.document(), None).starts_with("paragraph \"text \"\ntable\n"));
+}
+
+#[test]
+fn a_table_that_cannot_be_made_is_read_as_what_is_in_it() {
+    // No room below it for rows.
+    let prefix = "> ".repeat(MAX_DEPTH - 1);
+    let deep = format!("{prefix}| a | b |\n{prefix}| --- | --- |\n{prefix}| c | d |\n");
+    let doc = read(&deep);
+    let texts: Vec<_> = doc
+        .blocks()
+        .iter()
+        .filter_map(|b| doc.text(*b).ok())
+        .collect();
+    assert_eq!(
+        texts.iter().filter(|t| !t.is_empty()).count(),
+        4,
+        "{texts:?}"
+    );
+
+    // A schema with some of the types of a table, but not all.
+    for lacking in ["table", "table_row", "table_cell"] {
+        let mut schema = Schema::new().block(BlockSpec::new("paragraph", Content::Inline));
+        for name in ["table", "table_row", "table_cell"] {
+            if name != lacking {
+                schema = schema.block(BlockSpec::new(name, Content::None).with_children());
+            }
+        }
+        let mut doc = Document::new(schema);
+        doc.insert_markdown(None, 0, TABLE).unwrap();
+        let texts: Vec<_> = doc.blocks().iter().map(|b| doc.text(*b).unwrap()).collect();
+        assert_eq!(
+            texts,
+            ["Name", "Role", "Ada | Lovelace", "code", "Link"],
+            "{lacking}"
+        );
+    }
+}
+
+#[test]
+fn lines_of_bars_and_dashes_in_a_paragraph_stay_text() {
+    for text in [
+        "a\n| x\n|-|",
+        "a\n|x|\n|---|---|",
+        "a\n||\n:-|-",
+        "| a |\n| --- |",
+    ] {
+        for block_type in ["paragraph", "bullet_list_item"] {
+            let mut doc = Document::new(Schema::builtin());
+            let block = doc.insert_block(None, 0, block_type).unwrap();
+            doc.insert_text(block, 0, text).unwrap();
+            let back = read(&doc.to_markdown());
+            assert_eq!(shown(&back), shown(&doc), "as {:?}", doc.to_markdown());
+        }
+    }
+}
+
+#[test]
+fn a_task_keeps_its_box_before_a_block() {
+    for first_child in ["table", "code_block", "none"] {
+        let mut doc = Document::new(Schema::builtin());
+        let item = doc.insert_block(None, 0, "check_list_item").unwrap();
+        doc.set_attr(item, "checked", true).unwrap();
+        match first_child {
+            "table" => drop(doc.insert_table(Some(item), 0, 1, 2).unwrap()),
+            "code_block" => {
+                let code = doc.insert_block(Some(item), 0, "code_block").unwrap();
+                doc.insert_text(code, 0, "x").unwrap();
+            }
+            _ => {}
+        }
+        let back = read(&doc.to_markdown());
+        assert_eq!(shown(&back), shown(&doc), "as {:?}", doc.to_markdown());
+    }
+}
+
+#[test]
+fn the_slash_menu_inserts_a_table_wherever_it_inserts_a_block() {
+    // A peer whose headings take children put a paragraph in one.
+    let theirs =
+        Schema::builtin().block(BlockSpec::new("heading", Content::Inline).with_children());
+    let mut source = Document::new(theirs);
+    let heading = source.insert_block(None, 0, "heading").unwrap();
+    let inside = source.insert_block(Some(heading), 0, "paragraph").unwrap();
+    source.insert_text(inside, 0, "text /x").unwrap();
+    let mut doc = Document::new(Schema::builtin());
+    doc.import(&source.export_snapshot().unwrap()).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.set_selection(Some(Selection::caret(Pos::new(inside, 7))))
+        .unwrap();
+    let items = default_slash_items();
+    let table = items.iter().find(|item| item.key == "table").unwrap();
+    ed.accept_slash_item(table).unwrap();
+    assert!(outline(ed.document(), None).contains("  table\n    table_row"));
 }

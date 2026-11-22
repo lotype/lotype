@@ -1,13 +1,18 @@
 use std::collections::HashMap;
+use std::sync::{Arc, MutexGuard};
 
 use loro::{Frontiers, TreeID, TreeParentId};
 
+use crate::table::Columns;
 use crate::{BlockId, Document, Error, MAX_DEPTH, Result};
 
+/// What is read often and costs a pass over siblings or columns to work
+/// out, kept for as long as the document does not change.
 #[derive(Default)]
 pub(crate) struct OrderCache {
     version: Frontiers,
     groups: HashMap<TreeParentId, Siblings>,
+    pub(crate) columns: HashMap<TreeID, Arc<Columns>>,
 }
 
 struct Siblings {
@@ -123,19 +128,26 @@ impl Document {
         Ok(path)
     }
 
-    fn with_siblings<T>(
-        &self,
-        id: TreeID,
-        read: impl FnOnce(&[TreeID], usize) -> T,
-    ) -> Result<(TreeParentId, T)> {
-        let parent = self.tree.parent(id).ok_or(Error::BlockNotFound)?;
+    /// The cache, emptied if the document changed since it was filled.
+    pub(crate) fn fresh_order(&self) -> MutexGuard<'_, OrderCache> {
         // State frontiers include pending changes, undo and redo.
         let version = self.doc.state_frontiers();
         let mut order = self.order.lock().unwrap();
         if order.version != version {
             order.version = version;
             order.groups.clear();
+            order.columns.clear();
         }
+        order
+    }
+
+    fn with_siblings<T>(
+        &self,
+        id: TreeID,
+        read: impl FnOnce(&[TreeID], usize) -> T,
+    ) -> Result<(TreeParentId, T)> {
+        let parent = self.tree.parent(id).ok_or(Error::BlockNotFound)?;
+        let mut order = self.fresh_order();
         let siblings = order.groups.entry(parent).or_insert_with(|| {
             let ids = self.child_ids(parent);
             let indices = ids.iter().copied().zip(0..).collect();

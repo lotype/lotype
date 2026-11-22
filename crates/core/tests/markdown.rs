@@ -455,7 +455,7 @@ proptest! {
 
     /// Whatever a paragraph says, it says again after a trip through Markdown.
     #[test]
-    fn any_text_reads_back(text in "[ a1é*_`\\[\\]()<>&#~$\\\\!.+=|:/-]{0,24}(\n[ a1*_#>+=.)-]{0,8}){0,2}") {
+    fn any_text_reads_back(text in "[ a1é*_`\\[\\]()<>&#~$\\\\!.+=|:/-]{0,24}(\n[ a1*_#>+=.)|:-]{0,8}){0,2}") {
         // Space at the very ends, and before a line break, is not kept.
         let text = text.lines().map(str::trim_end).collect::<Vec<_>>().join("\n");
         let text = text.trim();

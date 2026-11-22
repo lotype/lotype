@@ -363,10 +363,15 @@ impl Document {
         let nodes = Reader::default().read(markdown);
         let mut stack: Vec<_> = nodes.into_iter().rev().map(|n| (top, depth, n)).collect();
         while let Some((parent, depth, mut node)) = stack.pop() {
-            // A table that would reach below the deepest level is read as
-            // what is in it, like one of a type the schema lacks.
-            let too_deep = node.block_type == "table" && depth + 2 > MAX_DEPTH;
-            if too_deep || self.schema().block_spec(node.block_type).is_none() {
+            // A table that cannot be made, for want of room below it or of
+            // a type in the schema, is read as what is in it, like any block
+            // of a type the schema lacks. So are its rows and cells then:
+            // they only get here when their table was taken apart.
+            let lacks = |name: &str| self.schema().block_spec(name).is_none();
+            let unmade = node.block_type == "table"
+                && (depth + 2 > MAX_DEPTH || lacks("table_row") || lacks("table_cell"));
+            let part = matches!(node.block_type, "table_row" | "table_cell");
+            if unmade || part || lacks(node.block_type) {
                 if node.block_type == "image" {
                     node.spans = image_link(&node.attrs);
                 }

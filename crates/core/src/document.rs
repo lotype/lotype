@@ -461,7 +461,7 @@ impl Document {
         Ok(height)
     }
 
-    fn check_allows_children(&self, parent: Option<BlockId>) -> Result<()> {
+    pub(crate) fn check_allows_children(&self, parent: Option<BlockId>) -> Result<()> {
         if let Some(parent) = parent {
             let spec = self.spec(parent)?;
             if !spec.allows_children() {
