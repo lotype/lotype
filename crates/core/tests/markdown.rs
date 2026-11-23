@@ -241,10 +241,7 @@ fn rich(block_type: &str, spans: &[(&str, &[&str])]) -> Document {
                 _ => Value::from(true),
             };
             let marks: BTreeMap<_, _> = marks.iter().map(|m| ((*m).to_owned(), value(m))).collect();
-            Span {
-                text: (*text).to_owned(),
-                marks,
-            }
+            Span::new(*text, marks)
         })
         .collect();
     doc.insert_spans(block, 0, &spans).unwrap();

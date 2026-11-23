@@ -123,7 +123,7 @@ impl Document {
                 format!("[{}]({})", escape(shown), address(&url))
             }
             "code_block" => {
-                let code = self.text(block).ok()?;
+                let code = self.plain_text(block).ok()?;
                 let fence = "`".repeat(longest_run(&code, '`').max(2) + 1);
                 let language =
                     attr("language").replace(|c: char| c == '`' || c.is_whitespace(), "");
@@ -134,7 +134,9 @@ impl Document {
                 let line = |row: &BlockId| {
                     let cells = columns.iter().map(|column| {
                         let cell = self.cell(*row, *column);
-                        let spans = cell.and_then(|cell| self.spans(cell)).unwrap_or_default();
+                        let spans = cell
+                            .and_then(|cell| self.plain_spans(cell))
+                            .unwrap_or_default();
                         // A cell is one line, and a bar ends it even in code.
                         inline(&spans).replace("\\\n", " ").replace('|', "\\|")
                     });
@@ -151,7 +153,7 @@ impl Document {
                     Ok(Some(Value::Int(level))) => level.clamp(1, 6) as usize,
                     _ => 1,
                 };
-                let mut title = inline(&self.spans(block).ok()?).replace("\\\n", " ");
+                let mut title = inline(&self.plain_spans(block).ok()?).replace("\\\n", " ");
                 // Signs at the end of a heading would read as part of its frame.
                 if let Some(last) = title.rfind('#').filter(|at| at + 1 == title.len()) {
                     title.insert(last, '\\');
@@ -160,7 +162,7 @@ impl Document {
             }
             _ => {
                 // A block of a type unknown here still has its text.
-                let lines = match self.spans(block) {
+                let lines = match self.plain_spans(block) {
                     Ok(spans) => inline(&spans),
                     Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
                 };

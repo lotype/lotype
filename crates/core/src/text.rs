@@ -4,14 +4,37 @@ use std::ops::Range;
 use loro::cursor::PosType;
 use loro::{LoroText, TextDelta};
 
+use crate::atom::ATOM;
 use crate::marks::{TypingMarks, visible_marks};
-use crate::{BlockId, Content, Document, Error, MarkSpec, Pos, Result, Value};
+use crate::{Atom, BlockId, Content, Document, Error, MarkSpec, OBJECT, Pos, Result, Value};
 
-/// A run of text with the same marks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A run of text with the same marks, or an atom, whose text is [`OBJECT`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Span {
     pub text: String,
     pub marks: BTreeMap<String, Value>,
+    pub atom: Option<Atom>,
+}
+
+impl Span {
+    pub fn new(text: impl Into<String>, marks: BTreeMap<String, Value>) -> Self {
+        let text = text.into();
+        Self {
+            text,
+            marks,
+            atom: None,
+        }
+    }
+
+    /// An atom, with marks such as bold that it shares with text.
+    pub fn atom(atom: Atom, marks: BTreeMap<String, Value>) -> Self {
+        let text = OBJECT.to_string();
+        Self {
+            text,
+            marks,
+            atom: Some(atom),
+        }
+    }
 }
 
 /// Rich text. Offsets are UTF-8 bytes and must fall on character boundaries.
@@ -55,14 +78,26 @@ impl Document {
         for (name, value) in spans.iter().flat_map(|span| &span.marks) {
             self.mark_spec(name)?.check_value(value)?;
         }
-        let inserts = spans.iter().map(|span| TextDelta::Insert {
-            insert: span.text.clone(),
-            attributes: Some(
-                span.marks
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.to_loro()))
-                    .collect(),
-            ),
+        for atom in spans.iter().filter_map(|span| span.atom.as_ref()) {
+            if self.schema().inline_spec(&atom.name).is_none() {
+                return Err(Error::UnknownAtom(atom.name.clone()));
+            }
+        }
+        let inserts = spans.iter().map(|span| {
+            let marks = span.marks.iter().map(|(k, v)| (k.clone(), v.to_loro()));
+            let atom = span
+                .atom
+                .iter()
+                .map(|atom| (ATOM.to_owned(), atom.to_loro()));
+            // An atom is one character, whatever text the span was given.
+            let insert = match span.atom {
+                Some(_) => OBJECT.to_string(),
+                None => span.text.clone(),
+            };
+            TextDelta::Insert {
+                insert,
+                attributes: Some(marks.chain(atom).collect()),
+            }
         });
         insert_delta(&text, index, inserts.collect())?;
         self.record(|| {
@@ -207,14 +242,34 @@ fn insert_delta(text: &LoroText, offset: usize, inserts: Vec<TextDelta>) -> Resu
     Ok(text.apply_delta(&delta)?)
 }
 
-fn to_spans(delta: Vec<TextDelta>) -> Vec<Span> {
+pub(crate) fn to_spans(delta: Vec<TextDelta>) -> Vec<Span> {
     let mut spans = Vec::with_capacity(delta.len());
     for item in delta {
-        if let TextDelta::Insert { insert, attributes } = item {
-            spans.push(Span {
-                text: insert,
-                marks: visible_marks(attributes.into_iter().flatten()),
-            });
+        let TextDelta::Insert { insert, attributes } = item else {
+            continue;
+        };
+        let attributes = attributes.unwrap_or_default();
+        let atom = attributes.get(ATOM).and_then(Atom::from_loro);
+        let marks = visible_marks(attributes);
+        let Some(atom) = atom else {
+            spans.push(Span::new(insert, marks));
+            continue;
+        };
+        // A peer may have put the mark on more than U+FFFC: each of those
+        // characters is an atom, and anything else is text.
+        let mut text = String::new();
+        for c in insert.chars() {
+            if c != OBJECT {
+                text.push(c);
+                continue;
+            }
+            if !text.is_empty() {
+                spans.push(Span::new(std::mem::take(&mut text), marks.clone()));
+            }
+            spans.push(Span::atom(atom.clone(), marks.clone()));
+        }
+        if !text.is_empty() {
+            spans.push(Span::new(text, marks));
         }
     }
     spans

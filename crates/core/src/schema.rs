@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
-use crate::{Error, Result, Value};
+use crate::{Atom, Error, Result, Value};
 
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,11 +97,36 @@ impl MarkSpec {
     }
 }
 
-/// The block types and marks a document accepts.
+/// A type of inline atom: something in a line of text that is not text.
+#[derive(Debug, Clone)]
+pub struct InlineSpec {
+    name: String,
+    text: fn(&Atom) -> String,
+}
+
+impl InlineSpec {
+    /// `text` gives an atom as plain text, for the clipboard and Markdown,
+    /// such as `@name` for a mention.
+    pub fn new(name: impl Into<String>, text: fn(&Atom) -> String) -> Self {
+        let name = name.into();
+        Self { name, text }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn text(&self, atom: &Atom) -> String {
+        (self.text)(atom)
+    }
+}
+
+/// The block types, marks and inline atoms a document accepts.
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     blocks: HashMap<String, BlockSpec>,
     marks: HashMap<String, MarkSpec>,
+    inlines: HashMap<String, InlineSpec>,
 }
 
 impl Schema {
@@ -154,6 +179,16 @@ impl Schema {
     pub fn mark(mut self, spec: MarkSpec) -> Self {
         self.marks.insert(spec.name.clone(), spec);
         self
+    }
+
+    /// Adds a type of inline atom, replacing any existing one with the same name.
+    pub fn inline(mut self, spec: InlineSpec) -> Self {
+        self.inlines.insert(spec.name.clone(), spec);
+        self
+    }
+
+    pub fn inline_spec(&self, name: &str) -> Option<&InlineSpec> {
+        self.inlines.get(name)
     }
 
     pub fn block_spec(&self, name: &str) -> Option<&BlockSpec> {

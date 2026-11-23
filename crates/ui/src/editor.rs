@@ -126,10 +126,8 @@ impl EditorView {
         let len = doc.text_len(shown.block).ok()?;
         let before = doc.spans_in(shown.block, 0..marked.start).ok()?;
         let after = doc.spans_in(shown.block, len - after..len).ok()?;
-        let composed = Span {
-            text: shown.text[marked].to_owned(),
-            marks: self.editor.active_marks().unwrap_or_default(),
-        };
+        let marks = self.editor.active_marks().unwrap_or_default();
+        let composed = Span::new(&shown.text[marked], marks);
         let mut composed = text_runs(&[composed], style);
         for run in &mut composed {
             let color = Some(run.color);

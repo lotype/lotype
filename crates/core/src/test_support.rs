@@ -291,7 +291,7 @@ fn flatten(
                 let text = take_markers(text, Pos::new(block, offset), markers);
                 if !text.is_empty() {
                     let marks = marks.clone();
-                    spans.push(Span { text, marks });
+                    spans.push(Span::new(text, marks));
                 }
             }
             InlineNode::Marked {

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use loro::cursor::PosType;
 use loro::{LoroText, LoroValue, TextDelta};
 
+use crate::atom::ATOM;
 use crate::text::unicode_offset;
 use crate::{Document, Expand, Pos, Result, Value};
 
@@ -69,9 +70,11 @@ impl Document {
             _ => None,
         };
         // Old documents may already contain a boolean on a valued mark.
+        // Typed text is never an atom, even between two of the same.
         Ok(marks
             .into_iter()
             .flatten()
+            .filter(|(name, _)| name != ATOM)
             .filter(|(name, value)| {
                 !matches!(value, LoroValue::Bool(_))
                     || self

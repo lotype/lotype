@@ -85,10 +85,7 @@ mod tests {
         let marks = marks
             .iter()
             .map(|(name, value)| (name.to_string(), value.clone()));
-        Span {
-            text: text.into(),
-            marks: marks.collect::<BTreeMap<_, _>>(),
-        }
+        Span::new(text, marks.collect::<BTreeMap<_, _>>())
     }
 
     #[test]

@@ -124,10 +124,7 @@ impl Reader {
         let Some(leaf) = &mut self.leaf else { return };
         match leaf.node.spans.last_mut() {
             Some(last) if last.marks == marks => last.text.push_str(text),
-            _ => leaf.node.spans.push(Span {
-                text: text.to_owned(),
-                marks,
-            }),
+            _ => leaf.node.spans.push(Span::new(text, marks)),
         }
     }
 
@@ -465,5 +462,5 @@ fn image_link(attrs: &[(&'static str, Value)]) -> Vec<Span> {
     let (url, caption) = (text("url"), text("caption"));
     let marks = BTreeMap::from([("link".to_owned(), Value::from(url.as_str()))]);
     let text = if caption.is_empty() { url } else { caption };
-    vec![Span { text, marks }]
+    vec![Span::new(text, marks)]
 }

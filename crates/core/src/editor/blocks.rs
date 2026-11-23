@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use super::{Editor, text_selection};
-use crate::{BlockId, Content, Document, Error, Pos, Result, Selection, Span, Value};
+use crate::{Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Selection, Span, Value};
 
 impl Editor {
     /// Turns the blocks of the selection into `block_type`, with these
@@ -86,6 +86,20 @@ impl Editor {
         })
     }
 
+    /// Inserts an atom in place of the selection, as a step of its own,
+    /// with the marks typed text would get there.
+    pub fn insert_atom(&mut self, atom: Atom) -> Result<()> {
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        let marks = self.active_marks()?;
+        let span = Span::atom(atom, marks);
+        self.apply(|doc, _| {
+            let caret = doc.delete_range(anchor, head)?;
+            doc.insert_spans(caret.block, caret.offset, std::slice::from_ref(&span))?;
+            let end = Pos::new(caret.block, caret.offset + OBJECT.len_utf8());
+            Ok(Some(Selection::caret(end)))
+        })
+    }
+
     /// Inserts pasted plain text, as a step of its own and as it is: no
     /// input rule reads it. A web or mail address becomes a link: on the
     /// selected text when there is some, and else as text of its own.
@@ -106,7 +120,7 @@ impl Editor {
             let text = if links { address } else { text }.to_owned();
             let caret = doc.delete_range(anchor, head)?;
             let end = Pos::new(caret.block, caret.offset + text.len());
-            doc.insert_spans(caret.block, caret.offset, &[Span { text, marks }])?;
+            doc.insert_spans(caret.block, caret.offset, &[Span::new(text, marks)])?;
             Ok(Some(Selection::caret(end)))
         })
     }
@@ -138,10 +152,7 @@ impl Editor {
                     .map(|block| pasted.text(block))
                     .collect();
                 let marks = self.active_marks()?;
-                vec![Span {
-                    text: texts?.join("\n"),
-                    marks,
-                }]
+                vec![Span::new(texts?.join("\n"), marks)]
             }
             [only] if paragraph(only)? => pasted.spans(only)?,
             _ => Vec::new(),

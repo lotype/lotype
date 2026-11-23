@@ -11,10 +11,7 @@ fn paragraph(content: &str) -> (Document, BlockId) {
 
 fn span(text: &str, marks: &[(&str, Value)]) -> Span {
     let marks = marks.iter().map(|(k, v)| ((*k).to_owned(), v.clone()));
-    Span {
-        text: text.to_owned(),
-        marks: marks.collect::<BTreeMap<_, _>>(),
-    }
+    Span::new(text, marks.collect::<BTreeMap<_, _>>())
 }
 
 fn bold() -> (&'static str, Value) {
