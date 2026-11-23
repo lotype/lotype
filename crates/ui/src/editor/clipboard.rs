@@ -19,14 +19,13 @@ const MAX_HEX: usize = 64 << 20;
 impl EditorView {
     /// Puts the selected text on the clipboard. Returns whether there was some.
     pub(crate) fn copy(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
-            return false;
-        };
-        if anchor == head {
-            return false;
-        }
         let doc = self.editor.document();
-        let Ok(slice) = doc.slice(*anchor, *head) else {
+        let slice = match self.editor.selection() {
+            Some(Selection::Text { anchor, head }) if anchor != head => doc.slice(*anchor, *head),
+            Some(Selection::Blocks(blocks)) => doc.slice_blocks(blocks),
+            _ => return false,
+        };
+        let Ok(slice) = slice else {
             return false;
         };
         let Ok(bytes) = slice.export_snapshot() else {
@@ -47,7 +46,7 @@ impl EditorView {
 
     pub(crate) fn cut(&mut self, cx: &mut Context<Self>) {
         if self.copy(cx) {
-            self.editor.delete_selection().ok();
+            self.delete_selection();
         }
     }
 

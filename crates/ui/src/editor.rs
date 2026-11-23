@@ -5,6 +5,7 @@ mod keys;
 mod motion;
 mod paint;
 mod render;
+mod selection;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -46,6 +47,10 @@ pub struct EditorView {
     scroll: ScrollHandle,
     /// The caret is to be scrolled into sight once it is laid out.
     reveal: Rc<Cell<bool>>,
+    /// The blocks shown, in order, as rows.
+    rows: Vec<BlockId>,
+    /// Where a selection of whole blocks started and where it goes on.
+    block_range: Option<(BlockId, BlockId)>,
 }
 
 impl EditorView {
@@ -64,6 +69,8 @@ impl EditorView {
             closed: HashSet::new(),
             scroll: ScrollHandle::new(),
             reveal: Rc::default(),
+            rows: Vec::new(),
+            block_range: None,
         }
     }
 
@@ -157,11 +164,18 @@ impl Render for EditorView {
         let base = window.text_style();
         let shown = self.shown();
         self.open_around_selection();
-        let rows = canvas::rows(self.editor.document(), &self.closed);
-        let rows: Vec<_> = rows
-            .iter()
-            .filter_map(|row| self.row_element(row, &base, shown.as_ref(), window, cx))
-            .collect();
+        let selected = match self.editor.selection() {
+            Some(lotype_core::Selection::Blocks(blocks)) => blocks.iter().copied().collect(),
+            _ => HashSet::new(),
+        };
+        self.rows.clear();
+        let mut rows = Vec::new();
+        for row in canvas::rows(self.editor.document(), &self.closed, &selected) {
+            if let Some(element) = self.row_element(&row, &base, shown.as_ref(), window, cx) {
+                self.rows.push(row.block);
+                rows.push(element);
+            }
+        }
         div()
             .id("lotype-editor")
             .track_scroll(&self.scroll)

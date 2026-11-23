@@ -36,15 +36,21 @@ pub(crate) struct Row {
     pub number: Option<i64>,
     /// The quotes and alerts around the block, itself included.
     pub bars: Vec<Bar>,
+    /// The block or one around it is selected whole.
+    pub selected: bool,
 }
 
 /// The rows of the blocks shown, in document order: every block but those
 /// in a closed toggle or in a table.
-pub(crate) fn rows(doc: &Document, closed: &HashSet<BlockId>) -> Vec<Row> {
+pub(crate) fn rows(
+    doc: &Document,
+    closed: &HashSet<BlockId>,
+    selected: &HashSet<BlockId>,
+) -> Vec<Row> {
     let mut rows = Vec::new();
     // The blocks around the next one, outermost first: whether each hides
-    // what is in it, and its bar.
-    let mut around: Vec<(BlockId, bool, Option<Bar>)> = Vec::new();
+    // what is in it, whether it is selected, and its bar.
+    let mut around: Vec<(BlockId, bool, bool, Option<Bar>)> = Vec::new();
     // The number of the last sibling at each depth, while siblings are numbered.
     let mut numbers: Vec<Option<i64>> = Vec::new();
     for block in doc.blocks() {
@@ -68,7 +74,8 @@ pub(crate) fn rows(doc: &Document, closed: &HashSet<BlockId>) -> Vec<Row> {
             "alert" => Some((depth, alert_style(&text_attr(doc, block, "kind")).1)),
             _ => None,
         };
-        let hidden = around.last().is_some_and(|(_, hides, _)| *hides);
+        let hidden = around.last().is_some_and(|(_, hides, ..)| *hides);
+        let chosen = selected.contains(&block) || around.last().is_some_and(|around| around.2);
         if !hidden {
             let outer = around.iter().filter_map(|(.., bar)| *bar);
             rows.push(Row {
@@ -77,11 +84,12 @@ pub(crate) fn rows(doc: &Document, closed: &HashSet<BlockId>) -> Vec<Row> {
                 depth,
                 number,
                 bars: outer.chain(bar).collect(),
+                selected: chosen,
             });
         }
         let hides =
             block_type == "table" || block_type == "toggle_list_item" && closed.contains(&block);
-        around.push((block, hidden || hides, bar));
+        around.push((block, hidden || hides, chosen, bar));
     }
     rows
 }
@@ -186,8 +194,11 @@ impl EditorView {
             let bar = div().absolute().top_0().bottom_0().left(left).w(px(3.));
             bar.bg(*color)
         });
-        let row_element = div()
-            .relative()
+        let mut row_element = div().relative();
+        if row.selected {
+            row_element = row_element.bg(super::paint::selection_color());
+        }
+        let row_element = row_element
             .flex()
             .items_start()
             .py(px(2.))
@@ -260,11 +271,8 @@ impl EditorView {
     fn close(&mut self, toggle: BlockId) {
         self.closed.insert(toggle);
         let doc = self.editor.document();
-        let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
-            return;
-        };
-        let hidden = |block: BlockId| {
-            let mut at = doc.parent(block).ok().flatten();
+        let hidden = |block: &BlockId| {
+            let mut at = doc.parent(*block).ok().flatten();
             while let Some(parent) = at {
                 if parent == toggle {
                     return true;
@@ -273,21 +281,32 @@ impl EditorView {
             }
             false
         };
-        if hidden(anchor.block) || hidden(head.block) {
-            let end = Pos::new(toggle, doc.text_len(toggle).unwrap_or(0));
-            self.editor.set_selection(Some(Selection::caret(end))).ok();
-        }
+        let taken = match self.editor.selection() {
+            Some(Selection::Text { anchor, head })
+                if hidden(&anchor.block) || hidden(&head.block) =>
+            {
+                let end = Pos::new(toggle, doc.text_len(toggle).unwrap_or(0));
+                Selection::caret(end)
+            }
+            Some(Selection::Blocks(blocks)) if blocks.iter().any(hidden) => {
+                self.block_range = Some((toggle, toggle));
+                Selection::Blocks(vec![toggle])
+            }
+            _ => return,
+        };
+        self.editor.set_selection(Some(taken)).ok();
     }
 
     /// Opens the toggles around the selection, so that it stays in sight.
     pub(super) fn open_around_selection(&mut self) {
         let doc = self.editor.document();
-        let ends = match self.editor.selection() {
+        let inner = match self.editor.selection() {
             Some(Selection::Text { anchor, head }) => vec![anchor.block, head.block],
+            Some(Selection::Blocks(blocks)) => blocks.clone(),
             _ => Vec::new(),
         };
-        for end in ends {
-            let mut at = doc.parent(end).ok().flatten();
+        for block in inner {
+            let mut at = doc.parent(block).ok().flatten();
             while let Some(block) = at {
                 self.closed.remove(&block);
                 at = doc.parent(block).ok().flatten();
@@ -320,7 +339,7 @@ mod tests {
         let inside = doc.insert_block(Some(toggle), 0, "paragraph").unwrap();
 
         let shown = |closed: &HashSet<BlockId>| {
-            let rows = rows(&doc, closed);
+            let rows = rows(&doc, closed, &HashSet::new());
             rows.iter()
                 .map(|row| (row.block, row.depth, row.number, row.bars.len()))
                 .collect::<Vec<_>>()

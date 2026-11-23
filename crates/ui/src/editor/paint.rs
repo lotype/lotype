@@ -1,14 +1,14 @@
 //! The selection behind the text, and the caret in front of it.
 
 use gpui::{
-    App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, hsla, prelude::*,
+    App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, hsla, point, prelude::*,
 };
 use lotype_core::Selection;
 
 use super::EditorView;
 use crate::text_el::Affinity;
 
-fn selection_color() -> Hsla {
+pub(super) fn selection_color() -> Hsla {
     hsla(0.58, 0.9, 0.6, 0.3)
 }
 
@@ -72,36 +72,59 @@ pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
     canvas(|_, _, _| (), paint).absolute().size_full()
 }
 
+/// Scrolls the editor to bring the head of the selection into sight when
+/// asked to, once the rows are laid out: the caret or a range's head, or the
+/// row where a selection of blocks goes on.
+fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
+    let view = view.read(cx);
+    if !view.reveal.replace(false) {
+        return;
+    }
+    let scroll = &view.scroll;
+    let target = match view.editor.selection() {
+        Some(Selection::Text { head, .. }) => view.caret().or_else(|| view.caret_bounds(*head)),
+        Some(Selection::Blocks(blocks)) => {
+            let range = view.block_range.map(|(_, head)| head);
+            let head = range
+                .filter(|head| blocks.contains(head))
+                .or(blocks.last().copied());
+            let at = head.and_then(|head| view.rows.iter().position(|row| *row == head));
+            // The scroll handle has the rows where they are before scrolling,
+            // after the selection, which is painted first.
+            let row = at.and_then(|at| scroll.bounds_for_item(at + 1));
+            row.map(|row| {
+                Bounds::new(
+                    row.origin + point(Pixels::ZERO, scroll.offset().y),
+                    row.size,
+                )
+            })
+        }
+        _ => None,
+    };
+    let Some(target) = target else {
+        return;
+    };
+    let (shown, mut offset) = (scroll.bounds(), scroll.offset());
+    if target.top() < shown.top() {
+        offset.y += shown.top() - target.top();
+    } else if target.bottom() > shown.bottom() {
+        offset.y -= target.bottom() - shown.bottom();
+    } else {
+        return;
+    }
+    offset.y = offset.y.min(Pixels::ZERO).max(-scroll.max_offset().y);
+    scroll.set_offset(offset);
+    // Everything is placed already: draw again, as a refresh while drawing
+    // is dropped.
+    window.defer(cx, |window, _| window.refresh());
+}
+
 /// Paints the caret, after the text, while the editor has focus. Laid out
-/// first, it scrolls the editor to bring the caret into sight when asked to.
+/// after the rows, it brings the selection into sight first.
 pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
     let revealed = view.clone();
     let prepaint = move |_: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
-        let view = revealed.read(cx);
-        if !view.reveal.replace(false) {
-            return;
-        }
-        // The head of a range, which is where the selection grows.
-        let head = match view.editor.selection() {
-            Some(Selection::Text { head, .. }) => view.caret_bounds(*head),
-            _ => None,
-        };
-        let (Some(caret), scroll) = (view.caret().or(head), &view.scroll) else {
-            return;
-        };
-        let (shown, mut offset) = (scroll.bounds(), scroll.offset());
-        if caret.top() < shown.top() {
-            offset.y += shown.top() - caret.top();
-        } else if caret.bottom() > shown.bottom() {
-            offset.y -= caret.bottom() - shown.bottom();
-        } else {
-            return;
-        }
-        offset.y = offset.y.min(Pixels::ZERO).max(-scroll.max_offset().y);
-        scroll.set_offset(offset);
-        // The text is placed already: draw again, as a refresh while
-        // drawing is dropped.
-        window.defer(cx, |window, _| window.refresh());
+        reveal(&revealed, window, cx);
     };
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
         let view = view.read(cx);

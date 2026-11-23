@@ -68,7 +68,9 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
-        if let Some((motion, extend)) = motion::motion(&name) {
+        if self.block_key(&name) {
+            // Handled as a key on whole blocks.
+        } else if let Some((motion, extend)) = motion::motion(&name) {
             self.move_cursor(motion, extend);
         } else if name == "Mod-a" {
             self.select_all();
