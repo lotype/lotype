@@ -59,6 +59,12 @@ impl EditorView {
             self.move_cursor(motion, extend);
         } else if name == "Mod-a" {
             self.select_all();
+        } else if name == "Mod-c" {
+            self.copy(cx);
+        } else if name == "Mod-x" {
+            self.cut(cx);
+        } else if name == "Mod-v" {
+            self.paste(cx);
         } else {
             self.run_binding(&name, window, cx);
             return;
