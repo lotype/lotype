@@ -253,7 +253,13 @@ impl Editor {
             }
             Some(Selection::Blocks(blocks)) => {
                 doc.remove_blocks(blocks.iter().copied())?;
-                Ok(None)
+                // A document left empty gets a paragraph to type in, where
+                // the schema has one.
+                if !doc.children(None)?.is_empty() {
+                    return Ok(None);
+                }
+                let paragraph = doc.insert_block(None, 0, "paragraph").ok();
+                Ok(paragraph.map(|block| Selection::caret(Pos::new(block, 0))))
             }
             Some(Selection::Cells { anchor, head }) => {
                 for cell in doc.cells_between(*anchor, *head)? {

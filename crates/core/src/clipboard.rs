@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{BlockId, Document, Error, Pos, Result};
 
@@ -55,6 +55,35 @@ impl Document {
             copies.insert(block, copy);
         }
         Ok(slice)
+    }
+
+    /// The blocks, each with what is in it, as a document of its own: what
+    /// a copy of a block selection holds.
+    pub fn slice_blocks(&self, blocks: &[BlockId]) -> Result<Document> {
+        let mut slice = Document::new(self.schema().clone());
+        for block in self.outermost(blocks)? {
+            let index = slice.children(None)?.len();
+            slice.copy_block(self, block, None, index)?;
+        }
+        Ok(slice)
+    }
+
+    /// Each of `blocks` once, in document order, but not one inside another
+    /// of them, which goes with that one.
+    pub(crate) fn outermost(&self, blocks: &[BlockId]) -> Result<Vec<BlockId>> {
+        let chosen: HashSet<_> = blocks.iter().copied().collect();
+        let mut outermost = Vec::new();
+        for block in &chosen {
+            let mut above = self.parent(*block)?;
+            while let Some(parent) = above.filter(|parent| !chosen.contains(parent)) {
+                above = self.parent(parent)?;
+            }
+            if above.is_none() {
+                outermost.push((self.path(*block)?, *block));
+            }
+        }
+        outermost.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(outermost.into_iter().map(|(_, block)| block).collect())
     }
 
     /// Copies the blocks of `other`, with what is in them, among the

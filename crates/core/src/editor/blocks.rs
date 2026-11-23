@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use super::{Editor, text_selection};
 use crate::{Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Selection, Span, Value};
 
@@ -60,26 +58,14 @@ impl Editor {
     ) -> Result<()> {
         let blocks = self.selected_blocks()?;
         self.apply(|doc, selection| {
-            // Each block once, and not one inside another selected block,
-            // which moves with that one.
-            let chosen: HashSet<_> = blocks.into_iter().collect();
-            let mut outermost = Vec::new();
-            for block in &chosen {
-                let mut above = doc.parent(*block)?;
-                while let Some(parent) = above.filter(|parent| !chosen.contains(parent)) {
-                    above = doc.parent(parent)?;
-                }
-                if above.is_none() {
-                    outermost.push((doc.path(*block)?, *block));
-                }
-            }
-            outermost.sort_by(|a, b| a.0.cmp(&b.0));
+            // A block inside another selected block moves with that one.
+            let mut outermost = doc.outermost(&blocks)?;
             // Moving out starts at the end: a block that takes no children
             // cannot leave while a sibling still follows it.
             if backward {
                 outermost.reverse();
             }
-            for (_, block) in outermost {
+            for block in outermost {
                 shift(doc, block)?;
             }
             Ok(selection.cloned())

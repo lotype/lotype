@@ -238,3 +238,22 @@ fn a_slice_from_a_cell_to_a_block_outside_its_table_is_refused() {
         assert!(matches!(doc.slice(a, b), Err(Error::TablePart)));
     }
 }
+
+#[test]
+fn a_slice_of_blocks_holds_them_whole_and_each_once() {
+    let (doc, _) = build(blocks![
+        p!["one", bullet!["child"]],
+        divider!(),
+        p!["two"],
+        p!["left out"]
+    ]);
+    let blocks = doc.blocks();
+    // The child goes with its parent, whatever order they are given in.
+    let picked = [blocks[3], blocks[1], blocks[0], blocks[2]];
+    let slice = doc.slice_blocks(&picked).unwrap();
+    assert_document(
+        &slice,
+        None,
+        blocks![p!["one", bullet!["child"]], divider!(), p!["two"]],
+    );
+}

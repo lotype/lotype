@@ -82,6 +82,15 @@ fn deletes_selected_text_and_blocks() {
     ed.delete_selection().unwrap();
     assert_editor(&ed, blocks![p!["keep"]]);
     assert_eq!(ed.selection(), None);
+
+    // Deleting every block leaves a paragraph to type in, in the same step.
+    let mut ed = editor(blocks![p!["one"], divider!()]);
+    ed.set_selection(Some(Selection::Blocks(ed.document().blocks())))
+        .unwrap();
+    ed.delete_selection().unwrap();
+    assert_editor(&ed, blocks![p!["<a>"]]);
+    ed.undo().unwrap();
+    assert_editor(&ed, blocks![p!["one"], divider!()]);
 }
 
 #[test]
