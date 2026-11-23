@@ -188,6 +188,9 @@ Design decisions:
 ## 5. UI layer (`lotype-ui`)
 
 - **GPUI.** `gpui-component` 0.10.0 depends on `gpui-pre = "=0.3.12"`. This is a GPUI snapshot republished by the gpui-component maintainer, not by the Zed team.
+- **Platform.** `gpui-pre` holds no platform: the application picks one with `gpui-pre-platform`, so `lotype-ui` takes it only as a dev-dependency, for its example and visual checks. Its `runtime_shaders` feature compiles the Metal shaders at run time, so a Mac with only the Command Line Tools, without Xcode, can build and run the editor.
+- **Compiler.** GPUI needs a newer compiler than the core, so `lotype-ui` declares `rust-version = "1.98"` (checked locally with `cargo +1.98 check -p lotype-ui --all-targets`), and the MSRV job skips it.
+- **Text.** A block's text is GPUI's `StyledText`, with one `TextRun` per span from its marks (`marks.rs`). Its `TextLayout` does wrapping and hit-testing. Font size comes from the element around the text, not from the runs, so a heading sets it on a wrapping `div`. The view paints no background: that is the application's.
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`.
 - **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME.
 - **IME.** `EntityInputHandler` (`replace_text_in_range`, `replace_and_mark_text_in_range`, `marked_text_range`, `unmark_text`, `bounds_for_range`, `character_index_for_point`) works in UTF-16, mirroring `NSTextInputClient`.
@@ -344,12 +347,12 @@ CI runs from alpha onwards, on a Linux runner. `core`, `storage`, `server`, `ai`
 
 ```text
 cargo fmt --check
-cargo clippy --workspace --exclude lotype-ui --exclude lotype -- -D warnings
-cargo test   --workspace --exclude lotype-ui --exclude lotype
+cargo clippy --workspace --exclude lotype-ui --all-targets -- -D warnings
+cargo test   --workspace --exclude lotype-ui
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. The `--exclude` flags are added once `lotype-ui` and the binary crate exist. A second job runs `cargo check --workspace` on Rust 1.90 to back the declared MSRV. A third runs `cargo deny check` against `deny.toml`: RustSec advisories, a license allow-list with nothing copyleft that would bind applications using the SDK, and crates.io as the only source. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. `lotype-ui` is excluded because its tests need macOS; run `cargo clippy` and `cargo test` for the whole workspace locally before pushing. The binary crate will be excluded the same way. A second job runs `cargo check --workspace --exclude lotype-ui` on Rust 1.90 to back the declared MSRV. A third runs `cargo deny check` against `deny.toml`: RustSec advisories, a license allow-list with nothing copyleft that would bind applications using the SDK, and crates.io as the only source. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
 
 ---
 
@@ -393,10 +396,13 @@ lotype/
     │   ├── presence.rs     # EphemeralStore
     │   ├── normalize.rs    # Read-time schema tolerance
     ├── ui/src/
-    │   ├── editor/         # canvas.rs, text_el.rs, ime.rs, actions.rs, block_view.rs
+    │   ├── editor.rs       # EditorView: the blocks' text
+    │   ├── marks.rs        # Text runs from marks
+    │   ├── test_support.rs # EditorTestContext [feature "test-support"]
+    │   │   # planned:
+    │   ├── editor/         # canvas.rs, ime.rs, actions.rs, block_view.rs
     │   ├── components/     # slash_menu, formatting_toolbar, link_toolbar, side_menu, table,
-    │   │                   # collab_cursors, ai_prompt, ai_panel, ai_review
-    │   └── test_support/
+    │                       # collab_cursors, ai_prompt, ai_panel, ai_review
     ├── code/               # lotype-code
     ├── math/               # lotype-math
     ├── diagram/            # lotype-diagram
@@ -474,7 +480,6 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | macOS 26 may be the last macOS release for Intel | Verify; this sets the deployment target and test matrix |
 | No performance baseline from the legacy Tauri app | Measure latency, open time, memory and scroll FPS |
 | `katex-native` is very new (0.1.1) | Fallback: keep `katex-rs` as the parser and write our own display list |
-| Offset unit of GPUI `TextRun` (assumed to be UTF-8 bytes) | Verify in the `gpui-pre` source |
 | Builder markers `<a>`/`<b>` clash with literal `<a>`/`<b>` in test text | Accepted: test-only; write such text through the document API instead |
 | `heapless` 0.7/0.8 (pulled in by `loro`) has unsoundness advisories fixed only in 0.9.4. Loro and `postcard` use just `heapless::Vec`/`String`; the one advisory touching those (`vec::IntoIter` drop) needs an element whose `Drop` panics, which Loro's elements do not | Accepted; goes away when Loro moves to heapless 0.9 |
 | The core uses whitespace boundaries to group typing and has no clock for pause detection | The UI can call `Editor::finish_edit_group` when its typing timer expires |

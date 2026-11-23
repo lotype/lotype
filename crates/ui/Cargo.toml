@@ -1,0 +1,26 @@
+[package]
+name = "lotype-ui"
+description = "GPUI editor for lotype documents."
+version.workspace = true
+edition.workspace = true
+# GPUI needs a newer compiler than the core.
+rust-version = "1.98"
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+gpui.workspace = true
+lotype-core.workspace = true
+
+[features]
+# Test contexts for views built on this crate.
+test-support = ["gpui/test-support", "lotype-core/test-support"]
+
+[dev-dependencies]
+lotype-ui = { path = ".", features = ["test-support"] }
+# Compiles Metal shaders at run time, so the example needs no full Xcode.
+gpui_platform = { workspace = true, features = ["font-kit", "runtime_shaders"] }
