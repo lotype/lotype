@@ -125,3 +125,15 @@ fn accepting_needs_a_query() {
     assert!(matches!(result, Err(Error::NoSelection)));
     assert_eq!(shown(&ed), "paragraph \"plain<a>\"\n");
 }
+
+#[test]
+fn a_table_part_is_not_an_item_to_insert() {
+    let mut ed = editor(blocks![p!["text /row<a>"]]);
+    let row = SlashItem {
+        block_type: "table_row".into(),
+        ..item("quote")
+    };
+    let result = ed.accept_slash_item(&row);
+    assert!(matches!(result, Err(Error::TablePart)));
+    assert_eq!(shown(&ed), "paragraph \"text /row<a>\"\n");
+}

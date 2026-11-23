@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{BlockId, Document, Pos, Result};
+use crate::{BlockId, Document, Error, Pos, Result};
 
 impl Document {
     /// The text from `a` to `b` with the blocks it is in, as a document of
@@ -10,6 +10,10 @@ impl Document {
     pub fn slice(&self, a: Pos, b: Pos) -> Result<Document> {
         let (start, end) = self.ordered(a, b)?;
         let mut slice = Document::new(self.schema().clone());
+        let in_cell = start.block.column().is_some() || end.block.column().is_some();
+        if in_cell && start.block != end.block {
+            return Err(Error::TablePart);
+        }
         if start.block.column().is_some() {
             let copy = slice.insert_block(None, 0, "paragraph")?;
             let mut spans = self.spans_in(start.block, start.offset..end.offset)?;

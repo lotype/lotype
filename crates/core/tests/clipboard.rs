@@ -1,5 +1,5 @@
 use lotype_core::test_support::{assert_document, assert_editor, block, build, editor};
-use lotype_core::{Selection, b, blocks, bullet, divider, h1, p};
+use lotype_core::{Document, Error, Pos, Schema, Selection, b, blocks, bullet, divider, h1, p};
 
 fn slice_of(nodes: Vec<lotype_core::test_support::BlockNode>) -> lotype_core::Document {
     let (doc, selection) = build(nodes);
@@ -220,4 +220,21 @@ fn a_table_a_selection_goes_through_is_copied_whole() {
     let end = lotype_core::Pos::new(last, doc.text_len(last).unwrap());
     let slice = doc.slice(lotype_core::Pos::new(first, 1), end).unwrap();
     assert_eq!(slice.to_markdown(), "b\n\n| a |\n| --- |\n| b |\n\ncd\n");
+}
+
+#[test]
+fn a_slice_from_a_cell_to_a_block_outside_its_table_is_refused() {
+    let mut doc = Document::new(Schema::builtin());
+    let table = doc.insert_table(None, 0, 1, 1).unwrap();
+    let after = doc.insert_block(None, 1, "paragraph").unwrap();
+    doc.insert_text(after, 0, "xy").unwrap();
+    let row = doc.children(Some(table)).unwrap()[0];
+    let cell = doc.cell(row, doc.columns(table).unwrap()[0]).unwrap();
+    doc.insert_text(cell, 0, "hello").unwrap();
+    for (a, b) in [
+        (Pos::new(cell, 0), Pos::new(after, 2)),
+        (Pos::new(after, 2), Pos::new(cell, 0)),
+    ] {
+        assert!(matches!(doc.slice(a, b), Err(Error::TablePart)));
+    }
 }

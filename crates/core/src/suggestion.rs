@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::table::TABLE;
+use crate::table::{CELL, ROW, TABLE};
 use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
 
 /// An entry of the slash menu: a block to insert.
@@ -197,6 +197,9 @@ impl Editor {
     /// otherwise. The caret goes into the block, or below it when it holds no
     /// text. One undo step.
     pub fn accept_slash_item(&mut self, item: &SlashItem) -> Result<()> {
+        if item.block_type == ROW || item.block_type == CELL {
+            return Err(Error::TablePart);
+        }
         let query = self.slash_query().ok_or(Error::NoSelection)?;
         let block = query.block;
         self.apply(|doc, _| {
