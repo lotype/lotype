@@ -63,13 +63,19 @@ impl Document {
         // A draft makes blocks under the peer of the document it is a draft
         // of, and nothing else, so that document can make the same blocks
         // with the same ids before it replays the draft.
-        if let Some(draft) = &self.draft {
+        if let Some(draft) = &mut self.draft {
             self.doc.commit();
+            if draft.tip.as_ref() != Some(&self.doc.state_frontiers()) {
+                draft.tip = None;
+            }
             self.doc.set_peer_id(draft.local)?;
         }
         let made = self.mint_under(trash, block_type);
-        if let Some(draft) = &self.draft {
+        if let Some(draft) = &mut self.draft {
             self.doc.commit();
+            if draft.tip.is_some() {
+                draft.tip = Some(self.doc.state_frontiers());
+            }
             self.doc.set_peer_id(draft.scratch)?;
             draft.minted(made.as_ref().ok().copied(), block_type);
         }

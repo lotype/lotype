@@ -43,6 +43,8 @@ pub struct Editor {
     seen: Arc<Mutex<changes::Seen>>,
     _watching: Subscription,
     replaced: bool,
+    /// The copy of the document that drafts run on, while it can serve another.
+    fork: Option<Document>,
 }
 
 /// The selection around one undo step. Anchored, so that it is still in the
@@ -59,6 +61,7 @@ impl Editor {
             seen,
             _watching,
             replaced: false,
+            fork: None,
             history: new_history(&doc),
             doc,
             selection: None,

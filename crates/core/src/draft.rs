@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use loro::{PeerID, TreeID};
+use loro::{Frontiers, PeerID, TreeID};
 
 use crate::table::ColumnId;
 use crate::{Document, Result};
@@ -17,6 +17,10 @@ pub(crate) struct Draft {
     pub(crate) local: PeerID,
     /// The peer every other change of the draft is made under.
     pub(crate) scratch: PeerID,
+    /// The draft's version while it has made nothing but blocks. The document
+    /// makes those first, so they are the same operations there, and the
+    /// fork stays a copy of the document. `None` once a block came later.
+    pub(crate) tip: Option<Frontiers>,
     minted: Mutex<Vec<(Option<TreeID>, String)>>,
     /// The cells that got their text, each a row and a column.
     cells: Mutex<Vec<(TreeID, ColumnId)>>,
@@ -24,11 +28,12 @@ pub(crate) struct Draft {
 }
 
 impl Draft {
-    pub(crate) fn new(token: Arc<()>, local: PeerID, scratch: PeerID) -> Self {
+    pub(crate) fn new(token: Arc<()>, local: PeerID, scratch: PeerID, base: Frontiers) -> Self {
         Self {
             token,
             local,
             scratch,
+            tip: Some(base),
             minted: Mutex::default(),
             cells: Mutex::default(),
             edits: Mutex::default(),
@@ -42,6 +47,10 @@ impl Draft {
 
     pub(crate) fn made_cell(&self, row: TreeID, column: ColumnId) {
         self.cells.lock().unwrap().push((row, column));
+    }
+
+    pub(crate) fn minted_nothing(&self) -> bool {
+        self.minted.lock().unwrap().is_empty()
     }
 
     /// The blocks made, with their types, the cells that got their text,
