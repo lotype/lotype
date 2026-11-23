@@ -111,6 +111,75 @@ impl Editor {
         })
     }
 
+    /// Inserts pasted Markdown, as a step of its own, as ProseMirror pastes
+    /// a slice: a single paragraph goes into the text at the caret, and
+    /// blocks go between the two halves of the block at the caret, with the
+    /// first joining the text before the caret when it is a paragraph and
+    /// the text after the caret joining the last. Code and table cells take
+    /// the pasted text as plain text.
+    pub fn paste_markdown(&mut self, markdown: &str) -> Result<()> {
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        let mut pasted = Document::new(self.doc.schema().clone());
+        pasted.insert_markdown(None, 0, markdown)?;
+        let top = pasted.children(None)?;
+        let (start, _) = self.doc.ordered(anchor, head)?;
+        let plain =
+            start.block.column().is_some() || self.doc.block_type(start.block)? == "code_block";
+        let paragraph =
+            |block| -> Result<bool> {
+                Ok(pasted.block_type(block)? == "paragraph"
+                    && pasted.children(Some(block))?.is_empty())
+            };
+        let spans = match top[..] {
+            _ if plain => {
+                let texts: Result<Vec<_>> = pasted
+                    .blocks()
+                    .into_iter()
+                    .map(|block| pasted.text(block))
+                    .collect();
+                let marks = self.active_marks()?;
+                vec![Span {
+                    text: texts?.join("\n"),
+                    marks,
+                }]
+            }
+            [only] if paragraph(only)? => pasted.spans(only)?,
+            _ => Vec::new(),
+        };
+        if plain || !spans.is_empty() || top.is_empty() {
+            return self.apply(|doc, _| {
+                let caret = doc.delete_range(anchor, head)?;
+                doc.insert_spans(caret.block, caret.offset, &spans)?;
+                let len: usize = spans.iter().map(|span| span.text.len()).sum();
+                Ok(Some(Selection::caret(Pos::new(
+                    caret.block,
+                    caret.offset + len,
+                ))))
+            });
+        }
+        let first_joins = paragraph(top[0])?;
+        self.apply(|doc, _| {
+            let caret = doc.delete_range(anchor, head)?;
+            let tail = doc.split_block(caret)?.block;
+            let parent = doc.parent(caret.block)?;
+            let inserted = doc.insert_markdown(parent, doc.index_of(caret.block)? + 1, markdown)?;
+            if first_joins {
+                doc.merge_backward(inserted[0])?;
+            } else if doc.text_len(caret.block)? == 0 {
+                doc.remove_block(caret.block)?;
+            }
+            // The text after the caret joins the last pasted block, unless
+            // that holds no text, as a divider does.
+            let last = doc.prev_block(tail)?;
+            let joins = last.is_some_and(|last| doc.text_len(last).is_ok());
+            let caret = match joins {
+                true => doc.merge_backward(tail)?.unwrap_or(Pos::new(tail, 0)),
+                false => Pos::new(tail, 0),
+            };
+            Ok(Some(Selection::caret(caret)))
+        })
+    }
+
     /// The blocks the selection touches, in document order for a text selection.
     fn selected_blocks(&self) -> Result<Vec<BlockId>> {
         match &self.selection {

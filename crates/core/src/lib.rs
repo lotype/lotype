@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod clipboard;
 mod collab;
 mod commands;
 mod document;
