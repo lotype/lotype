@@ -136,6 +136,11 @@ impl Element for TextElement {
             .collect();
         let input = wrap::Input {
             text: self.text.clone(),
+            starts: self
+                .runs
+                .iter()
+                .scan(0, |at, run| Some(std::mem::replace(at, *at + run.len)))
+                .collect(),
             runs: self.runs.clone(),
             atoms,
             font_size,

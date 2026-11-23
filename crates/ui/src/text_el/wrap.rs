@@ -11,6 +11,8 @@ use super::{Kind, Laid, Line, Piece};
 pub(super) struct Input {
     pub(super) text: SharedString,
     pub(super) runs: Vec<TextRun>,
+    /// Where each run begins.
+    pub(super) starts: Vec<usize>,
     pub(super) atoms: Vec<(Range<usize>, Size<Pixels>)>,
     pub(super) font_size: Pixels,
     pub(super) line_height: Pixels,
@@ -60,17 +62,24 @@ impl Hard {
     }
 }
 
-/// The text runs of `range`, cut from runs that cover the whole text.
-fn runs_in(runs: &[TextRun], range: &Range<usize>) -> Vec<TextRun> {
-    let mut start = 0;
+/// The text runs of `range`, cut from runs that cover the whole text, of
+/// which `starts` holds where each begins.
+fn runs_in(runs: &[TextRun], starts: &[usize], range: &Range<usize>) -> Vec<TextRun> {
+    // Runs are found by search: a text with many atoms has many runs.
+    let first = starts
+        .partition_point(|start| *start <= range.start)
+        .saturating_sub(1);
     let mut cut = Vec::new();
-    for run in runs {
-        let end = start + run.len;
-        let len = end.min(range.end).saturating_sub(start.max(range.start));
+    for (run, start) in runs[first..].iter().zip(&starts[first..]) {
+        if *start >= range.end {
+            break;
+        }
+        let len = (start + run.len)
+            .min(range.end)
+            .saturating_sub((*start).max(range.start));
         if len > 0 {
             cut.push(TextRun { len, ..run.clone() });
         }
-        start = end;
     }
     cut
 }
@@ -101,7 +110,7 @@ fn is_cjk(c: char) -> bool {
 impl Input {
     fn shape(&self, range: &Range<usize>, window: &Window) -> ShapedLine {
         let text = SharedString::from(self.text[range.clone()].to_owned());
-        let runs = runs_in(&self.runs, range);
+        let runs = runs_in(&self.runs, &self.starts, range);
         window
             .text_system()
             .shape_line(text, self.font_size, &runs, None)
@@ -286,6 +295,25 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runs_are_cut_to_a_range() {
+        let run = |len| TextRun {
+            len,
+            ..TextRun::default()
+        };
+        let runs = [run(3), run(2), run(4)];
+        let lens = |range| {
+            runs_in(&runs, &[0, 3, 5], &range)
+                .iter()
+                .map(|run| run.len)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lens(2..6), [1, 2, 1]);
+        assert_eq!(lens(3..5), [2]);
+        assert_eq!(lens(0..9), [3, 2, 4]);
+        assert_eq!(lens(9..9), Vec::<usize>::new());
+    }
 
     #[test]
     fn lines_break_after_spaces_and_around_cjk_but_not_at_atoms() {
