@@ -68,7 +68,7 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
-        if self.block_key(&name) {
+        if self.slash_key(&name) || self.block_key(&name) {
             // Handled as a key on whole blocks.
         } else if let Some((motion, extend)) = motion::motion(&name) {
             self.move_cursor(motion, extend);

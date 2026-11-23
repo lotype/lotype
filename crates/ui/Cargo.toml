@@ -14,6 +14,7 @@ categories.workspace = true
 
 [dependencies]
 gpui.workspace = true
+gpui-component.workspace = true
 lotype-core.workspace = true
 unicode-segmentation.workspace = true
 

@@ -6,6 +6,7 @@ mod motion;
 mod paint;
 mod render;
 mod selection;
+mod slash;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -14,9 +15,11 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, DispatchPhase, ElementInputHandler, Entity,
     FocusHandle, Focusable, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Render,
-    ScrollHandle, Window, canvas, div, prelude::*,
+    ScrollHandle, Subscription, Window, canvas, div, prelude::*,
 };
-use lotype_core::{Atom, BlockId, Editor, KeyBinding, Pos, default_keymap};
+use lotype_core::{
+    Atom, BlockId, Editor, KeyBinding, Pos, SlashItem, default_keymap, default_slash_items,
+};
 
 use crate::text_el::{Affinity, TextLayout};
 use input::Composition;
@@ -51,10 +54,18 @@ pub struct EditorView {
     rows: Vec<BlockId>,
     /// Where a selection of whole blocks started and where it goes on.
     block_range: Option<(BlockId, BlockId)>,
+    slash_items: Vec<SlashItem>,
+    slash: slash::SlashMenu,
+    /// Redraws when the focus leaves, which closes the menus.
+    blur: Option<Subscription>,
 }
 
 impl EditorView {
     pub fn new(editor: Editor, cx: &mut Context<Self>) -> Self {
+        // The menus are drawn with gpui-component, in its theme.
+        if !cx.has_global::<gpui_component::Theme>() {
+            gpui_component::init(cx);
+        }
         Self {
             editor,
             focus: cx.focus_handle(),
@@ -71,6 +82,9 @@ impl EditorView {
             reveal: Rc::default(),
             rows: Vec::new(),
             block_range: None,
+            slash_items: default_slash_items(),
+            slash: slash::SlashMenu::default(),
+            blur: None,
         }
     }
 
@@ -78,6 +92,13 @@ impl EditorView {
     /// to begin with.
     pub fn with_keymap(mut self, keymap: Vec<KeyBinding>) -> Self {
         self.keymap = keymap;
+        self
+    }
+
+    /// Replaces the entries of the slash menu, which are the core's
+    /// [`default_slash_items`] to begin with.
+    pub fn with_slash_items(mut self, items: Vec<SlashItem>) -> Self {
+        self.slash_items = items;
         self
     }
 
@@ -159,6 +180,11 @@ impl Focusable for EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.blur.is_none() {
+            let blur = cx.on_blur(&self.focus, window, |_, _, cx| cx.notify());
+            self.blur = Some(blur);
+        }
+        self.place_slash_menu();
         self.layouts.clear();
         self.order.clear();
         let base = window.text_style();
@@ -192,6 +218,7 @@ impl Render for EditorView {
             .child(paint::selection(cx.entity()))
             .children(rows)
             .child(paint::caret(cx.entity()))
+            .children(self.slash_menu(window, cx))
             .child(window_handlers(cx.entity(), self.focus.clone()))
     }
 }
