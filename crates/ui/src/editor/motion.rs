@@ -242,6 +242,10 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let pressed = event.pressed_button == Some(MouseButton::Left);
+        if self.side_menu_move(event.position, pressed) {
+            cx.notify();
+        }
         if !self.dragging {
             return;
         }
@@ -266,10 +270,18 @@ impl EditorView {
     pub(super) fn mouse_up(
         &mut self,
         event: &MouseUpEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.button == MouseButton::Left && self.dragging {
+        if event.button != MouseButton::Left {
+            return;
+        }
+        match self.side_menu_release() {
+            Some(true) => self.selection_changed(window, cx),
+            Some(false) => cx.notify(),
+            None => {}
+        }
+        if self.dragging {
             self.dragging = false;
             // The toolbar waits for the selection to be made.
             cx.notify();

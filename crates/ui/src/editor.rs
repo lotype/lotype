@@ -8,6 +8,7 @@ mod paint;
 mod popup;
 mod render;
 mod selection;
+mod side_menu;
 mod slash;
 mod toolbar;
 
@@ -17,8 +18,8 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, DispatchPhase, ElementInputHandler, Entity,
-    FocusHandle, Focusable, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Render,
-    ScrollHandle, Subscription, Window, canvas, div, prelude::*,
+    FocusHandle, Focusable, IntoElement, MouseButton, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Render, ScrollHandle, Subscription, Window, canvas, div, prelude::*,
 };
 use lotype_core::{
     Atom, BlockId, Editor, KeyBinding, Pos, SlashItem, default_keymap, default_slash_items,
@@ -62,6 +63,7 @@ pub struct EditorView {
     /// The start of the selection, which the formatting toolbar goes over.
     toolbar: popup::Placement,
     links: link::Links,
+    side_menu: side_menu::SideMenu,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
 }
@@ -92,6 +94,7 @@ impl EditorView {
             slash: slash::SlashMenu::default(),
             toolbar: popup::Placement::default(),
             links: link::Links::default(),
+            side_menu: side_menu::SideMenu::default(),
             blur: None,
         }
     }
@@ -169,6 +172,16 @@ fn window_handlers(view: Entity<EditorView>, focus: FocusHandle) -> impl IntoEle
                 moved.update(cx, |view, cx| view.mouse_move(event, window, cx));
             }
         });
+        let left = view.clone();
+        window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble {
+                left.update(cx, |view, cx| {
+                    if view.side_menu_leave() {
+                        cx.notify();
+                    }
+                });
+            }
+        });
         let released = view.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble {
@@ -217,6 +230,8 @@ impl Render for EditorView {
             .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .size_full()
+            // Room for the side menu of the top-level blocks.
+            .pl(gpui::px(side_menu::GUTTER))
             .track_focus(&self.focus)
             .key_context("LotypeEditor")
             .on_key_down(cx.listener(Self::key_down))

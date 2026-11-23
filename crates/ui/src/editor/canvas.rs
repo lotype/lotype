@@ -204,6 +204,8 @@ impl EditorView {
             .py(px(2.))
             .pl(px(indent(row.depth)))
             .children(bars)
+            .children(self.side_menu(row.block, indent(row.depth), cx))
+            .children(self.drop_line(row.block, indent(row.depth)))
             .children(self.marker(row, cx))
             .child(div().flex_1().min_w_0().child(content));
         Some(row_element.into_any_element())
