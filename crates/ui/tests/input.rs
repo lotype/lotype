@@ -123,3 +123,13 @@ fn replacing_text_apart_from_the_composition_commits_that_first(cx: &mut TestApp
     // took its bold, as typed text does.
     ed.assert(blocks![p!["z<a>", b!["yabc"]]]);
 }
+
+#[gpui::test]
+fn replacing_text_after_the_composition_finds_it_after_what_was_composed(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["x<a>yz"]]);
+    ed.ime_compose("abc", None);
+    ed.view.update_in(ed.cx, |view, window, cx| {
+        view.replace_text_in_range(Some(5..6), "Z", window, cx);
+    });
+    ed.assert(blocks![p!["xabcyZ<a>"]]);
+}

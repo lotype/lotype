@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use gpui::{Pixels, ShapedLine, SharedString, Size, TextRun, Window, size};
-use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{Kind, Laid, Line, Piece};
 
@@ -87,13 +87,6 @@ pub(super) fn breaks_before(text: &str, at: usize) -> bool {
     before.is_whitespace() && !after.is_whitespace() || is_cjk(before) || is_cjk(after)
 }
 
-/// A line never breaks inside a grapheme, such as a CJK character with a
-/// variation selector or a combining mark.
-fn is_grapheme_boundary(text: &str, at: usize) -> bool {
-    let mut cursor = GraphemeCursor::new(at, text.len(), true);
-    cursor.is_boundary(text, 0).unwrap_or(false)
-}
-
 fn is_cjk(c: char) -> bool {
     matches!(
         c,
@@ -119,14 +112,12 @@ impl Input {
         let mut items = Vec::new();
         let mut x = Pixels::ZERO;
         let mut at = range.start;
-        let inside = |atom: &&(Range<usize>, Size<Pixels>)| {
-            atom.0.start >= range.start && atom.0.end <= range.end
-        };
-        let atoms = self
+        // Atoms are in order: those of this line follow each other.
+        let first = self
             .atoms
-            .iter()
-            .enumerate()
-            .filter(|(_, atom)| inside(atom));
+            .partition_point(|(atom, _)| atom.start < range.start);
+        let atoms = self.atoms.iter().enumerate().skip(first);
+        let atoms = atoms.take_while(|(_, (atom, _))| atom.end <= range.end);
         let end = (usize::MAX, &(range.end..range.end, Size::default()));
         for (index, (atom, measured)) in atoms.chain([end]) {
             if atom.start > at {
@@ -189,36 +180,43 @@ impl Input {
 
     /// Greedy line breaks, where space at the end of a line may hang past
     /// the edge, and a word wider than the line breaks between graphemes.
+    /// Each line walks its graphemes once, and stops at the first that
+    /// does not fit, so a paragraph lays out in near-linear time.
     fn breaks(&self, line: &Hard, range: Range<usize>, width: Option<Pixels>) -> Vec<Range<usize>> {
         let text = &self.text;
         let mut lines = Vec::new();
         let mut start = range.start;
+        // Space at the end hangs past the edge of the last line.
+        let rest = range.start + text[range.clone()].trim_end().len();
         loop {
             let limit = width.map(|width| line.x(start) + width);
-            let fits = |at: usize| {
-                let end = start + text[start..at].trim_end().len();
-                limit.is_none_or(|limit| line.x(end) <= limit)
-            };
-            if fits(range.end) {
+            let fits = |end: usize| limit.is_none_or(|limit| line.x(end) <= limit);
+            if fits(rest.max(start)) {
                 lines.push(start..range.end);
                 return lines;
             }
-            // Each candidate is looked at once: the first that does not
-            // fit ends the search.
-            let breaks = (start + 1..range.end).filter(|at| {
-                text.is_char_boundary(*at)
-                    && is_grapheme_boundary(text, *at)
-                    && breaks_before(text, *at)
-            });
-            let end = breaks.take_while(|at| fits(*at)).last().unwrap_or_else(|| {
-                let mut graphemes = text[start..range.end].grapheme_indices(true);
-                let ends = graphemes
-                    .by_ref()
-                    .map(|(offset, g)| start + offset + g.len());
-                let mut ends = ends.peekable();
-                let first = ends.peek().copied().unwrap_or(range.end);
-                ends.take_while(|at| fits(*at)).last().unwrap_or(first)
-            });
+            // The last place a line may break, the last grapheme boundary,
+            // and the first, all where the text before them fits.
+            let (mut wrap, mut grapheme, mut first) = (None, None, None);
+            // Where the text before a place ends, without trailing space.
+            let mut content = start;
+            let graphemes = text[start..range.end].grapheme_indices(true);
+            for (at, part) in graphemes.map(|(offset, part)| (start + offset, part)) {
+                if at > start {
+                    first.get_or_insert(at);
+                    if !fits(content) {
+                        break;
+                    }
+                    if breaks_before(text, at) {
+                        wrap = Some(at);
+                    }
+                    grapheme = Some(at);
+                }
+                if !part.chars().all(char::is_whitespace) {
+                    content = at + part.len();
+                }
+            }
+            let end = wrap.or(grapheme).or(first).unwrap_or(range.end);
             lines.push(start..end);
             start = end;
         }
@@ -228,7 +226,14 @@ impl Input {
         let left = hard.x(range.start);
         let mut pieces = Vec::new();
         let mut text_top = Pixels::ZERO;
-        for item in &hard.items {
+        // Items are in order: those of this line follow each other.
+        let first = hard
+            .items
+            .partition_point(|item| item.range.end <= range.start);
+        let items = hard.items[first..]
+            .iter()
+            .take_while(|item| item.range.start < range.end);
+        for item in items {
             let part = item.range.start.max(range.start)..item.range.end.min(range.end);
             if part.is_empty() {
                 continue;
@@ -290,8 +295,5 @@ mod tests {
             .collect();
         // Before `c`, before `日`, and between `日` and `本`.
         assert_eq!(breaks, [3, 10, 13]);
-        let marked = "日\u{E0100}本";
-        assert!(!is_grapheme_boundary(marked, 3));
-        assert!(is_grapheme_boundary(marked, 7));
     }
 }

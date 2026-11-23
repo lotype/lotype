@@ -226,12 +226,23 @@ impl EntityInputHandler for EditorView {
                 ]
                 .concat();
                 self.select_in(shown.block, shown.to_doc(start)..shown.to_doc(end));
-            } else {
+            } else if let Some(marked) = marked.cloned() {
                 // Text apart from the composition: that goes in first, as
-                // it is, and the block's text is then as shown.
+                // it is. Text after it is then found from the caret, which
+                // ends what went in.
                 if let Some(composition) = self.composition.take() {
                     self.commit(&composition.text);
                 }
+                let caret = match self.editor.selection() {
+                    Some(Selection::Text { head, .. }) => *head,
+                    _ => Pos::new(shown.block, marked.end),
+                };
+                let place = |at: usize| match at >= marked.end {
+                    true => caret.offset + at - marked.end,
+                    false => at,
+                };
+                self.select_in(caret.block, place(range.start)..place(range.end));
+            } else {
                 self.select_in(shown.block, range);
             }
         }

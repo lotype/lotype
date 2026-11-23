@@ -152,3 +152,22 @@ fn no_line_starts_inside_a_character_cluster(cx: &mut TestAppContext) {
         assert_eq!(at % "葛\u{E0100}".len(), 0, "{at}");
     }
 }
+
+#[gpui::test]
+fn unbroken_text_lays_out_in_time(cx: &mut TestAppContext) {
+    // A long address or base64, and flags, which pair regional indicators.
+    let text = format!("{}{}", "a".repeat(80_000), "🇦🇧".repeat(2_000));
+    let started = std::time::Instant::now();
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>", text.as_str()]]);
+    // Over half a minute while each line scanned to the end of the text.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    // Every line starts between flags, not inside one.
+    for _ in 0..3 {
+        ed.keys("cmd-down cmd-left");
+        assert_eq!(head(&mut ed).offset % "🇦".len(), 0);
+    }
+}
