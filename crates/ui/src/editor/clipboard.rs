@@ -12,6 +12,10 @@ use super::EditorView;
 /// Zed its own JSON.
 const TAG: &str = "lotype/loro\n";
 
+/// The most copied bytes read back, in hex: any application can put
+/// metadata on the clipboard, and Loro's blocks unpack to any size.
+const MAX_HEX: usize = 64 << 20;
+
 impl EditorView {
     /// Puts the selected text on the clipboard. Returns whether there was some.
     pub(crate) fn copy(&mut self, cx: &mut Context<Self>) -> bool {
@@ -51,17 +55,19 @@ impl EditorView {
             return;
         };
         let copied = item.metadata().and_then(|metadata| {
-            let bytes = from_hex(metadata.strip_prefix(TAG)?)?;
+            let hex = metadata
+                .strip_prefix(TAG)
+                .filter(|hex| hex.len() <= MAX_HEX)?;
             let mut copied = Document::new(self.editor.document().schema().clone());
-            copied.import(&bytes).ok()?;
+            copied.import(&from_hex(hex)?).ok()?;
             Some(copied)
         });
-        let pasted = match (copied, item.text()) {
-            (Some(copied), _) => self.editor.paste_document(&copied),
-            (None, Some(text)) => self.editor.paste_text(&text),
-            (None, None) => return,
-        };
-        pasted.ok();
+        // A copy that cannot go here, as blocks too deep for it, goes in
+        // as its plain text.
+        let pasted = copied.is_some_and(|copied| self.editor.paste_document(&copied).is_ok());
+        if !pasted && let Some(text) = item.text() {
+            self.editor.paste_text(&text).ok();
+        }
     }
 }
 

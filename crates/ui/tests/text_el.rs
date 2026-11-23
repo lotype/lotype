@@ -113,3 +113,42 @@ fn a_tall_atom_makes_its_line_taller_and_text_sits_on_its_baseline(cx: &mut Test
         );
     });
 }
+
+#[gpui::test]
+fn a_long_paragraph_lays_out_in_time_and_within_the_window(cx: &mut TestAppContext) {
+    // Words, then a single word longer than a line, then hanging space.
+    let text = format!(
+        "{}{} {}b",
+        "abc ".repeat(16_000),
+        "a".repeat(4_000),
+        " ".repeat(3_000)
+    );
+    let started = std::time::Instant::now();
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>", text.as_str()]]);
+    // Several seconds when wrapping was quadratic, in a debug build.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    let block = head(&mut ed).block;
+    let window = ed.cx.update(|window, _| window.viewport_size().width);
+    ed.view.update(ed.cx, |view, _| {
+        let bounds = view.text_bounds(block).unwrap();
+        assert!(bounds.size.width <= window, "{:?}", bounds.size.width);
+        let end = view.caret_bounds(Pos::new(block, text.len() - 1)).unwrap();
+        assert!(end.left() <= window);
+    });
+}
+
+#[gpui::test]
+fn no_line_starts_inside_a_character_cluster(cx: &mut TestAppContext) {
+    let text = "葛\u{E0100}".repeat(400);
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>", text.as_str()]]);
+    // Each Cmd-Right goes to a line's end; every one is between clusters.
+    for _ in 0..5 {
+        ed.keys("cmd-right right");
+        let at = head(&mut ed).offset;
+        assert_eq!(at % "葛\u{E0100}".len(), 0, "{at}");
+    }
+}

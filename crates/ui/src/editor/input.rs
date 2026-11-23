@@ -212,19 +212,28 @@ impl EntityInputHandler for EditorView {
             .or(shown.marked.clone());
         let mut text = text.to_owned();
         if let Some(range) = range {
-            // What is replaced may be part of the composed text, whose
-            // rest is committed with it.
-            let (start, end) = match &shown.marked {
-                Some(marked) => (range.start.min(marked.start), range.end.max(marked.end)),
-                None => (range.start, range.end),
-            };
-            text = [
-                &shown.text[start..range.start],
-                &text,
-                &shown.text[range.end..end],
-            ]
-            .concat();
-            self.select_in(shown.block, shown.to_doc(start)..shown.to_doc(end));
+            let marked = shown.marked.as_ref();
+            let touches =
+                marked.filter(|marked| range.end >= marked.start && range.start <= marked.end);
+            if let Some(marked) = touches {
+                // What is replaced is part of the composed text, or next to
+                // it, and the rest of that is committed with it.
+                let (start, end) = (range.start.min(marked.start), range.end.max(marked.end));
+                text = [
+                    &shown.text[start..range.start],
+                    &text,
+                    &shown.text[range.end..end],
+                ]
+                .concat();
+                self.select_in(shown.block, shown.to_doc(start)..shown.to_doc(end));
+            } else {
+                // Text apart from the composition: that goes in first, as
+                // it is, and the block's text is then as shown.
+                if let Some(composition) = self.composition.take() {
+                    self.commit(&composition.text);
+                }
+                self.select_in(shown.block, range);
+            }
         }
         let text = text.as_str();
         self.commit(text);

@@ -150,8 +150,11 @@ impl Element for TextElement {
                 AvailableSpace::Definite(width) => Some(width),
                 _ => None,
             });
+            // A probe of the text's own size, without a width, gets the
+            // size laid out last, as GPUI's own text answers it: laying out
+            // again unwrapped would leave that layout to be painted.
             if let Some(laid) = shared.0.borrow().as_ref()
-                && laid.wrap_width == wrap_width
+                && (wrap_width.is_none() || laid.wrap_width == wrap_width)
             {
                 return laid.size;
             }

@@ -92,7 +92,9 @@ impl TextLayout {
     pub(crate) fn caret(&self, at: usize, affinity: Affinity) -> Option<Bounds<Pixels>> {
         self.read(|laid| {
             let line = &laid.lines[laid.line(at, affinity)?];
-            let origin = laid.origin + point(line.x(at), line.top + line.text_top);
+            // Space hanging past the edge puts no caret beyond it.
+            let x = line.x(at).min(laid.size.width);
+            let origin = laid.origin + point(x, line.top + line.text_top);
             Some(Bounds::new(origin, size(px(1.5), laid.line_height)))
         })
     }
@@ -142,8 +144,9 @@ impl TextLayout {
                 if from > to || from == to && !(empty || through && from > start) {
                     continue;
                 }
-                let left = line.x(from);
+                let left = line.x(from).min(laid.size.width);
                 let right = if through { laid.size.width } else { line.x(to) };
+                let right = right.min(laid.size.width).max(left);
                 let width = if empty {
                     (right - left).max(px(4.))
                 } else {

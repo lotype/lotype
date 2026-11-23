@@ -111,3 +111,15 @@ fn replacing_part_of_the_composed_text_keeps_the_rest(cx: &mut TestAppContext) {
     });
     ed.assert(blocks![p!["xabC<a>"]]);
 }
+
+#[gpui::test]
+fn replacing_text_apart_from_the_composition_commits_that_first(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["x", b!["y"], "<a>"]]);
+    ed.ime_compose("abc", None);
+    ed.view.update_in(ed.cx, |view, window, cx| {
+        view.replace_text_in_range(Some(0..1), "z", window, cx);
+    });
+    // The bold `y` between stays as it was, and what was composed after it
+    // took its bold, as typed text does.
+    ed.assert(blocks![p!["z<a>", b!["yabc"]]]);
+}
