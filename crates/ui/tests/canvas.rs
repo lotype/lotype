@@ -81,7 +81,7 @@ fn a_toggle_hides_its_children_until_the_caret_goes_in(cx: &mut TestAppContext) 
             editor.set_selection(Some(inside)).unwrap();
         });
     });
-    ed.cx.run_until_parked();
+    ed.settle();
     assert!(shown(&mut ed));
 }
 
@@ -97,10 +97,10 @@ fn the_caret_is_scrolled_into_sight(cx: &mut TestAppContext) {
                 .unwrap();
         });
     });
-    ed.cx.run_until_parked();
+    ed.settle();
     let height = ed.cx.update(|window, _| window.viewport_size().height);
     ed.keys("cmd-down");
-    ed.cx.run_until_parked();
+    ed.settle();
     let last = block_at(&mut ed, 199);
     let caret = ed.view.update(ed.cx, |view, _| {
         view.caret_bounds(Pos::new(last, 4)).unwrap()
@@ -150,7 +150,7 @@ fn a_selection_is_scrolled_after_its_head(cx: &mut TestAppContext) {
         });
     });
     ed.keys("cmd-shift-down");
-    ed.cx.run_until_parked();
+    ed.settle();
     let height = ed.cx.update(|window, _| window.viewport_size().height);
     let head = ed.view.update(ed.cx, |view, _| {
         view.caret_bounds(Pos::new(last, 4)).unwrap()

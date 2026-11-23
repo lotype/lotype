@@ -76,6 +76,7 @@ pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
 /// asked to, once the rows are laid out: the caret or a range's head, or the
 /// row where a selection of blocks goes on.
 fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
+    let id = view.entity_id();
     let view = view.read(cx);
     if !view.reveal.replace(false) {
         return;
@@ -114,9 +115,9 @@ fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
     }
     offset.y = offset.y.min(Pixels::ZERO).max(-scroll.max_offset().y);
     scroll.set_offset(offset);
-    // Everything is placed already: draw again, as a refresh while drawing
-    // is dropped.
-    window.defer(cx, |window, _| window.refresh());
+    // Everything is placed already: draw again in the next frame. A refresh
+    // there is dropped, as the frame is drawing.
+    window.on_next_frame(move |_, cx| cx.notify(id));
 }
 
 /// Paints the caret, after the text, while the editor has focus. Laid out

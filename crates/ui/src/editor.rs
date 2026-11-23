@@ -4,9 +4,11 @@ mod input;
 mod keys;
 mod motion;
 mod paint;
+mod popup;
 mod render;
 mod selection;
 mod slash;
+mod toolbar;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -56,6 +58,8 @@ pub struct EditorView {
     block_range: Option<(BlockId, BlockId)>,
     slash_items: Vec<SlashItem>,
     slash: slash::SlashMenu,
+    /// The start of the selection, which the formatting toolbar goes over.
+    toolbar: popup::Placement,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
 }
@@ -84,6 +88,7 @@ impl EditorView {
             block_range: None,
             slash_items: default_slash_items(),
             slash: slash::SlashMenu::default(),
+            toolbar: popup::Placement::default(),
             blur: None,
         }
     }
@@ -185,6 +190,7 @@ impl Render for EditorView {
             self.blur = Some(blur);
         }
         self.place_slash_menu();
+        self.place_toolbar();
         self.layouts.clear();
         self.order.clear();
         let base = window.text_style();
@@ -219,6 +225,7 @@ impl Render for EditorView {
             .children(rows)
             .child(paint::caret(cx.entity()))
             .children(self.slash_menu(window, cx))
+            .children(self.toolbar(window, cx))
             .child(window_handlers(cx.entity(), self.focus.clone()))
     }
 }

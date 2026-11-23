@@ -112,7 +112,7 @@ fn a_block_selection_is_scrolled_after_its_head(cx: &mut TestAppContext) {
     let row = ed.editor(|editor| editor.document().blocks()[60]);
     ed.keys("escape");
     ed.keys(&["down"; 60].join(" "));
-    ed.cx.run_until_parked();
+    ed.settle();
     let height = ed.cx.update(|window, _| window.viewport_size().height);
     let bounds = ed
         .view

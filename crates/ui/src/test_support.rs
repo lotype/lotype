@@ -35,6 +35,19 @@ impl<'a> EditorTestContext<'a> {
         Self { view, cx }
     }
 
+    /// Lets the window draw until nothing asks for another frame, as the
+    /// frames a scroll or a menu waits for. Keys and typing settle by themselves.
+    pub fn settle(&mut self) {
+        // Bounded: a frame that always asks for another would hang the test.
+        for _ in 0..8 {
+            self.cx.run_until_parked();
+            if self.cx.update(|window, cx| window.simulate_next_frame(cx)) == 0 {
+                return;
+            }
+        }
+        panic!("the editor keeps asking for frames");
+    }
+
     /// Reads the editor.
     pub fn editor<R>(&mut self, read: impl FnOnce(&Editor) -> R) -> R {
         self.view.update(self.cx, |view, _| read(view.editor()))
@@ -49,11 +62,13 @@ impl<'a> EditorTestContext<'a> {
     /// Types text, one key per character, as the system would deliver it.
     pub fn type_text(&mut self, text: &str) {
         self.cx.simulate_input(text);
+        self.settle();
     }
 
     /// Presses keys, written as GPUI writes them: `cmd-b enter`.
     pub fn keys(&mut self, keystrokes: &str) {
         self.cx.simulate_keystrokes(keystrokes);
+        self.settle();
     }
 
     /// Composes text as an IME does, with `selected` the part of it the IME

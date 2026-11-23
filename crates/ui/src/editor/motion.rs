@@ -242,7 +242,13 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.dragging || event.pressed_button != Some(MouseButton::Left) {
+        if !self.dragging {
+            return;
+        }
+        // A release the window never heard of ends the drag too.
+        if event.pressed_button != Some(MouseButton::Left) {
+            self.dragging = false;
+            cx.notify();
             return;
         }
         let (Some(Selection::Text { anchor, .. }), Some((head, affinity))) =
@@ -257,9 +263,16 @@ impl EditorView {
         self.selection_changed(window, cx);
     }
 
-    pub(super) fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        if event.button == MouseButton::Left {
+    pub(super) fn mouse_up(
+        &mut self,
+        event: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button == MouseButton::Left && self.dragging {
             self.dragging = false;
+            // The toolbar waits for the selection to be made.
+            cx.notify();
         }
     }
 

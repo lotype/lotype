@@ -2,17 +2,15 @@
 //! into, filtered by what follows it. It stays open while text is typed, so
 //! the editor keeps the focus: the arrows, Enter, Tab and Escape are the
 //! menu's while it shows. gpui-component's popover would take the focus, so
-//! the menu is its list items in GPUI's own `anchored` place.
+//! the menu is its list items, placed as `popup` places them.
 
-use gpui::{
-    Anchor, AnyElement, Bounds, Context, MouseButton, Pixels, ScrollHandle, Window, anchored,
-    deferred, div, point, prelude::*, px,
-};
+use gpui::{AnyElement, Context, MouseButton, ScrollHandle, Window, div, prelude::*, px};
 use gpui_component::list::ListItem;
 use gpui_component::{ThemeStyled, v_flex};
 use lotype_core::{BlockId, SlashItem, SlashQuery, filter_slash_items};
 
 use super::EditorView;
+use super::popup::{Placement, popup};
 
 /// The menu's state between frames.
 #[derive(Default)]
@@ -23,11 +21,8 @@ pub(crate) struct SlashMenu {
     query: Option<(BlockId, String)>,
     /// The block whose slash Escape closed the menu for, until the query ends.
     dismissed: Option<BlockId>,
-    /// The slash, as it was last laid out: the menu goes under it, or over
-    /// it where there is no room below.
-    at: Option<Bounds<Pixels>>,
-    /// The slash moved in the last layout, so the menu needs another frame.
-    moved: bool,
+    /// The slash: the menu goes under it, or over it where there is no room below.
+    place: Placement,
     scroll: ScrollHandle,
 }
 
@@ -73,18 +68,15 @@ impl EditorView {
         self.slash.highlighted = 0;
     }
 
-    /// Notes where the slash is, from the layout of the frame before, which
-    /// is still there when the frame starts. The slash stays where it is
-    /// while the query is typed after it.
+    /// Notes where the slash is, at the start of a frame. The slash stays
+    /// where it is while the query is typed after it.
     pub(super) fn place_slash_menu(&mut self) {
         let query = self.editor.slash_query();
         let slash = query
             .as_ref()
             .map(|query| lotype_core::Pos::new(query.block, query.range.start));
         let at = slash.and_then(|slash| self.caret_bounds(slash));
-        // A scroll or another width moves the slash after the menu is placed.
-        self.slash.moved = at != self.slash.at;
-        self.slash.at = at;
+        self.slash.place.update(at);
         // The menu closed by Escape opens for the next query.
         let block = query.as_ref().map(|query| query.block);
         if self.slash.dismissed != block {
@@ -109,11 +101,7 @@ impl EditorView {
             return None;
         }
         let (_, items) = self.slash_matches()?;
-        let Some(at) = self.slash.at.filter(|_| !self.slash.moved) else {
-            // The slash is laid out in this frame: the menu goes there in the next.
-            window.request_animation_frame();
-            return None;
-        };
+        let at = self.slash.place.get(window)?;
         let highlighted = self.slash.highlighted.min(items.len() - 1);
         let entries = items.into_iter().enumerate().map(|(index, item)| {
             let title = div().child(item.title.clone());
@@ -140,12 +128,6 @@ impl EditorView {
             // A click on the menu is no click in the text.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(list);
-        let placed = anchored()
-            .anchor(Anchor::TopLeft)
-            .attach(at, Anchor::BottomLeft)
-            .offset(point(px(0.), px(4.)))
-            .snap_to_window_with_margin(px(8.))
-            .child(menu);
-        Some(deferred(placed).with_priority(1).into_any_element())
+        Some(popup(at, false, menu))
     }
 }
