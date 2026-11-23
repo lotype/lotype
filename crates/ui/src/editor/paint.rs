@@ -83,7 +83,11 @@ impl EditorView {
         let shown = self.shown()?;
         let layout = self.layouts.get(&shown.block)?;
         let (selected, backward) = &shown.selected;
-        if !selected.is_empty() && self.composition.is_none() {
+        let selecting = self
+            .editor
+            .selection()
+            .is_some_and(|selection| !selection.is_collapsed());
+        if selecting && self.composition.is_none() {
             return None;
         }
         let at = if *backward {

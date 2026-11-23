@@ -7,9 +7,10 @@ mod paint;
 use std::collections::HashMap;
 
 use gpui::{
-    App, Bounds, Context, CursorStyle, Div, ElementInputHandler, Entity, FocusHandle, Focusable,
-    FontWeight, IntoElement, MouseButton, Pixels, Render, StyledText, TextLayout, TextRun,
-    TextStyle, UnderlineStyle, Window, canvas, div, prelude::*, px, rems,
+    App, Bounds, Context, CursorStyle, DispatchPhase, Div, ElementInputHandler, Entity,
+    FocusHandle, Focusable, FontWeight, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Pixels, Render, StyledText, TextLayout, TextRun, TextStyle, UnderlineStyle, Window, canvas,
+    div, prelude::*, px, rems,
 };
 use lotype_core::{BlockId, Content, Editor, KeyBinding, Pos, Span, Value, default_keymap};
 
@@ -146,8 +147,22 @@ impl EditorView {
 }
 
 /// Gives the system's text input to the view while it has focus.
-fn input_handler(view: Entity<EditorView>, focus: FocusHandle) -> impl IntoElement {
+/// Gives the system's text input to the view while it has focus, and the
+/// mouse while it drags a selection, wherever in the window the mouse goes.
+fn window_handlers(view: Entity<EditorView>, focus: FocusHandle) -> impl IntoElement {
     let paint = move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
+        let moved = view.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble {
+                moved.update(cx, |view, cx| view.mouse_move(event, window, cx));
+            }
+        });
+        let released = view.clone();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble {
+                released.update(cx, |view, cx| view.mouse_up(event, window, cx));
+            }
+        });
         window.handle_input(&focus, ElementInputHandler::new(bounds, view), cx);
     };
     canvas(|_, _, _| (), paint).absolute().size_full()
@@ -174,8 +189,6 @@ impl Render for EditorView {
             .key_context("LotypeEditor")
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
-            .on_mouse_move(cx.listener(Self::mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .cursor(CursorStyle::IBeam)
             .relative()
             .flex()
@@ -184,6 +197,6 @@ impl Render for EditorView {
             .child(paint::selection(cx.entity()))
             .children(texts)
             .child(paint::caret(cx.entity()))
-            .child(input_handler(cx.entity(), self.focus.clone()))
+            .child(window_handlers(cx.entity(), self.focus.clone()))
     }
 }

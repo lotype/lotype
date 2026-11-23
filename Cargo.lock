@@ -3322,6 +3322,7 @@ dependencies = [
  "gpui-pre-platform",
  "lotype-core",
  "lotype-ui",
+ "unicode-segmentation",
 ]
 
 [[package]]

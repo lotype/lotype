@@ -209,10 +209,23 @@ impl EntityInputHandler for EditorView {
         let range = range
             .map(|range| shown.utf8(&range))
             .or(shown.marked.clone());
+        let mut text = text.to_owned();
         if let Some(range) = range {
-            let range = shown.to_doc(range.start)..shown.to_doc(range.end);
-            self.select_in(shown.block, range);
+            // What is replaced may be part of the composed text, whose
+            // rest is committed with it.
+            let (start, end) = match &shown.marked {
+                Some(marked) => (range.start.min(marked.start), range.end.max(marked.end)),
+                None => (range.start, range.end),
+            };
+            text = [
+                &shown.text[start..range.start],
+                &text,
+                &shown.text[range.end..end],
+            ]
+            .concat();
+            self.select_in(shown.block, shown.to_doc(start)..shown.to_doc(end));
         }
+        let text = text.as_str();
         self.commit(text);
         if text.is_empty() {
             self.editor.delete_selection().ok();

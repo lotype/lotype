@@ -124,3 +124,34 @@ fn a_click_commits_text_being_composed(cx: &mut TestAppContext) {
     ed.cx.simulate_click(c, Modifiers::none());
     ed.assert(blocks![p!["abに"], p!["c<a>d"]]);
 }
+
+#[gpui::test]
+fn up_into_a_block_of_another_size_lands_on_its_last_line(cx: &mut TestAppContext) {
+    let code = block("code_block", vec!["abcdefgh\nabcdefgh".into()]);
+    let mut ed = EditorTestContext::new(cx, blocks![code, lotype_core::h1!["a<a>b"]]);
+    ed.keys("up");
+    let head = ed.editor(|editor| match editor.selection() {
+        Some(lotype_core::Selection::Text { head, .. }) => head.offset,
+        _ => panic!("no caret"),
+    });
+    // On the second line, near the column it came from, not at the start.
+    assert!((10..=17).contains(&head), "{head}");
+}
+
+#[gpui::test]
+fn dragging_past_the_editor_goes_on_selecting_until_released(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], p!["two"]]);
+    let one = at(&mut ed, 0, 1);
+    let below = point(one.x, px(5000.));
+    ed.cx
+        .simulate_mouse_down(one, MouseButton::Left, Modifiers::none());
+    ed.cx
+        .simulate_mouse_move(below, Some(MouseButton::Left), Modifiers::none());
+    ed.assert(blocks![p!["o<a>ne"], p!["two<b>"]]);
+    ed.cx
+        .simulate_mouse_up(below, MouseButton::Left, Modifiers::none());
+    // A drag that starts elsewhere selects nothing here.
+    ed.cx
+        .simulate_mouse_move(one, Some(MouseButton::Left), Modifiers::none());
+    ed.assert(blocks![p!["o<a>ne"], p!["two<b>"]]);
+}

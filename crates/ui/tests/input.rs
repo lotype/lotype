@@ -101,3 +101,13 @@ fn a_composition_follows_its_place_through_remote_edits(cx: &mut TestAppContext)
     ed.ime_commit("に");
     ed.assert(blocks![p!["remote abに<a>"]]);
 }
+
+#[gpui::test]
+fn replacing_part_of_the_composed_text_keeps_the_rest(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["x<a>"]]);
+    ed.ime_compose("abc", None);
+    ed.view.update_in(ed.cx, |view, window, cx| {
+        view.replace_text_in_range(Some(3..4), "C", window, cx);
+    });
+    ed.assert(blocks![p!["xabC<a>"]]);
+}

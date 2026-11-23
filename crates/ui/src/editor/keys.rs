@@ -4,6 +4,10 @@ use gpui::{Context, KeyDownEvent, Keystroke, Window};
 
 use super::{EditorView, motion};
 
+/// Characters that Shift makes of the keys in `UNSHIFTED`, on a US layout.
+const SHIFTED: &str = ")!@#$%^&*(_+{}|:\"<>?~";
+const UNSHIFTED: &str = "0123456789-=[]\\;',./`";
+
 /// The name the core's keymap gives a keystroke, such as `Mod-Shift-z`.
 pub(crate) fn key_name(keystroke: &Keystroke) -> String {
     let modifiers = &keystroke.modifiers;
@@ -13,18 +17,27 @@ pub(crate) fn key_name(keystroke: &Keystroke) -> String {
     } else {
         (modifiers.control, false)
     };
+    // GPUI on macOS reports Shift with a digit or a sign as the shifted
+    // character, without Shift: Command-Shift-7 comes as `cmd-&`. The
+    // keymap names the key, as ProseMirror does, so take Shift back off.
+    // shortcut: assumes a US layout, where other layouts shift differently;
+    // upgrade when GPUI reports key codes.
+    let mut key = keystroke.key.as_str();
+    let mut shift = modifiers.shift;
+    if let Some(at) = SHIFTED.find(key).filter(|_| key.len() == 1) {
+        (key, shift) = (&UNSHIFTED[at..at + 1], true);
+    }
     let mut name = String::new();
     for (held, prefix) in [
         (command, "Mod-"),
         (control, "Ctrl-"),
         (modifiers.alt, "Alt-"),
-        (modifiers.shift, "Shift-"),
+        (shift, "Shift-"),
     ] {
         if held {
             name.push_str(prefix);
         }
     }
-    let key = keystroke.key.as_str();
     match key {
         "left" | "right" | "up" | "down" => {
             name.push_str("Arrow");
@@ -102,6 +115,14 @@ mod tests {
         assert_eq!(name("shift-tab"), "Shift-Tab");
         assert_eq!(name("enter"), "Enter");
         assert_eq!(name("left"), "ArrowLeft");
+        assert_eq!(SHIFTED.len(), UNSHIFTED.len());
+        // As GPUI reports Command-Shift-7 on macOS.
+        let shifted = Keystroke::parse(if cfg!(target_os = "macos") {
+            "cmd-&"
+        } else {
+            "ctrl-&"
+        });
+        assert_eq!(key_name(&shifted.unwrap()), "Mod-Shift-7");
         if cfg!(target_os = "macos") {
             assert_eq!(name("ctrl-b"), "Ctrl-b");
         }

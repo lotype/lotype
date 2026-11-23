@@ -68,7 +68,17 @@ impl EditorView {
         let (block, _) = nearest.min_by(|a, b| f32::from(a.1).total_cmp(&f32::from(b.1)))?;
         let layout = self.layout(block)?;
         let bounds = layout.bounds();
-        let y = at.y.clamp(bounds.top(), bounds.bottom() - px(1.));
+        // Above all the text is its start and below it its end, as in macOS.
+        let first = self.order.first() == Some(&block);
+        let last = self.order.last() == Some(&block);
+        if first && at.y < bounds.top() {
+            return Some(Pos::new(block, 0));
+        }
+        if last && at.y >= bounds.bottom() {
+            return Some(Pos::new(block, self.text_len(block)));
+        }
+        // Not `clamp`, which panics on a layout less than a pixel tall.
+        let y = at.y.min(bounds.bottom() - px(1.)).max(bounds.top());
         let (Ok(index) | Err(index)) = layout.index_for_position(point(at.x, y));
         Some(Pos::new(block, index.min(self.text_len(block))))
     }
@@ -121,14 +131,20 @@ impl EditorView {
             Motion::LineEnd => at(bounds.right() + px(1000.), here.y)?,
             Motion::Up if here.y > bounds.top() + px(1.) => at(goal, here.y - line / 2.)?,
             Motion::Up => match self.neighbor(head.block, false) {
-                Some(block) => at(goal, self.layout(block)?.bounds().bottom() - line / 2.)?,
+                Some(block) => {
+                    let above = self.layout(block)?;
+                    at(goal, above.bounds().bottom() - above.line_height() / 2.)?
+                }
                 None => start(head.block),
             },
             Motion::Down if here.y + line < bounds.bottom() - px(1.) => {
                 at(goal, here.y + line * 1.5)?
             }
             Motion::Down => match self.neighbor(head.block, true) {
-                Some(block) => at(goal, self.layout(block)?.bounds().top() + line / 2.)?,
+                Some(block) => {
+                    let below = self.layout(block)?;
+                    at(goal, below.bounds().top() + below.line_height() / 2.)?
+                }
                 None => end(head.block),
             },
             Motion::DocStart => start(*self.order.first()?),
@@ -239,8 +255,10 @@ impl EditorView {
         self.selection_changed(window, cx);
     }
 
-    pub(super) fn mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.dragging = false;
+    pub(super) fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        if event.button == MouseButton::Left {
+            self.dragging = false;
+        }
     }
 
     pub(super) fn selection_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
