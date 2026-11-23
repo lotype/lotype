@@ -1,9 +1,10 @@
 //! An editor window, for trying the editor by hand.
 
 use gpui::{
-    App, Bounds, Entity, Window, WindowBounds, WindowOptions, div, prelude::*, px, size, white,
+    App, Bounds, Entity, Focusable, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+    white,
 };
-use lotype_core::{Document, Editor, Schema};
+use lotype_core::{Document, Editor, Pos, Schema, Selection};
 use lotype_ui::EditorView;
 
 const TEXT: &str = "# Lotype\n\nSome **bold**, *italic*, ~~struck~~ and `code` text, \
@@ -25,13 +26,20 @@ fn main() {
         let mut doc = Document::new(Schema::builtin());
         doc.insert_markdown(None, 0, TEXT)
             .expect("the sample is valid Markdown");
+        let mut editor = Editor::new(doc);
+        let first = editor.document().blocks()[0];
+        let caret = Selection::caret(Pos::new(first, 0));
+        editor
+            .set_selection(Some(caret))
+            .expect("the block has text");
         let bounds = Bounds::centered(None, size(px(640.), px(480.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             ..Default::default()
         };
-        cx.open_window(options, |_, cx| {
-            let editor = cx.new(|cx| EditorView::new(Editor::new(doc), cx));
+        cx.open_window(options, |window, cx| {
+            let editor = cx.new(|cx| EditorView::new(editor, cx));
+            window.focus(&editor.focus_handle(cx), cx);
             cx.new(|_| Page(editor))
         })
         .expect("the window opens");

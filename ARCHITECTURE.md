@@ -194,6 +194,7 @@ Design decisions:
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`.
 - **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME.
 - **IME.** `EntityInputHandler` (`replace_text_in_range`, `replace_and_mark_text_in_range`, `marked_text_range`, `unmark_text`, `bounds_for_range`, `character_index_for_point`) works in UTF-16, mirroring `NSTextInputClient` (`editor/input.rs`). The system sees one block, the one the cursor is in. Text being composed stays in the view, drawn in place of the selection, and goes into the document only when committed, as one typed insertion: peers, input rules and the undo history never see half-composed text. The editor keeps the selection in place through remote edits, so the composition follows it. Taking a composition back leaves a selection it was replacing as it was.
+- **Cursor and selection.** Arrows move by grapheme and cross into the next or previous text block; Alt moves by word, Command to the line's or the document's ends, as in macOS text fields; Shift extends (`editor/motion.rs`). Up and down keep to the x position they started from. A click places the caret in the nearest block, Shift-click extends, a double click selects a word, a triple click the block, and dragging selects across blocks. The selection is painted behind the text and the caret in front of it (`editor/paint.rs`); the caret does not blink yet.
 - **Keys.** A key down is named as the core's keymap names keys (`Mod-Shift-z`) and runs the bound `Command` (`editor/keys.rs`); unbound keys go on to text input. While text is being composed, keys are the IME's. `EditorView::with_keymap` replaces the bindings.
 
 ### 5.1 Blocks
@@ -400,6 +401,8 @@ lotype/
     │   ├── editor.rs       # EditorView: the blocks' text
     │   ├── editor/input.rs # Typing and IME composition
     │   ├── editor/keys.rs  # Keys to core commands
+    │   ├── editor/motion.rs # Cursor movement, hit-testing, the mouse
+    │   ├── editor/paint.rs # Selection and caret
     │   ├── marks.rs        # Text runs from marks
     │   ├── test_support.rs # EditorTestContext [feature "test-support"]
     │   │   # planned:

@@ -27,7 +27,7 @@ pub(crate) struct Shown {
     /// Where the composed text is in `text`.
     pub(crate) marked: Option<Range<usize>>,
     /// The selection in `text`, and whether its head comes first.
-    selected: (Range<usize>, bool),
+    pub(crate) selected: (Range<usize>, bool),
 }
 
 impl Shown {
@@ -119,7 +119,7 @@ impl EditorView {
     }
 
     /// Ends the composition with its text in the document.
-    fn commit(&mut self, text: &str) {
+    pub(crate) fn commit(&mut self, text: &str) {
         self.composition = None;
         if !text.is_empty() {
             self.editor.insert_text(text).ok();

@@ -15,6 +15,7 @@ categories.workspace = true
 [dependencies]
 gpui.workspace = true
 lotype-core.workspace = true
+unicode-segmentation.workspace = true
 
 [features]
 # Test contexts for views built on this crate.

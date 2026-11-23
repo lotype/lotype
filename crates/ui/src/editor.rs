@@ -1,14 +1,16 @@
 mod input;
 mod keys;
+mod motion;
+mod paint;
 
 use std::collections::HashMap;
 
 use gpui::{
-    App, Bounds, Context, Div, ElementInputHandler, Entity, FocusHandle, Focusable, FontWeight,
-    IntoElement, Pixels, Render, StyledText, TextLayout, TextRun, TextStyle, UnderlineStyle,
-    Window, canvas, div, prelude::*, px, rems,
+    App, Bounds, Context, CursorStyle, Div, ElementInputHandler, Entity, FocusHandle, Focusable,
+    FontWeight, IntoElement, MouseButton, Pixels, Render, StyledText, TextLayout, TextRun,
+    TextStyle, UnderlineStyle, Window, canvas, div, prelude::*, px, rems,
 };
-use lotype_core::{BlockId, Content, Editor, KeyBinding, Span, Value, default_keymap};
+use lotype_core::{BlockId, Content, Editor, KeyBinding, Pos, Span, Value, default_keymap};
 
 use crate::marks::{CODE_FONT, text_runs};
 use input::Composition;
@@ -19,8 +21,15 @@ pub struct EditorView {
     focus: FocusHandle,
     /// Where each block's text was laid out in the last frame.
     layouts: HashMap<BlockId, TextLayout>,
+    /// The blocks laid out, in document order.
+    order: Vec<BlockId>,
     composition: Option<Composition>,
     keymap: Vec<KeyBinding>,
+    /// Where moving up or down last took the cursor, and the x position
+    /// it keeps to while it goes on doing so.
+    goal: Option<(Pos, Pixels)>,
+    /// The mouse is selecting.
+    dragging: bool,
 }
 
 impl EditorView {
@@ -29,8 +38,11 @@ impl EditorView {
             editor,
             focus: cx.focus_handle(),
             layouts: HashMap::new(),
+            order: Vec::new(),
             composition: None,
             keymap: default_keymap(),
+            goal: None,
+            dragging: false,
         }
     }
 
@@ -99,6 +111,7 @@ impl EditorView {
         };
         let text = StyledText::new(text).with_runs(runs);
         self.layouts.insert(block, text.layout().clone());
+        self.order.push(block);
         Some(line.child(text))
     }
 
@@ -148,6 +161,7 @@ impl Focusable for EditorView {
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.layouts.clear();
+        self.order.clear();
         let base = window.text_style();
         let blocks = self.editor.document().blocks();
         let texts: Vec<_> = blocks
@@ -158,11 +172,17 @@ impl Render for EditorView {
             .track_focus(&self.focus)
             .key_context("LotypeEditor")
             .on_key_down(cx.listener(Self::key_down))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+            .cursor(CursorStyle::IBeam)
             .relative()
             .flex()
             .flex_col()
             .gap_1()
+            .child(paint::selection(cx.entity()))
             .children(texts)
+            .child(paint::caret(cx.entity()))
             .child(input_handler(cx.entity(), self.focus.clone()))
     }
 }

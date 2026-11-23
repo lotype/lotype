@@ -2,7 +2,7 @@
 
 use gpui::{Context, KeyDownEvent, Keystroke, Window};
 
-use super::EditorView;
+use super::{EditorView, motion};
 
 /// The name the core's keymap gives a keystroke, such as `Mod-Shift-z`.
 pub(crate) fn key_name(keystroke: &Keystroke) -> String {
@@ -55,6 +55,19 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
+        if let Some((motion, extend)) = motion::motion(&name) {
+            self.move_cursor(motion, extend);
+        } else if name == "Mod-a" {
+            self.select_all();
+        } else {
+            self.run_binding(&name, window, cx);
+            return;
+        }
+        cx.stop_propagation();
+        self.selection_changed(window, cx);
+    }
+
+    fn run_binding(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(binding) = self.keymap.iter().find(|binding| binding.key == name) else {
             return;
         };
