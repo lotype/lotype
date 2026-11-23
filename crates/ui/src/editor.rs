@@ -2,6 +2,7 @@ mod canvas;
 mod clipboard;
 mod input;
 mod keys;
+mod link;
 mod motion;
 mod paint;
 mod popup;
@@ -60,6 +61,7 @@ pub struct EditorView {
     slash: slash::SlashMenu,
     /// The start of the selection, which the formatting toolbar goes over.
     toolbar: popup::Placement,
+    links: link::Links,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
 }
@@ -89,6 +91,7 @@ impl EditorView {
             slash_items: default_slash_items(),
             slash: slash::SlashMenu::default(),
             toolbar: popup::Placement::default(),
+            links: link::Links::default(),
             blur: None,
         }
     }
@@ -191,6 +194,7 @@ impl Render for EditorView {
         }
         self.place_slash_menu();
         self.place_toolbar();
+        self.place_links();
         self.layouts.clear();
         self.order.clear();
         let base = window.text_style();
@@ -226,6 +230,8 @@ impl Render for EditorView {
             .child(paint::caret(cx.entity()))
             .children(self.slash_menu(window, cx))
             .children(self.toolbar(window, cx))
+            .children(self.link_field(window, cx))
+            .children(self.link_toolbar(window, cx))
             .child(window_handlers(cx.entity(), self.focus.clone()))
     }
 }

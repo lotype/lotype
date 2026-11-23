@@ -28,7 +28,7 @@ pub(crate) struct SlashMenu {
 
 impl EditorView {
     /// The query and the entries that match it, while the menu shows.
-    fn slash_matches(&self) -> Option<(SlashQuery, Vec<SlashItem>)> {
+    pub(super) fn slash_matches(&self) -> Option<(SlashQuery, Vec<SlashItem>)> {
         if self.composition.is_some() {
             return None;
         }

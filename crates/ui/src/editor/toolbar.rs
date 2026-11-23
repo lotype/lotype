@@ -71,6 +71,26 @@ impl EditorView {
                 .debug_selector(move || format!("toolbar-{name}"))
                 .child(button)
         });
+        let link = schema.mark_spec("link").is_some().then(|| {
+            let url = match active.get("link") {
+                Some(lotype_core::Value::Str(url)) => url.clone(),
+                _ => String::new(),
+            };
+            let linked = !url.is_empty();
+            let click = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                view.open_link_field(&url, window, cx);
+            });
+            let button = Button::new("link")
+                .ghost()
+                .small()
+                .tab_stop(false)
+                .label("Link")
+                .selected(linked)
+                .on_click(click);
+            div()
+                .debug_selector(|| "toolbar-link".to_owned())
+                .child(button)
+        });
         let bar = h_flex()
             .popover_style(cx)
             .occlude()
@@ -78,7 +98,8 @@ impl EditorView {
             .gap_1()
             // A click on the toolbar is no click in the text.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(buttons);
+            .children(buttons)
+            .children(link);
         Some(popup(at, true, bar))
     }
 }

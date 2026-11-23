@@ -63,8 +63,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // While text is being composed, keys are the IME's.
-        if self.composition.is_some() {
+        // While text is being composed, keys are the IME's, and while a
+        // field of the editor's has the focus, they are the field's.
+        if self.composition.is_some() || !self.focus.is_focused(window) {
             return;
         }
         let name = key_name(&event.keystroke);
