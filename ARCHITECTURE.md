@@ -193,7 +193,8 @@ Design decisions:
 - **Text.** A block's text is GPUI's `StyledText`, with one `TextRun` per span from its marks (`marks.rs`). Its `TextLayout` does wrapping and hit-testing. Font size comes from the element around the text, not from the runs, so a heading sets it on a wrapping `div`. The view paints no background: that is the application's.
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`.
 - **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME.
-- **IME.** `EntityInputHandler` (`replace_text_in_range`, `replace_and_mark_text_in_range`, `marked_text_range`, `unmark_text`, `bounds_for_range`, `character_index_for_point`) works in UTF-16, mirroring `NSTextInputClient`.
+- **IME.** `EntityInputHandler` (`replace_text_in_range`, `replace_and_mark_text_in_range`, `marked_text_range`, `unmark_text`, `bounds_for_range`, `character_index_for_point`) works in UTF-16, mirroring `NSTextInputClient` (`editor/input.rs`). The system sees one block, the one the cursor is in. Text being composed stays in the view, drawn in place of the selection, and goes into the document only when committed, as one typed insertion: peers, input rules and the undo history never see half-composed text. The editor keeps the selection in place through remote edits, so the composition follows it. Taking a composition back leaves a selection it was replacing as it was.
+- **Keys.** A key down is named as the core's keymap names keys (`Mod-Shift-z`) and runs the bound `Command` (`editor/keys.rs`); unbound keys go on to text input. While text is being composed, keys are the IME's. `EditorView::with_keymap` replaces the bindings.
 
 ### 5.1 Blocks
 
@@ -397,10 +398,12 @@ lotype/
     │   ├── normalize.rs    # Read-time schema tolerance
     ├── ui/src/
     │   ├── editor.rs       # EditorView: the blocks' text
+    │   ├── editor/input.rs # Typing and IME composition
+    │   ├── editor/keys.rs  # Keys to core commands
     │   ├── marks.rs        # Text runs from marks
     │   ├── test_support.rs # EditorTestContext [feature "test-support"]
     │   │   # planned:
-    │   ├── editor/         # canvas.rs, ime.rs, actions.rs, block_view.rs
+    │   ├── editor/         # canvas.rs, actions.rs, block_view.rs
     │   ├── components/     # slash_menu, formatting_toolbar, link_toolbar, side_menu, table,
     │                       # collab_cursors, ai_prompt, ai_panel, ai_review
     ├── code/               # lotype-code
