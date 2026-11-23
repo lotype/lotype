@@ -183,17 +183,23 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut laid = self.layout.0.borrow_mut();
-        let Some(laid) = laid.as_mut() else { return };
-        laid.origin = bounds.origin;
-        for line in &laid.lines {
-            for piece in &line.pieces {
-                if let Kind::Atom(index, top) = piece.kind {
-                    let origin = bounds.origin + point(piece.x, line.top + top);
-                    let atom = &mut self.atoms[index].1;
-                    atom.prepaint_as_root(origin, unbounded(), window, cx);
+        // Where atoms go, found before their views run, which must not
+        // meet the layout borrowed.
+        let mut places = Vec::new();
+        if let Some(laid) = self.layout.0.borrow_mut().as_mut() {
+            laid.origin = bounds.origin;
+            for line in &laid.lines {
+                for piece in &line.pieces {
+                    if let Kind::Atom(index, top) = piece.kind {
+                        places.push((index, bounds.origin + point(piece.x, line.top + top)));
+                    }
                 }
             }
+        }
+        for (index, origin) in places {
+            self.atoms[index]
+                .1
+                .prepaint_as_root(origin, unbounded(), window, cx);
         }
     }
 

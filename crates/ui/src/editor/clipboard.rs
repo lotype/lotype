@@ -35,8 +35,12 @@ impl EditorView {
         let texts = slice.blocks().into_iter();
         let texts = texts.filter_map(|block| slice.plain_text(block).ok());
         let text = texts.collect::<Vec<_>>().join("\n");
-        let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-        let metadata = [TAG, &hex].concat();
+        let mut metadata = String::with_capacity(TAG.len() + bytes.len() * 2);
+        metadata.push_str(TAG);
+        for byte in bytes {
+            metadata.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
+            metadata.push(char::from_digit(u32::from(byte & 0xf), 16).unwrap_or('0'));
+        }
         cx.write_to_clipboard(ClipboardItem::new_string_with_metadata(text, metadata));
         true
     }

@@ -93,8 +93,9 @@ impl EditorView {
         let command = binding.command.clone();
         self.editor.run(&command).ok();
         cx.stop_propagation();
+        // A command may move the caret, and the IME's window with it.
         window.notify_text_input_changed(&self.focus);
-        cx.notify();
+        self.selection_changed(window, cx);
     }
 }
 
