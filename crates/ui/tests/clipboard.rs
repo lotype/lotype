@@ -52,3 +52,28 @@ fn text_from_elsewhere_pastes_as_it_is(cx: &mut TestAppContext) {
     ed.keys("cmd-v");
     ed.assert(blocks![p!["x **y** z<a>"]]);
 }
+
+#[gpui::test]
+fn copy_and_paste_keep_what_markdown_cannot_say(cx: &mut TestAppContext) {
+    let red = || lotype_core::test_support::marked("text_color", "red", vec!["red".into()]);
+    let underlined = || lotype_core::test_support::marked("underline", true, vec!["u".into()]);
+    let mut ed = EditorTestContext::new(
+        cx,
+        blocks![p!["<a>", red(), " ", underlined(), "<b>"], p!["end"]],
+    );
+    ed.keys("cmd-c cmd-down cmd-v");
+    ed.assert(blocks![
+        p![red(), " ", underlined()],
+        p!["end", red(), " ", underlined(), "<a>"]
+    ]);
+}
+
+#[gpui::test]
+fn broken_copied_bytes_paste_as_plain_text(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
+    let broken =
+        ClipboardItem::new_string_with_metadata("plain".into(), "lotype/loro\nzz01".into());
+    ed.cx.write_to_clipboard(broken);
+    ed.keys("cmd-v");
+    ed.assert(blocks![p!["plain<a>"]]);
+}

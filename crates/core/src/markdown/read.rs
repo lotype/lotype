@@ -422,8 +422,13 @@ impl Document {
 }
 
 impl Document {
-    /// Leaves off the marks the schema lacks, or has with another kind of value.
-    fn fit_marks(&self, spans: &mut [Span]) {
+    /// Leaves off the marks the schema lacks, or has with another kind of
+    /// value, and the atoms of types it lacks.
+    pub(crate) fn fit_marks(&self, spans: &mut Vec<Span>) {
+        spans.retain(|span| {
+            let atom = span.atom.as_ref();
+            atom.is_none_or(|atom| self.schema().inline_spec(&atom.name).is_some())
+        });
         for span in spans {
             let fits = |name: &String, value: &mut Value| {
                 let spec = self.mark_spec(name);

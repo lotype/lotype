@@ -87,3 +87,51 @@ fn what_is_copied_pastes_back_the_same() {
         ],
     );
 }
+
+#[test]
+fn a_copied_document_pastes_back_whole_through_its_bytes() {
+    let source = blocks![
+        p![
+            "<a>a ",
+            lotype_core::test_support::marked("underline", true, vec!["u".into()])
+        ],
+        h1!["t<b>"]
+    ];
+    let (doc, selection) = build(source);
+    let Some(Selection::Text { anchor, head }) = selection else {
+        panic!()
+    };
+    let bytes = doc.slice(anchor, head).unwrap().export_snapshot().unwrap();
+    let mut copied = lotype_core::Document::new(lotype_core::Schema::builtin());
+    copied.import(&bytes).unwrap();
+    let mut ed = editor(blocks![p!["x<a>y"]]);
+    ed.paste_document(&copied).unwrap();
+    // Markdown would have lost the underline.
+    let underlined = lotype_core::test_support::marked("underline", true, vec!["u".into()]);
+    assert_editor(&ed, blocks![p!["xa ", underlined], h1!["t<a>y"]]);
+}
+
+#[test]
+fn what_the_schema_lacks_is_left_out_of_a_paste() {
+    let schema = lotype_core::Schema::builtin()
+        .block(lotype_core::BlockSpec::new(
+            "poll",
+            lotype_core::Content::Inline,
+        ))
+        .mark(lotype_core::MarkSpec::new(
+            "glow",
+            lotype_core::Expand::None,
+        ));
+    let mut other = lotype_core::Document::new(schema);
+    let poll = other.insert_block(None, 0, "poll").unwrap();
+    other.insert_text(poll, 0, "gone").unwrap();
+    let kept = other.insert_block(None, 1, "heading").unwrap();
+    other.insert_text(kept, 0, "kept").unwrap();
+    other.mark(kept, 0..2, "glow", true).unwrap();
+    // As another editor's copy reads here, with this editor's schema.
+    let mut copied = lotype_core::Document::new(lotype_core::Schema::builtin());
+    copied.import(&other.export_snapshot().unwrap()).unwrap();
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.paste_document(&copied).unwrap();
+    assert_editor(&ed, blocks![block("heading", vec!["kept<a>".into()])]);
+}

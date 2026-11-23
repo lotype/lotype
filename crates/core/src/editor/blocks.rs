@@ -125,16 +125,22 @@ impl Editor {
         })
     }
 
-    /// Inserts pasted Markdown, as a step of its own, as ProseMirror pastes
-    /// a slice: a single paragraph goes into the text at the caret, and
-    /// blocks go between the two halves of the block at the caret, with the
-    /// first joining the text before the caret when it is a paragraph and
-    /// the text after the caret joining the last. Code and table cells take
-    /// the pasted text as plain text.
+    /// Inserts pasted Markdown, as [`Self::paste_document`] does.
     pub fn paste_markdown(&mut self, markdown: &str) -> Result<()> {
-        let (anchor, head) = text_selection(self.selection.as_ref())?;
         let mut pasted = Document::new(self.doc.schema().clone());
         pasted.insert_markdown(None, 0, markdown)?;
+        self.paste_document(&pasted)
+    }
+
+    /// Inserts the blocks of a pasted document, as a step of its own, as
+    /// ProseMirror pastes a slice: a single paragraph goes into the text at
+    /// the caret, and blocks go between the two halves of the block at the
+    /// caret, with the first joining the text before the caret when it is a
+    /// paragraph and the text after the caret joining the last. Code and
+    /// table cells take the pasted text as plain text. What the schema lacks
+    /// is left out, as [`Document::insert_document`] leaves it.
+    pub fn paste_document(&mut self, pasted: &Document) -> Result<()> {
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
         let top = pasted.children(None)?;
         let (start, _) = self.doc.ordered(anchor, head)?;
         let plain =
@@ -144,20 +150,23 @@ impl Editor {
                 Ok(pasted.block_type(block)? == "paragraph"
                     && pasted.children(Some(block))?.is_empty())
             };
-        let spans = match top[..] {
+        let mut spans = match top[..] {
             _ if plain => {
-                let texts: Result<Vec<_>> = pasted
+                let texts = pasted
                     .blocks()
                     .into_iter()
-                    .map(|block| pasted.text(block))
-                    .collect();
+                    .map(|block| pasted.plain_text(block));
                 let marks = self.active_marks()?;
-                vec![Span::new(texts?.join("\n"), marks)]
+                vec![Span::new(
+                    texts.collect::<Result<Vec<_>>>()?.join("\n"),
+                    marks,
+                )]
             }
             [only] if paragraph(only)? => pasted.spans(only)?,
             _ => Vec::new(),
         };
-        if plain || !spans.is_empty() || top.is_empty() {
+        self.doc.fit_marks(&mut spans);
+        if plain || paragraph_only(&top, &spans) {
             return self.apply(|doc, _| {
                 let caret = doc.delete_range(anchor, head)?;
                 doc.insert_spans(caret.block, caret.offset, &spans)?;
@@ -173,8 +182,8 @@ impl Editor {
             let caret = doc.delete_range(anchor, head)?;
             let tail = doc.split_block(caret)?.block;
             let parent = doc.parent(caret.block)?;
-            let inserted = doc.insert_markdown(parent, doc.index_of(caret.block)? + 1, markdown)?;
-            if first_joins {
+            let inserted = doc.insert_document(parent, doc.index_of(caret.block)? + 1, pasted)?;
+            if first_joins && !inserted.is_empty() {
                 doc.merge_backward(inserted[0])?;
             } else if doc.text_len(caret.block)? == 0 {
                 doc.remove_block(caret.block)?;
@@ -209,4 +218,9 @@ fn is_address(text: &str) -> bool {
     let schemes = ["https://", "http://", "mailto:"];
     let named = |scheme: &&str| text.len() > scheme.len() && text.starts_with(*scheme);
     schemes.iter().any(named) && !text.contains(char::is_whitespace)
+}
+
+/// Whether a paste is one paragraph's text, or nothing.
+fn paragraph_only(top: &[BlockId], spans: &[Span]) -> bool {
+    top.is_empty() || top.len() == 1 && !spans.is_empty()
 }
