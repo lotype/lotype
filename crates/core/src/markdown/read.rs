@@ -178,12 +178,14 @@ impl Reader {
                 if self.leaf.is_none() {
                     self.open(Node::new("paragraph"));
                 }
+                // A linked image stays text that goes where its link does.
+                let outer = self.marks[LINK].last().cloned();
                 if let Some(leaf) = &mut self.leaf {
                     // A second image makes neither of them a block.
-                    leaf.plain |= leaf.image.is_some();
+                    leaf.plain |= leaf.image.is_some() || outer.is_some();
                     leaf.image = Some(dest_url.to_string());
                 }
-                self.mark(LINK, dest_url.as_ref());
+                self.mark(LINK, outer.unwrap_or_else(|| dest_url.as_ref().into()));
                 self.described = Some(false);
             }
             _ => {}
@@ -226,10 +228,11 @@ impl Reader {
             }
             TagEnd::Image => {
                 // An image without a description still shows as its address.
-                if let Some(Value::Str(url)) = self.unmark()
+                if let Some(link) = self.unmark()
                     && self.described == Some(false)
+                    && let Some(url) = self.leaf.as_ref().and_then(|leaf| leaf.image.clone())
                 {
-                    self.mark(LINK, url.as_str());
+                    self.mark(LINK, link);
                     self.text(&url, false);
                     self.unmark();
                 }

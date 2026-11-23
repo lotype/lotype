@@ -30,7 +30,8 @@ impl Document {
             let marker = first != rest;
             // A task's box is only read as one when it ends its line or text
             // follows it, so it keeps a line to itself where a block follows.
-            let boxed = first.ends_with("] ");
+            // So does a dash: `- ---` or `- - -` would read as a divider.
+            let boxed = first.ends_with("] ") || first.ends_with("- ");
             if !body.is_empty() || marker && (boxed || children.is_empty()) {
                 if !out.is_empty() && under != Some(block) {
                     // Stays inside the quote the block is in, if any.

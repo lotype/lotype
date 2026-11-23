@@ -394,6 +394,25 @@ fn images_and_addresses_keep_what_they_point_to() {
     doc.set_attr(image, "caption", "a\n- b").unwrap();
     let back = read(&doc.to_markdown());
     assert_eq!(shown(&back), "image caption=a - b url=u\n");
+
+    let doc = read("[![b](i.svg)](run) [![](i.svg)](run)");
+    assert_eq!(shown(&doc), "paragraph \"[link=run|b] [link=run|i.svg]\"\n");
+}
+
+#[test]
+fn an_empty_bullet_keeps_a_divider_or_bullet_in_it_nested() {
+    let mut doc = Document::new(Schema::builtin());
+    let item = doc.insert_block(None, 0, "bullet_list_item").unwrap();
+    doc.insert_block(Some(item), 0, "divider").unwrap();
+    let text = doc.insert_block(Some(item), 1, "paragraph").unwrap();
+    doc.insert_text(text, 0, "kept").unwrap();
+    let inner = doc.insert_block(None, 1, "bullet_list_item").unwrap();
+    let inner = doc
+        .insert_block(Some(inner), 0, "bullet_list_item")
+        .unwrap();
+    doc.insert_block(Some(inner), 0, "bullet_list_item")
+        .unwrap();
+    assert_eq!(shown(&read(&doc.to_markdown())), shown(&doc));
 }
 
 #[test]
