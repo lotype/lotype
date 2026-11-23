@@ -6,5 +6,6 @@ mod editor;
 mod marks;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+mod text_el;
 
 pub use editor::EditorView;

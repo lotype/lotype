@@ -1,48 +1,15 @@
 //! The selection behind the text, and the caret in front of it.
 
 use gpui::{
-    App, Bounds, Entity, Hsla, IntoElement, Pixels, TextLayout, Window, canvas, fill, hsla, point,
-    prelude::*, px, size,
+    App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, hsla, prelude::*,
 };
 use lotype_core::Selection;
 
 use super::EditorView;
+use crate::text_el::Affinity;
 
 fn selection_color() -> Hsla {
     hsla(0.58, 0.9, 0.6, 0.3)
-}
-
-/// Rectangles covering `start..end` of a block's text, one per line.
-/// `wide` gives an empty range some width, for an empty block in a
-/// selection that goes through it.
-fn rectangles(layout: &TextLayout, start: usize, end: usize, wide: bool) -> Vec<Bounds<Pixels>> {
-    let bounds = layout.bounds();
-    let line = layout.line_height();
-    let (Some(from), Some(to)) = (
-        layout.position_for_index(start),
-        layout.position_for_index(end),
-    ) else {
-        return Vec::new();
-    };
-    let row = |left: Pixels, right: Pixels, top: Pixels| {
-        let width = if wide {
-            (right - left).max(px(4.))
-        } else {
-            right - left
-        };
-        Bounds::new(point(left, top), size(width, line))
-    };
-    if from.y == to.y {
-        return vec![row(from.x, to.x, from.y)];
-    }
-    let mut rows = vec![row(from.x, bounds.right(), from.y)];
-    let mut top = from.y + line;
-    while top < to.y {
-        rows.push(row(bounds.left(), bounds.right(), top));
-        top += line;
-    }
-    rows.push(row(bounds.left(), to.x, to.y));
-    rows
 }
 
 impl EditorView {
@@ -68,35 +35,30 @@ impl EditorView {
                 continue;
             };
             let start = if *block == from.block { from.offset } else { 0 };
+            // A block the selection goes on from is selected to the edge.
             let end = if *block == to.block {
                 to.offset
             } else {
-                layout.len()
+                usize::MAX
             };
-            let wide = from.block != to.block;
-            all.extend(rectangles(layout, start, end, wide));
+            all.extend(layout.rectangles(start, end, from.block != to.block));
         }
         all
     }
 
     fn caret(&self) -> Option<Bounds<Pixels>> {
-        let shown = self.shown()?;
-        let layout = self.layouts.get(&shown.block)?;
-        let (selected, backward) = &shown.selected;
-        let selecting = self
-            .editor
-            .selection()
-            .is_some_and(|selection| !selection.is_collapsed());
-        if selecting && self.composition.is_none() {
+        let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
             return None;
-        }
-        let at = if *backward {
-            selected.start
-        } else {
-            selected.end
         };
-        let at = layout.position_for_index(at)?;
-        Some(Bounds::new(at, size(px(1.5), layout.line_height())))
+        let Some(composition) = &self.composition else {
+            return (anchor == head).then(|| self.caret_bounds(*head)).flatten();
+        };
+        // In text being composed, the caret is where the IME says.
+        let shown = self.shown()?;
+        let at = shown.marked?.start + composition.selected.end;
+        self.layouts
+            .get(&shown.block)?
+            .caret(at, Affinity::Downstream)
     }
 }
 

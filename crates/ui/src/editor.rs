@@ -3,19 +3,23 @@ mod input;
 mod keys;
 mod motion;
 mod paint;
+mod render;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, Context, CursorStyle, DispatchPhase, Div, ElementInputHandler, Entity,
-    FocusHandle, Focusable, FontWeight, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent,
-    Pixels, Render, StyledText, TextLayout, TextRun, TextStyle, UnderlineStyle, Window, canvas,
-    div, prelude::*, px, rems,
+    AnyElement, App, Bounds, Context, CursorStyle, DispatchPhase, ElementInputHandler, Entity,
+    FocusHandle, Focusable, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Render,
+    Window, canvas, div, prelude::*,
 };
-use lotype_core::{BlockId, Content, Editor, KeyBinding, Pos, Span, Value, default_keymap};
+use lotype_core::{Atom, BlockId, Editor, KeyBinding, Pos, default_keymap};
 
-use crate::marks::{CODE_FONT, text_runs};
+use crate::text_el::{Affinity, TextLayout};
 use input::Composition;
+
+/// Draws an atom of one type.
+type AtomView = Rc<dyn Fn(&Atom, &mut Window, &mut App) -> AnyElement>;
 
 /// A GPUI view of an [`Editor`]: the text of its blocks, with their marks.
 pub struct EditorView {
@@ -32,6 +36,9 @@ pub struct EditorView {
     goal: Option<(Pos, Pixels)>,
     /// The mouse is selecting.
     dragging: bool,
+    /// The side of a soft wrap the caret is on, while it stays where it was put.
+    side: Option<(Pos, Affinity)>,
+    atom_views: HashMap<String, AtomView>,
 }
 
 impl EditorView {
@@ -45,6 +52,8 @@ impl EditorView {
             keymap: default_keymap(),
             goal: None,
             dragging: false,
+            side: None,
+            atom_views: HashMap::new(),
         }
     }
 
@@ -75,76 +84,35 @@ impl EditorView {
         result
     }
 
-    /// The layout of a block's text in the last frame.
-    pub fn text_layout(&self, block: BlockId) -> Option<&TextLayout> {
-        self.layouts.get(&block)
+    /// Draws atoms of type `name` with `view`, instead of as a chip with
+    /// the plain text their schema gives them.
+    pub fn with_atom_view(
+        mut self,
+        name: &str,
+        view: impl Fn(&Atom, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.atom_views.insert(name.to_owned(), Rc::new(view));
+        self
     }
 
-    fn block_text(&mut self, block: BlockId, base: &TextStyle) -> Option<Div> {
-        let doc = self.editor.document();
-        let block_type = doc.block_type(block).ok()?;
-        let spec = doc.schema().block_spec(&block_type)?;
-        if spec.content() != Content::Inline {
-            return None;
-        }
-        let mut style = base.clone();
-        let mut line = div();
-        match block_type.as_str() {
-            "heading" => {
-                let level = match doc.attr(block, "level") {
-                    Ok(Some(Value::Int(level))) => level.clamp(1, 6),
-                    _ => 1,
-                };
-                let sizes = [2.0, 1.5, 1.25, 1.125, 1.0, 0.875];
-                // The text takes its size from the element around it.
-                line = line.text_size(rems(sizes[level as usize - 1]));
-                style.font_weight = FontWeight::BOLD;
-            }
-            "code_block" => style.font_family = CODE_FONT.into(),
-            _ => {}
-        }
-        let (text, runs) = match self.shown().filter(|shown| shown.block == block) {
-            Some(shown) => (shown.text.clone(), self.composed_runs(&shown, &style)?),
-            None => {
-                let spans = doc.spans(block).ok()?;
-                let text = spans.iter().map(|span| span.text.as_str()).collect();
-                (text, text_runs(&spans, &style))
-            }
-        };
-        let text = StyledText::new(text).with_runs(runs);
-        self.layouts.insert(block, text.layout().clone());
-        self.order.push(block);
-        Some(line.child(text))
+    /// Where a caret at `pos` was drawn in the last frame, as tall as its text.
+    pub fn caret_bounds(&self, pos: Pos) -> Option<Bounds<Pixels>> {
+        let affinity = self.affinity(pos);
+        self.layouts.get(&pos.block)?.caret(pos.offset, affinity)
     }
 
-    /// The runs of a block with text being composed in it, which is
-    /// underlined and has the marks typed text would get.
-    fn composed_runs(&self, shown: &input::Shown, style: &TextStyle) -> Option<Vec<TextRun>> {
-        let doc = self.editor.document();
-        let marked = shown.marked.clone().unwrap_or_default();
-        let after = shown.text.len() - marked.end;
-        let len = doc.text_len(shown.block).ok()?;
-        let before = doc.spans_in(shown.block, 0..marked.start).ok()?;
-        let after = doc.spans_in(shown.block, len - after..len).ok()?;
-        let marks = self.editor.active_marks().unwrap_or_default();
-        let composed = Span::new(&shown.text[marked], marks);
-        let mut composed = text_runs(&[composed], style);
-        for run in &mut composed {
-            let color = Some(run.color);
-            run.underline = Some(UnderlineStyle {
-                color,
-                thickness: px(1.),
-                wavy: false,
-            });
-        }
-        let mut runs = text_runs(&before, style);
-        runs.extend(composed);
-        runs.extend(text_runs(&after, style));
-        Some(runs)
+    /// Where a block's text was in the last frame.
+    pub fn text_bounds(&self, block: BlockId) -> Option<Bounds<Pixels>> {
+        self.layouts.get(&block)?.bounds()
+    }
+
+    /// The side of a soft wrap the caret at `head` is on.
+    pub(crate) fn affinity(&self, head: Pos) -> Affinity {
+        let side = self.side.filter(|(at, _)| *at == head);
+        side.map_or_else(Affinity::default, |(_, affinity)| affinity)
     }
 }
 
-/// Gives the system's text input to the view while it has focus.
 /// Gives the system's text input to the view while it has focus, and the
 /// mouse while it drags a selection, wherever in the window the mouse goes.
 fn window_handlers(view: Entity<EditorView>, focus: FocusHandle) -> impl IntoElement {
@@ -177,10 +145,11 @@ impl Render for EditorView {
         self.layouts.clear();
         self.order.clear();
         let base = window.text_style();
+        let shown = self.shown();
         let blocks = self.editor.document().blocks();
         let texts: Vec<_> = blocks
             .into_iter()
-            .filter_map(|block| self.block_text(block, &base))
+            .filter_map(|block| self.block_text(block, &base, shown.as_ref(), window, cx))
             .collect();
         div()
             .track_focus(&self.focus)

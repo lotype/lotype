@@ -192,11 +192,12 @@ Design decisions:
 - **GPUI.** `gpui-component` 0.10.0 depends on `gpui-pre = "=0.3.12"`. This is a GPUI snapshot republished by the gpui-component maintainer, not by the Zed team.
 - **Platform.** `gpui-pre` holds no platform: the application picks one with `gpui-pre-platform`, so `lotype-ui` takes it only as a dev-dependency, for its example and visual checks. Its `runtime_shaders` feature compiles the Metal shaders at run time, so a Mac with only the Command Line Tools, without Xcode, can build and run the editor.
 - **Compiler.** GPUI needs a newer compiler than the core, so `lotype-ui` declares `rust-version = "1.98"` (checked locally with `cargo +1.98 check -p lotype-ui --all-targets`), and the MSRV job skips it.
-- **Text.** A block's text is GPUI's `StyledText`, with one `TextRun` per span from its marks (`marks.rs`). Its `TextLayout` does wrapping and hit-testing. Font size comes from the element around the text, not from the runs, so a heading sets it on a wrapping `div`. The view paints no background: that is the application's.
+- **Text.** A block's text is `text_el`, an element of our own: GPUI's `StyledText` holds no elements inside its text, and draws a caret at a soft wrap only at the end of the upper line. Each span is one `TextRun` styled by its marks (`marks.rs`). Text between atoms is shaped whole with `shape_line`; each atom is an element, measured before layout (`layout_as_root`) and drawn in place of its character. Lines break greedily after spaces, around CJK characters, and, for a word wider than the line, between graphemes; space at a line's end hangs past the edge, and an atom sticks to the words around it (`text_el/wrap.rs`). An atom is centred on the text, as CSS's `vertical-align: middle` puts it, and a taller one makes its line taller and pushes that line's text down. Geometry answers `None` until the text is laid out, where GPUI's `TextLayout` panics (`text_el/geometry.rs`). Font size comes from the element around the text, so a heading sets it on a wrapping `div`. The view paints no background: that is the application's.
+- **Atoms.** `EditorView::with_atom_view` draws atoms of one type with an element of the application's; any other atom is a chip with the plain text its `InlineSpec` gives it (`editor/render.rs`).
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`.
-- **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME.
+- **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME. gpui-base 0.10 lays out text with inline objects too, but privately, tied to its theme, and measures a paragraph with objects again every frame.
 - **IME.** `EntityInputHandler` (`replace_text_in_range`, `replace_and_mark_text_in_range`, `marked_text_range`, `unmark_text`, `bounds_for_range`, `character_index_for_point`) works in UTF-16, mirroring `NSTextInputClient` (`editor/input.rs`). The system sees one block, the one the cursor is in. Text being composed stays in the view, drawn in place of the selection, and goes into the document only when committed, as one typed insertion: peers, input rules and the undo history never see half-composed text. The editor keeps the selection in place through remote edits, so the composition follows it. Taking a composition back leaves a selection it was replacing as it was.
-- **Cursor and selection.** Arrows move by grapheme and cross into the next or previous text block; Alt moves by word, Command to the line's or the document's ends, as in macOS text fields; Shift extends (`editor/motion.rs`). Up and down keep to the x position they started from. A click places the caret in the nearest block, Shift-click extends, a double click selects a word, a triple click the block, and dragging selects across blocks. The selection is painted behind the text and the caret in front of it (`editor/paint.rs`); the caret does not blink yet.
+- **Cursor and selection.** Arrows move by grapheme and cross into the next or previous text block; Alt moves by word, Command to the line's or the document's ends, as in macOS text fields; Shift extends (`editor/motion.rs`). Up and down keep to the x position they started from. A caret at a soft wrap is either at the end of the upper line or the start of the lower one: Command-Right and a click past a line's end put it at the end, anything else at the start. A click places the caret in the nearest block, Shift-click extends, a double click selects a word, a triple click the block, and dragging selects across blocks. The selection is painted behind the text and the caret in front of it (`editor/paint.rs`); the caret does not blink yet.
 - **Clipboard.** Copy puts the selection on the system clipboard as plain text, blocks joined by line breaks and atoms as their plain text, with the slice's Loro snapshot as metadata, in hex after a `lotype/loro` tag (`editor/clipboard.rs`): every GPUI application keeps metadata under the same pasteboard type, and Zed puts JSON there. Paste imports those bytes into a document with the editor's schema and pastes it through `Editor::paste_document`; bytes that do not import, and anything else, paste as plain text through `Editor::paste_text`. Cut is copy and delete.
 - **Keys.** A key down is named as the core's keymap names keys (`Mod-Shift-z`) and runs the bound `Command` (`editor/keys.rs`); unbound keys go on to text input. While text is being composed, keys are the IME's. `EditorView::with_keymap` replaces the bindings.
 
@@ -229,7 +230,7 @@ Math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `Lor
   - rectangles and lines use `paint_quad`;
   - paths use `PathBuilder` + `paint_path`.
 - Output stays sharp at any zoom level.
-- Inline math needs `text_el` to support non-text inline atoms with their own width and baseline.
+- Inline math is an inline atom, drawn by `text_el` with its own width. Atoms are centred on the text for now; a formula that must sit on the text's baseline will need its view to report one.
 
 ---
 
@@ -404,12 +405,14 @@ lotype/
     │   ├── normalize.rs    # Read-time schema tolerance
     ├── ui/src/
     │   ├── editor.rs       # EditorView: the blocks' text
+    │   ├── editor/render.rs # A block's text and atoms as an element
     │   ├── editor/clipboard.rs # Copy, cut and paste
     │   ├── editor/input.rs # Typing and IME composition
     │   ├── editor/keys.rs  # Keys to core commands
     │   ├── editor/motion.rs # Cursor movement, hit-testing, the mouse
     │   ├── editor/paint.rs # Selection and caret
     │   ├── marks.rs        # Text runs from marks
+    │   ├── text_el.rs      # The block text element; wrap.rs, geometry.rs
     │   ├── test_support.rs # EditorTestContext [feature "test-support"]
     │   │   # planned:
     │   ├── editor/         # canvas.rs, actions.rs, block_view.rs
@@ -500,6 +503,8 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | A peer that deletes a node outright, as no version of this core does, makes other peers' undo of an older move of that node restore a block without type or text. If the node is a trash node, undoing an insertion can no longer put the block away: Loro reports no change, and the editor goes on to undo the step before it | Accepted; such a block is reported as unknown and skipped, like any block of an unknown type |
 | Undo puts a removed block back where it was, even when a peer has moved it elsewhere meanwhile | Accepted; it is what undoing the removal means |
 | A selection endpoint on a character a peer deleted is resolved again on every import, and Loro's lookup for it slows as that block gets more edits (about 6 ms per import after 10,000 typed characters in a release build), until the selection is set again | Acceptable now; revisit with the performance milestone |
+| Every frame lays out the text of every block again: GPUI caches shaped runs for two frames, but wrapping and atoms are measured anew | Acceptable for now; cache layouts per block and draw only visible blocks in the performance milestone, with the canvas's virtual list |
+| Line breaking follows spaces and CJK only, not all of UAX #14 (GPUI's ICU breaker is private) | Acceptable for Latin and CJK text; revisit for Thai, Lao and others |
 | Adding a column reads all the columns of its table, so making a table costs the square of its width (about 0.6 s for 1,000 columns in a release build) | Acceptable now: such tables are not what an editor shows; revisit with the performance milestone |
 | Inserting a block among the top-level blocks anywhere but first or last lists all of them, to step over the trash node, so reading a long Markdown text into the middle of a long document takes time quadratic in its blocks (about 4 s for 16,000 paragraphs in a release build) | Acceptable now; revisit with the performance milestone |
 | `Version` cannot be sent to another peer yet, so a peer cannot ask for exactly what it lacks | Add an encoding with the sync protocol in milestone 5 |

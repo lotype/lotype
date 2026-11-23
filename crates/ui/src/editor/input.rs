@@ -10,6 +10,7 @@ use gpui::{Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, W
 use lotype_core::{BlockId, Pos, Selection};
 
 use super::EditorView;
+use crate::text_el::Affinity;
 
 /// Text being composed, which replaces the selection on screen.
 pub(crate) struct Composition {
@@ -276,19 +277,17 @@ impl EntityInputHandler for EditorView {
     ) -> Option<Bounds<Pixels>> {
         let shown = self.shown()?;
         let layout = self.layouts.get(&shown.block)?;
-        if layout.text() != shown.text {
+        if layout.text()? != shown.text {
             return None;
         }
         let range = shown.utf8(&range);
-        let start = layout.position_for_index(range.start)?;
-        let end = layout.position_for_index(range.end).unwrap_or(start);
+        let start = layout.caret(range.start, Affinity::Downstream)?;
         // A range that wraps is given as its first line's part.
-        let width = if end.y == start.y {
-            end.x - start.x
-        } else {
-            Pixels::ZERO
-        };
-        Some(Bounds::new(start, size(width, layout.line_height())))
+        let end = layout
+            .caret(range.end, Affinity::Upstream)
+            .filter(|end| end.top() == start.top());
+        let width = end.map_or(Pixels::ZERO, |end| end.left() - start.left());
+        Some(Bounds::new(start.origin, size(width, start.size.height)))
     }
 
     fn character_index_for_point(
@@ -299,10 +298,10 @@ impl EntityInputHandler for EditorView {
     ) -> Option<usize> {
         let shown = self.shown()?;
         let layout = self.layouts.get(&shown.block)?;
-        if layout.text() != shown.text {
+        if layout.text()? != shown.text {
             return None;
         }
-        let (Ok(index) | Err(index)) = layout.index_for_position(at);
+        let (index, _) = layout.hit(at)?;
         Some(to_utf16(&shown.text, index.min(shown.text.len())))
     }
 }

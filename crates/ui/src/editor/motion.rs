@@ -1,13 +1,14 @@
 //! Moving the cursor and selecting, with keys and the mouse.
 
 use gpui::{
-    Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, TextLayout,
-    Window, point, px,
+    Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Window,
+    point, px,
 };
 use lotype_core::{BlockId, Pos, Selection};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::EditorView;
+use crate::text_el::{Affinity, TextLayout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Motion {
@@ -53,10 +54,11 @@ impl EditorView {
         self.editor.document().text_len(block).unwrap_or(0)
     }
 
-    /// The place in the text under a point, or nearest to it.
-    pub(crate) fn hit(&self, at: Point<Pixels>) -> Option<Pos> {
+    /// The place in the text under a point, or nearest to it, and the side
+    /// of a soft wrap it is on.
+    pub(crate) fn hit(&self, at: Point<Pixels>) -> Option<(Pos, Affinity)> {
         let distance = |block: &BlockId| {
-            let bounds = self.layout(*block)?.bounds();
+            let bounds = self.layout(*block)?.bounds()?;
             let above = bounds.top() - at.y;
             let below = at.y - bounds.bottom();
             Some(above.max(below).max(Pixels::ZERO))
@@ -67,20 +69,19 @@ impl EditorView {
             .filter_map(|block| Some((*block, distance(block)?)));
         let (block, _) = nearest.min_by(|a, b| f32::from(a.1).total_cmp(&f32::from(b.1)))?;
         let layout = self.layout(block)?;
-        let bounds = layout.bounds();
+        let bounds = layout.bounds()?;
+        let downstream = |offset| Some((Pos::new(block, offset), Affinity::Downstream));
         // Above all the text is its start and below it its end, as in macOS.
-        let first = self.order.first() == Some(&block);
-        let last = self.order.last() == Some(&block);
-        if first && at.y < bounds.top() {
-            return Some(Pos::new(block, 0));
+        if self.order.first() == Some(&block) && at.y < bounds.top() {
+            return downstream(0);
         }
-        if last && at.y >= bounds.bottom() {
-            return Some(Pos::new(block, self.text_len(block)));
+        if self.order.last() == Some(&block) && at.y >= bounds.bottom() {
+            return downstream(self.text_len(block));
         }
         // Not `clamp`, which panics on a layout less than a pixel tall.
         let y = at.y.min(bounds.bottom() - px(1.)).max(bounds.top());
-        let (Ok(index) | Err(index)) = layout.index_for_position(point(at.x, y));
-        Some(Pos::new(block, index.min(self.text_len(block))))
+        let (index, affinity) = layout.hit(point(at.x, y))?;
+        Some((Pos::new(block, index.min(self.text_len(block))), affinity))
     }
 
     fn neighbor(&self, block: BlockId, forward: bool) -> Option<BlockId> {
@@ -91,18 +92,17 @@ impl EditorView {
 
     /// Where a motion takes the cursor from `head`, with `goal` the x
     /// position that moving up and down keeps to.
-    fn target(&self, head: Pos, motion: Motion, goal: Pixels) -> Option<Pos> {
+    fn target(&self, head: Pos, motion: Motion, goal: Pixels) -> Option<(Pos, Affinity)> {
         let doc = self.editor.document();
         let text = doc.text(head.block).ok()?;
         let (before, after) = text.split_at(head.offset);
         let start = |block| Pos::new(block, 0);
         let end = |block| Pos::new(block, self.text_len(block));
         let layout = self.layout(head.block)?;
-        let bounds = layout.bounds();
-        let here = layout.position_for_index(head.offset)?;
-        let line = layout.line_height();
+        let bounds = layout.bounds()?;
+        let (line, shown) = layout.line(head.offset, self.affinity(head))?;
         let at = |x, y| self.hit(point(x, y));
-        Some(match motion {
+        let target = match motion {
             Motion::Left => match before.grapheme_indices(true).next_back() {
                 Some((offset, _)) => Pos::new(head.block, offset),
                 None => self.neighbor(head.block, false).map_or(head, end),
@@ -127,29 +127,28 @@ impl EditorView {
                     None => end(head.block),
                 }
             }
-            Motion::LineStart => at(bounds.left(), here.y)?,
-            Motion::LineEnd => at(bounds.right() + px(1000.), here.y)?,
-            Motion::Up if here.y > bounds.top() + px(1.) => at(goal, here.y - line / 2.)?,
+            Motion::LineStart => Pos::new(head.block, shown.start),
+            // The end of a line that wraps is the end of that line, not the
+            // start of the next.
+            Motion::LineEnd => return Some((Pos::new(head.block, shown.end), Affinity::Upstream)),
+            Motion::Up if line.top() > bounds.top() + px(1.) => {
+                return at(goal, line.top() - px(1.));
+            }
             Motion::Up => match self.neighbor(head.block, false) {
-                Some(block) => {
-                    let above = self.layout(block)?;
-                    at(goal, above.bounds().bottom() - above.line_height() / 2.)?
-                }
+                Some(block) => return at(goal, self.layout(block)?.bounds()?.bottom() - px(1.)),
                 None => start(head.block),
             },
-            Motion::Down if here.y + line < bounds.bottom() - px(1.) => {
-                at(goal, here.y + line * 1.5)?
+            Motion::Down if line.bottom() < bounds.bottom() - px(1.) => {
+                return at(goal, line.bottom() + px(1.));
             }
             Motion::Down => match self.neighbor(head.block, true) {
-                Some(block) => {
-                    let below = self.layout(block)?;
-                    at(goal, below.bounds().top() + below.line_height() / 2.)?
-                }
+                Some(block) => return at(goal, self.layout(block)?.bounds()?.top() + px(1.)),
                 None => end(head.block),
             },
             Motion::DocStart => start(*self.order.first()?),
             Motion::DocEnd => end(*self.order.last()?),
-        })
+        };
+        Some((target, Affinity::Downstream))
     }
 
     /// Moves the cursor, or the head of the selection when `extend`.
@@ -166,16 +165,17 @@ impl EditorView {
                 .ok();
             return;
         }
-        let x = || Some(self.layout(head.block)?.position_for_index(head.offset)?.x);
+        let x = || Some(self.caret_bounds(head)?.left());
         let vertical = matches!(motion, Motion::Up | Motion::Down);
         let kept = self
             .goal
             .filter(|(at, _)| vertical && *at == head)
             .map(|(_, x)| x);
         let Some(goal) = kept.or_else(x) else { return };
-        let Some(target) = self.target(head, motion, goal) else {
+        let Some((target, affinity)) = self.target(head, motion, goal) else {
             return;
         };
+        self.side = Some((target, affinity));
         let anchor = if extend { anchor } else { target };
         let selection = Selection::Text {
             anchor,
@@ -208,9 +208,10 @@ impl EditorView {
         if let Some(composition) = self.composition.take() {
             self.commit(&composition.text);
         }
-        let Some(pos) = self.hit(event.position) else {
+        let Some((pos, affinity)) = self.hit(event.position) else {
             return;
         };
+        self.side = Some((pos, affinity));
         let text = self.editor.document().text(pos.block).unwrap_or_default();
         let (anchor, head) = match event.click_count {
             1 => match self.editor.selection() {
@@ -244,11 +245,12 @@ impl EditorView {
         if !self.dragging || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
-        let (Some(Selection::Text { anchor, .. }), Some(head)) =
+        let (Some(Selection::Text { anchor, .. }), Some((head, affinity))) =
             (self.editor.selection().cloned(), self.hit(event.position))
         else {
             return;
         };
+        self.side = Some((head, affinity));
         self.editor
             .set_selection(Some(Selection::Text { anchor, head }))
             .ok();

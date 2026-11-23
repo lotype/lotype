@@ -1,0 +1,107 @@
+//! A block's text as an element: its spans as text runs, its atoms drawn
+//! by their views, and text being composed underlined in place.
+
+use std::ops::Range;
+
+use gpui::{
+    AnyElement, App, Div, FontWeight, IntoElement, ParentElement, Styled, TextStyle,
+    UnderlineStyle, Window, div, px, rems, rgb,
+};
+use lotype_core::{Atom, BlockId, Content, Span, Value};
+
+use super::EditorView;
+use super::input::Shown;
+use crate::marks::{CODE_FONT, text_runs};
+use crate::text_el::TextElement;
+
+impl EditorView {
+    pub(super) fn block_text(
+        &mut self,
+        block: BlockId,
+        base: &TextStyle,
+        shown: Option<&Shown>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Div> {
+        let doc = self.editor.document();
+        let block_type = doc.block_type(block).ok()?;
+        let spec = doc.schema().block_spec(&block_type)?;
+        if spec.content() != Content::Inline {
+            return None;
+        }
+        let mut style = base.clone();
+        let mut line = div();
+        match block_type.as_str() {
+            "heading" => {
+                let level = match doc.attr(block, "level") {
+                    Ok(Some(Value::Int(level))) => level.clamp(1, 6),
+                    _ => 1,
+                };
+                let sizes = [2.0, 1.5, 1.25, 1.125, 1.0, 0.875];
+                // The text takes its size from the element around it.
+                line = line.text_size(rems(sizes[level as usize - 1]));
+                style.font_weight = FontWeight::BOLD;
+            }
+            "code_block" => style.font_family = CODE_FONT.into(),
+            _ => {}
+        }
+        let (spans, composed) = match shown.filter(|shown| shown.block == block) {
+            Some(shown) => self.composed_spans(shown)?,
+            None => (doc.spans(block).ok()?, None),
+        };
+        let mut runs = text_runs(&spans, &style);
+        // Text being composed is underlined, and is a span of its own.
+        let mut at = 0;
+        for run in &mut runs {
+            if composed.as_ref().is_some_and(|range| range.contains(&at)) {
+                let color = Some(run.color);
+                run.underline = Some(UnderlineStyle {
+                    color,
+                    thickness: px(1.),
+                    wavy: false,
+                });
+            }
+            at += run.len;
+        }
+        let mut atoms = Vec::new();
+        let mut at = 0;
+        for span in &spans {
+            if let Some(atom) = &span.atom {
+                atoms.push((
+                    at..at + span.text.len(),
+                    self.atom_element(atom, window, cx),
+                ));
+            }
+            at += span.text.len();
+        }
+        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+        let element = TextElement::new(text.into(), runs, atoms);
+        self.layouts.insert(block, element.layout().clone());
+        self.order.push(block);
+        Some(line.child(element))
+    }
+
+    /// The spans of a block with text being composed in it, which has the
+    /// marks typed text would get, and where that text is.
+    fn composed_spans(&self, shown: &Shown) -> Option<(Vec<Span>, Option<Range<usize>>)> {
+        let doc = self.editor.document();
+        let marked = shown.marked.clone().unwrap_or_default();
+        let after = shown.text.len() - marked.end;
+        let len = doc.text_len(shown.block).ok()?;
+        let mut spans = doc.spans_in(shown.block, 0..marked.start).ok()?;
+        let marks = self.editor.active_marks().unwrap_or_default();
+        spans.push(Span::new(&shown.text[marked.clone()], marks));
+        spans.extend(doc.spans_in(shown.block, len - after..len).ok()?);
+        Some((spans, Some(marked)))
+    }
+
+    fn atom_element(&self, atom: &Atom, window: &mut Window, cx: &mut App) -> AnyElement {
+        if let Some(view) = self.atom_views.get(&atom.name) {
+            return view(atom, window, cx);
+        }
+        let spec = self.editor.document().schema().inline_spec(&atom.name);
+        let text = spec.map_or_else(|| atom.name.clone(), |spec| spec.text(atom));
+        let chip = div().px_1().rounded_sm().bg(rgb(0xebeced)).child(text);
+        chip.into_any_element()
+    }
+}

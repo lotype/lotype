@@ -8,9 +8,10 @@ use lotype_ui::test_support::EditorTestContext;
 fn at(ed: &mut EditorTestContext, index: usize, offset: usize) -> Point<Pixels> {
     let block = ed.editor(|editor| editor.document().blocks()[index]);
     ed.view.update(ed.cx, |view, _| {
-        let layout = view.text_layout(block).unwrap();
-        let at = layout.position_for_index(offset).unwrap();
-        point(at.x + px(1.), at.y + layout.line_height() / 2.)
+        let caret = view
+            .caret_bounds(lotype_core::Pos::new(block, offset))
+            .unwrap();
+        point(caret.left() + px(1.), caret.top() + caret.size.height / 2.)
     })
 }
 

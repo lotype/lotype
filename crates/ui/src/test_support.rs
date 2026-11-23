@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use gpui::{Entity, EntityInputHandler, Focusable, TestAppContext, VisualTestContext};
+use gpui::{Context, Entity, EntityInputHandler, Focusable, TestAppContext, VisualTestContext};
 use lotype_core::Editor;
 use lotype_core::test_support::{BlockNode, assert_editor};
 
@@ -19,7 +19,15 @@ impl<'a> EditorTestContext<'a> {
     /// draws it.
     pub fn new(cx: &'a mut TestAppContext, blocks: Vec<BlockNode>) -> Self {
         let editor = lotype_core::test_support::editor(blocks);
-        let (view, cx) = cx.add_window_view(|_, cx| EditorView::new(editor, cx));
+        Self::with_view(cx, |cx| EditorView::new(editor, cx))
+    }
+
+    /// Opens a window on the view `build` makes, focuses it and draws it.
+    pub fn with_view(
+        cx: &'a mut TestAppContext,
+        build: impl FnOnce(&mut Context<EditorView>) -> EditorView,
+    ) -> Self {
+        let (view, cx) = cx.add_window_view(|_, cx| build(cx));
         view.update_in(cx, |view, window, cx| {
             view.focus_handle(cx).focus(window, cx)
         });
