@@ -1,5 +1,5 @@
 use loro::{ExportMode, LoroDoc, TreeParentId};
-use lotype_core::test_support::{assert_editor, editor, outline};
+use lotype_core::test_support::{assert_editor, build, editor, outline};
 use lotype_core::{Document, Editor, Pos, Schema, Selection, blocks, p};
 
 /// Another peer that starts from `doc` as it is now.
@@ -264,4 +264,16 @@ fn typing_over_blocks_makes_a_missing_trash_node_outside_the_step() {
     exchange(&mut a, &mut b);
     assert_eq!(a.document().blocks(), b.document().blocks());
     assert_eq!(a.document().blocks(), peer(a.document()).blocks());
+}
+
+#[test]
+fn a_remote_insert_before_the_caret_keeps_pending_marks() {
+    let (doc, sel) = build(blocks![p!["hello <a>"]]);
+    let mut ed = Editor::new(doc);
+    ed.set_selection(sel).unwrap();
+    ed.toggle_mark("bold").unwrap();
+    let mut b = peer(ed.document());
+    b.insert_text(b.blocks()[0], 0, "x").unwrap();
+    pull(&mut ed, &b);
+    assert!(ed.active_marks().unwrap().contains_key("bold"));
 }

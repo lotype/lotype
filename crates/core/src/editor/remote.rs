@@ -5,7 +5,7 @@ use loro::TextDelta;
 use loro::event::Diff;
 
 use super::Editor;
-use crate::Result;
+use crate::{Result, Selection};
 
 impl Editor {
     /// Merges a snapshot or updates from another peer.
@@ -63,7 +63,14 @@ impl Editor {
         // Loro ends the open undo group itself when the import touches what
         // the group changed. Starting a group only works when none is open.
         let group_ended = self.run.is_some() && self.history.group_start().is_ok();
-        if selection != self.selection {
+        // A caret that only shifted with remote text keeps its pending marks.
+        let caret_block = |s: &Option<Selection>| match s {
+            Some(Selection::Text { anchor, head }) if anchor == head => Some(head.block),
+            _ => None,
+        };
+        if caret_block(&selection).is_none()
+            || caret_block(&selection) != caret_block(&self.selection)
+        {
             self.pending_marks = None;
         }
         if group_ended || selection != self.selection {
