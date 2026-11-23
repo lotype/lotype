@@ -11,7 +11,8 @@ impl Document {
         let mut slice = Document::new(self.schema().clone());
         if start.block.column().is_some() {
             let copy = slice.insert_block(None, 0, "paragraph")?;
-            let spans = self.spans_in(start.block, start.offset..end.offset)?;
+            let mut spans = self.spans_in(start.block, start.offset..end.offset)?;
+            slice.fit_marks(&mut spans);
             slice.insert_spans(copy, 0, &spans)?;
             return Ok(slice);
         }
@@ -36,7 +37,10 @@ impl Document {
                     0
                 };
                 let to = if block == end.block { end.offset } else { len };
-                slice.insert_spans(copy, 0, &self.spans_in(block, from..to)?)?;
+                // Marks of a peer with another schema would stop the copy.
+                let mut spans = self.spans_in(block, from..to)?;
+                slice.fit_marks(&mut spans);
+                slice.insert_spans(copy, 0, &spans)?;
             }
             copies.insert(block, copy);
         }
@@ -46,7 +50,7 @@ impl Document {
     /// Copies the blocks of `other`, with what is in them, among the
     /// children of `parent` from `index` on, as a paste does. Returns those
     /// it made at that level. What this schema lacks is left out: blocks of
-    /// unknown types with what is in them, marks and atoms, and tables.
+    /// unknown types with what is in them, marks and atoms.
     pub fn insert_document(
         &mut self,
         parent: Option<BlockId>,
@@ -71,7 +75,10 @@ impl Document {
     ) -> Result<Option<BlockId>> {
         let block_type = other.block_type(block)?;
         let known = self.schema().block_spec(&block_type).is_some();
-        if !known || block_type == "table" || other.is_table_part(block) {
+        if known && block_type == "table" {
+            return self.copy_table(other, block, parent, index).map(Some);
+        }
+        if !known || other.is_table_part(block) {
             return Ok(None);
         }
         let copy = self.insert_block(parent, index, &block_type)?;
@@ -90,5 +97,27 @@ impl Document {
             }
         }
         Ok(Some(copy))
+    }
+
+    /// Copies a table with the text of its cells. Its rows and columns are
+    /// all copied, whatever their attributes.
+    fn copy_table(
+        &mut self,
+        other: &Document,
+        table: BlockId,
+        parent: Option<BlockId>,
+        index: usize,
+    ) -> Result<BlockId> {
+        let (rows, columns) = (other.children(Some(table))?, other.columns(table)?);
+        let copy = self.insert_table(parent, index, rows.len(), columns.len())?;
+        let copied = (self.children(Some(copy))?, self.columns(copy)?);
+        for (row, copied_row) in rows.into_iter().zip(copied.0) {
+            for (column, copied_column) in columns.iter().zip(&copied.1) {
+                let mut spans = other.spans(other.cell(row, *column)?)?;
+                self.fit_marks(&mut spans);
+                self.insert_spans(self.cell(copied_row, *copied_column)?, 0, &spans)?;
+            }
+        }
+        Ok(copy)
     }
 }

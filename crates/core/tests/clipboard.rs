@@ -135,3 +135,76 @@ fn what_the_schema_lacks_is_left_out_of_a_paste() {
     ed.paste_document(&copied).unwrap();
     assert_editor(&ed, blocks![block("heading", vec!["kept<a>".into()])]);
 }
+
+#[test]
+fn a_pasted_table_keeps_its_cells() {
+    let mut ed = editor(blocks![p!["hello"], p!["<a>"]]);
+    ed.paste_markdown("| a | b |\n| - | - |\n| c | d |")
+        .unwrap();
+    let doc = ed.document();
+    let table = doc.blocks()[1];
+    assert_eq!(doc.block_type(table).unwrap(), "table");
+    let rows = doc.children(Some(table)).unwrap();
+    let columns = doc.columns(table).unwrap();
+    let cell = |row: usize, column: usize| {
+        doc.text(doc.cell(rows[row], columns[column]).unwrap())
+            .unwrap()
+    };
+    assert_eq!(
+        [cell(0, 0), cell(0, 1), cell(1, 0), cell(1, 1)],
+        ["a", "b", "c", "d"]
+    );
+}
+
+#[test]
+fn a_paste_with_nothing_the_schema_takes_leaves_the_block_whole() {
+    let schema = lotype_core::Schema::builtin().block(lotype_core::BlockSpec::new(
+        "poll",
+        lotype_core::Content::Inline,
+    ));
+    let mut other = lotype_core::Document::new(schema);
+    other.insert_block(None, 0, "poll").unwrap();
+    other.insert_block(None, 1, "poll").unwrap();
+    let mut copied = lotype_core::Document::new(lotype_core::Schema::builtin());
+    copied.import(&other.export_snapshot().unwrap()).unwrap();
+    let mut ed = editor(blocks![p!["ab<a>cd"]]);
+    ed.paste_document(&copied).unwrap();
+    assert_editor(&ed, blocks![p!["ab<a>cd"]]);
+}
+
+#[test]
+fn code_takes_the_text_of_pasted_blocks_and_skips_the_rest() {
+    let mut ed = editor(blocks![block("code_block", vec!["<a>".into()])]);
+    ed.paste_markdown("x\n\n---\n\ny").unwrap();
+    assert_editor(&ed, blocks![block("code_block", vec!["x\ny<a>".into()])]);
+}
+
+#[test]
+fn marks_of_another_schema_neither_show_nor_stop_a_copy() {
+    let raw = loro::LoroDoc::new();
+    let expand = loro::ExpandType::None;
+    raw.config_default_text_style(Some(loro::StyleConfig { expand }));
+    let (doc, _) = build(blocks![p!["hello"]]);
+    raw.import(&doc.export_snapshot().unwrap()).unwrap();
+    let block = doc.blocks()[0];
+    let node = loro::TreeID::try_from(block.to_string().as_str()).unwrap();
+    let meta = raw.get_tree("blocks").get_meta(node).unwrap();
+    let text = meta
+        .get("$text")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_text()
+        .unwrap();
+    text.mark(0..2, "$atom", "scalar").unwrap();
+    text.mark(2..4, "glow", true).unwrap();
+    raw.commit();
+    let mut doc = lotype_core::Document::new(lotype_core::Schema::builtin());
+    doc.import(&raw.export(loro::ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let spans = doc.spans(block).unwrap();
+    assert!(spans.iter().all(|span| !span.marks.contains_key("$atom")));
+    let end = lotype_core::Pos::new(block, 5);
+    let slice = doc.slice(lotype_core::Pos::new(block, 0), end).unwrap();
+    assert_eq!(slice.plain_text(slice.blocks()[0]).unwrap(), "hello");
+}

@@ -152,15 +152,13 @@ impl Editor {
             };
         let mut spans = match top[..] {
             _ if plain => {
-                let texts = pasted
-                    .blocks()
-                    .into_iter()
-                    .map(|block| pasted.plain_text(block));
+                // Blocks without text, such as a divider, are left out.
+                let texts = pasted.blocks().into_iter();
+                let texts: Vec<_> = texts
+                    .filter_map(|block| pasted.plain_text(block).ok())
+                    .collect();
                 let marks = self.active_marks()?;
-                vec![Span::new(
-                    texts.collect::<Result<Vec<_>>>()?.join("\n"),
-                    marks,
-                )]
+                vec![Span::new(texts.join("\n"), marks)]
             }
             [only] if paragraph(only)? => pasted.spans(only)?,
             _ => Vec::new(),
@@ -183,7 +181,12 @@ impl Editor {
             let tail = doc.split_block(caret)?.block;
             let parent = doc.parent(caret.block)?;
             let inserted = doc.insert_document(parent, doc.index_of(caret.block)? + 1, pasted)?;
-            if first_joins && !inserted.is_empty() {
+            // Nothing the schema takes: the block is whole again.
+            if inserted.is_empty() {
+                let caret = doc.merge_backward(tail)?.unwrap_or(caret);
+                return Ok(Some(Selection::caret(caret)));
+            }
+            if first_joins {
                 doc.merge_backward(inserted[0])?;
             } else if doc.text_len(caret.block)? == 0 {
                 doc.remove_block(caret.block)?;
