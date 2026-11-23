@@ -12,11 +12,10 @@ pub(crate) type TypingMarks = BTreeMap<String, LoroValue>;
 pub(crate) fn visible_marks(
     marks: impl IntoIterator<Item = (String, LoroValue)>,
 ) -> BTreeMap<String, Value> {
-    // Names starting with `$` are the core's own, as the atom mark is,
-    // whatever value a peer gave them.
+    // The atom mark is the core's own, whatever value a peer gave it.
     marks
         .into_iter()
-        .filter(|(name, _)| !name.starts_with('$'))
+        .filter(|(name, _)| name != ATOM)
         .filter_map(|(name, value)| Some((name, Value::from_loro(&value)?)))
         .collect()
 }

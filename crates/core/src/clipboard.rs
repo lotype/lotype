@@ -5,7 +5,8 @@ use crate::{BlockId, Document, Pos, Result};
 impl Document {
     /// The text from `a` to `b` with the blocks it is in, as a document of
     /// its own: what a copy of that selection holds. A block keeps its
-    /// parent when that is copied too. Tables are left out.
+    /// parent when that is copied too, and a table it goes through is
+    /// copied whole.
     pub fn slice(&self, a: Pos, b: Pos) -> Result<Document> {
         let (start, end) = self.ordered(a, b)?;
         let mut slice = Document::new(self.schema().clone());
@@ -20,12 +21,17 @@ impl Document {
         for block in self.span(start.block, end.block)? {
             // Blocks of types this schema does not know are left out too.
             let known = self.spec(block).is_ok();
-            if !known || self.is_table_part(block) || self.block_type(block)? == "table" {
-                continue;
-            }
             let parent = self.parent(block)?;
             let parent = parent.and_then(|parent| copies.get(&parent).copied());
             let index = slice.children(parent)?.len();
+            // A selection goes through a table only whole: its ends are text.
+            if known && self.block_type(block)? == "table" {
+                slice.copy_table(self, block, parent, index)?;
+                continue;
+            }
+            if !known || self.is_table_part(block) {
+                continue;
+            }
             let copy = slice.insert_block(parent, index, &self.block_type(block)?)?;
             for (key, value) in self.attrs(block)? {
                 slice.set_attr(copy, &key, value)?;

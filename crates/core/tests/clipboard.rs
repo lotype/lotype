@@ -208,3 +208,16 @@ fn marks_of_another_schema_neither_show_nor_stop_a_copy() {
     let slice = doc.slice(lotype_core::Pos::new(block, 0), end).unwrap();
     assert_eq!(slice.plain_text(slice.blocks()[0]).unwrap(), "hello");
 }
+
+#[test]
+fn a_table_a_selection_goes_through_is_copied_whole() {
+    let mut ed = editor(blocks![p!["<a>"]]);
+    ed.paste_markdown("ab\n\n| a |\n| - |\n| b |\n\ncd")
+        .unwrap();
+    let doc = ed.document();
+    let blocks = doc.blocks();
+    let (first, last) = (blocks[0], *blocks.last().unwrap());
+    let end = lotype_core::Pos::new(last, doc.text_len(last).unwrap());
+    let slice = doc.slice(lotype_core::Pos::new(first, 1), end).unwrap();
+    assert_eq!(slice.to_markdown(), "b\n\n| a |\n| --- |\n| b |\n\ncd\n");
+}
