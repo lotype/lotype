@@ -72,8 +72,37 @@ pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
     canvas(|_, _, _| (), paint).absolute().size_full()
 }
 
-/// Paints the caret, after the text, while the editor has focus.
+/// Paints the caret, after the text, while the editor has focus. Laid out
+/// first, it scrolls the editor to bring the caret into sight when asked to.
 pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
+    let revealed = view.clone();
+    let prepaint = move |_: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
+        let view = revealed.read(cx);
+        if !view.reveal.replace(false) {
+            return;
+        }
+        // The head of a range, which is where the selection grows.
+        let head = match view.editor.selection() {
+            Some(Selection::Text { head, .. }) => view.caret_bounds(*head),
+            _ => None,
+        };
+        let (Some(caret), scroll) = (view.caret().or(head), &view.scroll) else {
+            return;
+        };
+        let (shown, mut offset) = (scroll.bounds(), scroll.offset());
+        if caret.top() < shown.top() {
+            offset.y += shown.top() - caret.top();
+        } else if caret.bottom() > shown.bottom() {
+            offset.y -= caret.bottom() - shown.bottom();
+        } else {
+            return;
+        }
+        offset.y = offset.y.min(Pixels::ZERO).max(-scroll.max_offset().y);
+        scroll.set_offset(offset);
+        // The text is placed already: draw again, as a refresh while
+        // drawing is dropped.
+        window.defer(cx, |window, _| window.refresh());
+    };
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
         let view = view.read(cx);
         if !view.focus.is_focused(window) {
@@ -84,5 +113,5 @@ pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
             window.paint_quad(fill(bounds, color));
         }
     };
-    canvas(|_, _, _| (), paint).absolute().size_full()
+    canvas(prepaint, paint).absolute().size_full()
 }

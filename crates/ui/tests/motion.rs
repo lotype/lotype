@@ -52,10 +52,11 @@ fn words_lines_and_the_whole_text(cx: &mut TestAppContext) {
 fn up_and_down_keep_to_a_column(cx: &mut TestAppContext) {
     let code = block("code_block", vec!["abcd\nab\nabcd".into()]);
     let mut ed = EditorTestContext::new(cx, blocks![p!["abc<a>d"], code, p!["abcd"]]);
+    // The code block's padding moves its text right of the column.
     ed.keys("down");
     ed.assert(blocks![
         p!["abcd"],
-        block("code_block", vec!["abc<a>d\nab\nabcd".into()]),
+        block("code_block", vec!["ab<a>cd\nab\nabcd".into()]),
         p!["abcd"]
     ]);
     ed.keys("down");

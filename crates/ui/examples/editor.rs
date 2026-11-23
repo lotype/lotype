@@ -10,7 +10,10 @@ use lotype_ui::EditorView;
 const TEXT: &str = "# Lotype\n\nSome **bold**, *italic*, ~~struck~~ and `code` text, \
 with a [link](https://lotype.dev).\n\n## Wrapping\n\nA long paragraph that wraps \
 over several lines when the window is narrow enough, to see how lines break. \
-日本語のテキストも。\n\n```\nfn main() {}\n```\n";
+日本語のテキストも。\n\n```\nfn main() {}\n```\n\n\
+- A bullet\n  - nested under it\n    1. numbered\n    2. and counted\n\
+- [ ] a task\n- [x] a task done\n\n> A quote\n>\n> - with a list in it\n\n\
+> [!TIP]\n> An alert.\n\n---\n\nThe end.\n";
 
 /// A mention, written as `@name`.
 fn mention(atom: &Atom) -> String {

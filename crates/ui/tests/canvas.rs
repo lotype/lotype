@@ -1,0 +1,159 @@
+use gpui::{Modifiers, Pixels, Point, TestAppContext, point, px};
+use lotype_core::test_support::block;
+use lotype_core::{BlockId, Pos, Value, blocks, bullet, p};
+use lotype_ui::test_support::EditorTestContext;
+
+fn block_at(ed: &mut EditorTestContext, index: usize) -> BlockId {
+    ed.editor(|editor| editor.document().blocks()[index])
+}
+
+/// Where the marker before the text of the block at `index` is.
+fn marker(ed: &mut EditorTestContext, index: usize) -> Point<Pixels> {
+    let block = block_at(ed, index);
+    ed.view.update(ed.cx, |view, _| {
+        let text = view.text_bounds(block).unwrap();
+        point(text.left() - px(12.), text.top() + px(11.))
+    })
+}
+
+#[gpui::test]
+fn nested_blocks_are_indented_under_their_parent(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["parent", bullet!["child"]], p!["next"]]);
+    let (parent, child, next) = (
+        block_at(&mut ed, 0),
+        block_at(&mut ed, 1),
+        block_at(&mut ed, 2),
+    );
+    ed.view.update(ed.cx, |view, _| {
+        let left = |block| view.text_bounds(block).unwrap().left();
+        assert!(left(child) > left(parent));
+        assert_eq!(left(next), left(parent));
+    });
+}
+
+#[gpui::test]
+fn a_click_on_a_box_checks_it_and_undo_unchecks_it(cx: &mut TestAppContext) {
+    let task = block("check_list_item", vec!["task<a>".into()]).attr("checked", false);
+    let mut ed = EditorTestContext::new(cx, blocks![task]);
+    let checked = |ed: &mut EditorTestContext| {
+        ed.editor(|editor| {
+            let block = editor.document().blocks()[0];
+            editor.document().attr(block, "checked").unwrap()
+        })
+    };
+    let at = marker(&mut ed, 0);
+    ed.cx.simulate_click(at, Modifiers::none());
+    assert_eq!(checked(&mut ed), Some(Value::Bool(true)));
+    // The click on the box leaves the caret where it was.
+    let task = block("check_list_item", vec!["task<a>".into()]).attr("checked", true);
+    ed.assert(blocks![task]);
+    ed.keys("cmd-z");
+    assert_eq!(checked(&mut ed), Some(Value::Bool(false)));
+}
+
+#[gpui::test]
+fn a_toggle_hides_its_children_until_the_caret_goes_in(cx: &mut TestAppContext) {
+    let toggle = block(
+        "toggle_list_item",
+        vec!["toggle<a>".into(), p!["inside"].into()],
+    );
+    let mut ed = EditorTestContext::new(cx, blocks![toggle, p!["after"]]);
+    let inside = block_at(&mut ed, 1);
+    let shown = |ed: &mut EditorTestContext| {
+        ed.view
+            .update(ed.cx, |view, _| view.text_bounds(inside).is_some())
+    };
+    assert!(shown(&mut ed));
+    let at = marker(&mut ed, 0);
+    ed.cx.simulate_click(at, Modifiers::none());
+    assert!(!shown(&mut ed));
+    // Arrows go past what is hidden.
+    ed.keys("down");
+    let after = block_at(&mut ed, 2);
+    ed.editor(|editor| match editor.selection() {
+        Some(lotype_core::Selection::Text { head, .. }) => assert_eq!(head.block, after),
+        other => panic!("{other:?}"),
+    });
+    // A selection put inside opens the toggle again.
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let inside = lotype_core::Selection::caret(Pos::new(inside, 0));
+            editor.set_selection(Some(inside)).unwrap();
+        });
+    });
+    ed.cx.run_until_parked();
+    assert!(shown(&mut ed));
+}
+
+#[gpui::test]
+fn the_caret_is_scrolled_into_sight(cx: &mut TestAppContext) {
+    let many: Vec<_> = (0..200).map(|_| p!["line"]).collect();
+    let mut ed = EditorTestContext::new(cx, many);
+    let first = block_at(&mut ed, 0);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            editor
+                .set_selection(Some(lotype_core::Selection::caret(Pos::new(first, 0))))
+                .unwrap();
+        });
+    });
+    ed.cx.run_until_parked();
+    let height = ed.cx.update(|window, _| window.viewport_size().height);
+    ed.keys("cmd-down");
+    ed.cx.run_until_parked();
+    let last = block_at(&mut ed, 199);
+    let caret = ed.view.update(ed.cx, |view, _| {
+        view.caret_bounds(Pos::new(last, 4)).unwrap()
+    });
+    assert!(caret.bottom() <= height, "{caret:?} is below {height:?}");
+    assert!(caret.top() >= px(0.));
+    ed.keys("cmd-up");
+    let caret = ed.view.update(ed.cx, |view, _| {
+        view.caret_bounds(Pos::new(first, 0)).unwrap()
+    });
+    assert!(
+        caret.top() >= px(0.) && caret.bottom() <= height,
+        "{caret:?} {height:?}"
+    );
+}
+
+#[gpui::test]
+fn closing_a_toggle_takes_the_caret_out_of_it(cx: &mut TestAppContext) {
+    let toggle = block(
+        "toggle_list_item",
+        vec!["toggle".into(), p!["in<a>side"].into()],
+    );
+    let mut ed = EditorTestContext::new(cx, blocks![toggle]);
+    let inside = block_at(&mut ed, 1);
+    let at = marker(&mut ed, 0);
+    ed.cx.simulate_click(at, Modifiers::none());
+    let shown = ed
+        .view
+        .update(ed.cx, |view, _| view.text_bounds(inside).is_some());
+    assert!(!shown);
+    let toggle = block(
+        "toggle_list_item",
+        vec!["toggle<a>".into(), p!["inside"].into()],
+    );
+    ed.assert(blocks![toggle]);
+}
+
+#[gpui::test]
+fn a_selection_is_scrolled_after_its_head(cx: &mut TestAppContext) {
+    let many: Vec<_> = (0..200).map(|_| p!["line"]).collect();
+    let mut ed = EditorTestContext::new(cx, many);
+    let (first, last) = (block_at(&mut ed, 0), block_at(&mut ed, 199));
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let caret = lotype_core::Selection::caret(Pos::new(first, 0));
+            editor.set_selection(Some(caret)).unwrap();
+        });
+    });
+    ed.keys("cmd-shift-down");
+    ed.cx.run_until_parked();
+    let height = ed.cx.update(|window, _| window.viewport_size().height);
+    let head = ed.view.update(ed.cx, |view, _| {
+        view.caret_bounds(Pos::new(last, 4)).unwrap()
+    });
+    assert!(head.bottom() <= height, "{head:?} is below {height:?}");
+}

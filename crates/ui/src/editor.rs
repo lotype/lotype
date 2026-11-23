@@ -1,3 +1,4 @@
+mod canvas;
 mod clipboard;
 mod input;
 mod keys;
@@ -5,13 +6,14 @@ mod motion;
 mod paint;
 mod render;
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Bounds, Context, CursorStyle, DispatchPhase, ElementInputHandler, Entity,
     FocusHandle, Focusable, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Render,
-    Window, canvas, div, prelude::*,
+    ScrollHandle, Window, canvas, div, prelude::*,
 };
 use lotype_core::{Atom, BlockId, Editor, KeyBinding, Pos, default_keymap};
 
@@ -39,6 +41,11 @@ pub struct EditorView {
     /// The side of a soft wrap the caret is on, while it stays where it was put.
     side: Option<(Pos, Affinity)>,
     atom_views: HashMap<String, AtomView>,
+    /// Toggle list items whose children are hidden.
+    closed: HashSet<BlockId>,
+    scroll: ScrollHandle,
+    /// The caret is to be scrolled into sight once it is laid out.
+    reveal: Rc<Cell<bool>>,
 }
 
 impl EditorView {
@@ -54,6 +61,9 @@ impl EditorView {
             dragging: false,
             side: None,
             atom_views: HashMap::new(),
+            closed: HashSet::new(),
+            scroll: ScrollHandle::new(),
+            reveal: Rc::default(),
         }
     }
 
@@ -146,12 +156,17 @@ impl Render for EditorView {
         self.order.clear();
         let base = window.text_style();
         let shown = self.shown();
-        let blocks = self.editor.document().blocks();
-        let texts: Vec<_> = blocks
-            .into_iter()
-            .filter_map(|block| self.block_text(block, &base, shown.as_ref(), window, cx))
+        self.open_around_selection();
+        let rows = canvas::rows(self.editor.document(), &self.closed);
+        let rows: Vec<_> = rows
+            .iter()
+            .filter_map(|row| self.row_element(row, &base, shown.as_ref(), window, cx))
             .collect();
         div()
+            .id("lotype-editor")
+            .track_scroll(&self.scroll)
+            .overflow_y_scroll()
+            .size_full()
             .track_focus(&self.focus)
             .key_context("LotypeEditor")
             .on_key_down(cx.listener(Self::key_down))
@@ -160,9 +175,8 @@ impl Render for EditorView {
             .relative()
             .flex()
             .flex_col()
-            .gap_1()
             .child(paint::selection(cx.entity()))
-            .children(texts)
+            .children(rows)
             .child(paint::caret(cx.entity()))
             .child(window_handlers(cx.entity(), self.focus.clone()))
     }

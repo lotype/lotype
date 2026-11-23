@@ -264,6 +264,7 @@ impl EditorView {
     }
 
     pub(super) fn selection_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal.set(true);
         window.notify_text_selection_changed(&self.focus);
         window.invalidate_character_coordinates();
         cx.notify();
