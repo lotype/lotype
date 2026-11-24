@@ -179,12 +179,16 @@ impl Editor {
     /// Enter in a quote or an alert, or in a block in one, leaves the
     /// nearest of them: the text after the caret goes into a paragraph right
     /// after it, or an empty block there goes out itself, as a paragraph,
-    /// taking an alert it leaves empty away. Returns whether it did.
+    /// taking an alert it leaves empty away. A list item goes on with the
+    /// next item instead, as it does anywhere. Returns whether it did.
     pub(super) fn leave_quote(&mut self) -> Result<bool> {
         let Some(Selection::Text { anchor, head }) = self.selection else {
             return Ok(false);
         };
-        if head.block.column().is_some() || anchor.block.column().is_some() {
+        if head.block.column().is_some()
+            || anchor.block.column().is_some()
+            || LIST_ITEMS.contains(&self.doc.block_type(head.block)?.as_str())
+        {
             return Ok(false);
         }
         let mut at = Some(head.block);

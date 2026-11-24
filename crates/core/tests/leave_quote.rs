@@ -41,13 +41,30 @@ fn enter_in_a_quote_takes_the_text_after_the_caret_out() {
         &ed,
         blocks![quote(vec!["q".into(), p!["inside"].into()]), p!["<a>uote"]],
     );
-    // From a block in it too; Shift-Enter breaks the line in it.
+    // A list in it goes on with its next item, and leaves from an empty one.
     let mut ed = editor(blocks![quote(vec!["q".into(), bullet!["item<a>"].into()])]);
+    ed.split_block().unwrap();
+    assert_editor(
+        &ed,
+        blocks![quote(vec![
+            "q".into(),
+            bullet!["item"].into(),
+            bullet!["<a>"].into()
+        ])],
+    );
+    ed.split_block().unwrap();
     ed.split_block().unwrap();
     assert_editor(
         &ed,
         blocks![quote(vec!["q".into(), bullet!["item"].into()]), p!["<a>"]],
     );
+    let checked = block("check_list_item", vec!["done<a>".into()]).attr("checked", true);
+    let mut ed = editor(blocks![tip(vec![checked.into()])]);
+    ed.split_block().unwrap();
+    let checked = block("check_list_item", vec!["done".into()]).attr("checked", true);
+    let next = block("check_list_item", vec!["<a>".into()]);
+    assert_editor(&ed, blocks![tip(vec![checked.into(), next.into()])]);
+    // Shift-Enter breaks the line in it.
     let mut ed = editor(blocks![quote(vec!["a<a>b".into()])]);
     ed.insert_line_break().unwrap();
     assert_editor(&ed, blocks![quote(vec!["a\n<a>b".into()])]);

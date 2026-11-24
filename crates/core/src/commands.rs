@@ -16,7 +16,8 @@ use crate::{BlockId, BlockSpec, Document, Error, Pos, Result, Value};
 /// rolls that back as well.
 impl Document {
     /// Splits a block at `pos`. The text after `pos` and the block's children
-    /// move to a new sibling of the same type. Returns the start of that sibling.
+    /// move to a new sibling of the same type, with its attributes but
+    /// `checked` and `start`. Returns the start of that sibling.
     pub fn split_block(&mut self, pos: Pos) -> Result<Pos> {
         self.check_pos(pos)?;
         let block = pos.block;
@@ -29,6 +30,12 @@ impl Document {
 
         let new = self.create_block(self.parent(block)?, index + 1, &block_type)?;
         self.copy_attrs(block, new)?;
+        // The next item of a list starts unchecked, and counts on.
+        for key in ["checked", "start"] {
+            if self.attr(new, key)?.is_some() {
+                self.remove_attr(new, key)?;
+            }
+        }
         self.copy_text(block, pos.offset..len, new, 0)?;
         self.delete_text(block, pos.offset..len)?;
         // Children follow the tail, which keeps everything in the same visual order.
