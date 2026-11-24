@@ -19,6 +19,8 @@ fn the_default_items_are_distinct_and_fit_the_built_in_schema() {
     let items = default_slash_items();
     let keys: HashSet<_> = items.iter().map(|item| item.key.as_str()).collect();
     assert_eq!(keys.len(), items.len());
+    // Typing in an empty block makes a paragraph already.
+    assert!(!items.iter().any(|item| item.block_type == "paragraph"));
     let schema = Schema::builtin();
     for item in &items {
         assert!(

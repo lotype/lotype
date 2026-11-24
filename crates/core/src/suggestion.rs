@@ -3,7 +3,8 @@ use std::ops::Range;
 use crate::table::{CELL, ROW, TABLE};
 use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
 
-/// An entry of the slash menu: a block to insert.
+/// An entry of the slash menu: a block to insert. A paragraph is none: it
+/// is what typing in an empty block makes already.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashItem {
     /// A stable name, for a view to pick an icon or a translation by.
@@ -45,13 +46,6 @@ pub fn default_slash_items() -> Vec<SlashItem> {
         heading(1, "h1"),
         heading(2, "h2"),
         heading(3, "h3"),
-        item(
-            "paragraph",
-            "Paragraph",
-            "Basic blocks",
-            &["p", "text"],
-            "paragraph",
-        ),
         item(
             "quote",
             "Quote",
