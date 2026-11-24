@@ -13,7 +13,13 @@ over several lines when the window is narrow enough, to see how lines break. \
 日本語のテキストも。\n\n```\nfn main() {}\n```\n\n\
 - A bullet\n  - nested under it\n    1. numbered\n    2. and counted\n\
 - [ ] a task\n- [x] a task done\n\n> A quote\n>\n> - with a list in it\n\n\
-> [!TIP]\n> An alert.\n\n---\n\nAfter a divider.\n\n<!-- page-break -->\n\nThe end.\n";
+---\n\nAfter a divider.\n\n> [!TIP]\n> An alert.\n\n\
+| title | description |\n| --- | --- |\n| tony stark | a senior software engineer |\n\
+| gitfromwildan | IT support that keeps your business online. |\n\n\
+<!-- page-break -->\n\nThe end.\n";
+
+/// The second line of the last cell: Markdown puts a cell on one line.
+const CELL_LINE: &str = "\nAnd Dev open-source tools.";
 
 /// A mention, written as `@name`.
 fn mention(atom: &Atom) -> String {
@@ -38,6 +44,16 @@ fn main() {
         let mut doc = Document::new(schema);
         doc.insert_markdown(None, 0, TEXT)
             .expect("the sample is valid Markdown");
+        let table = doc.blocks().into_iter().find(|block| {
+            doc.block_type(*block)
+                .is_ok_and(|block_type| block_type == "table")
+        });
+        let table = table.expect("the sample has a table");
+        let last_row = *doc.children(Some(table)).unwrap().last().unwrap();
+        let last_column = *doc.columns(table).unwrap().last().unwrap();
+        let cell = doc.cell(last_row, last_column).unwrap();
+        let end = doc.text_len(cell).unwrap();
+        doc.insert_text(cell, end, CELL_LINE).unwrap();
         let mut editor = Editor::new(doc);
         // An atom at the end of the second paragraph, and the caret after it.
         let second = editor.document().blocks()[1];
@@ -48,7 +64,7 @@ fn main() {
             .expect("the block has text");
         let ann = Atom::new("mention").attr("name", "Ann");
         editor.insert_atom(ann).expect("the schema has mentions");
-        let bounds = Bounds::centered(None, size(px(640.), px(480.)), cx);
+        let bounds = Bounds::centered(None, size(px(640.), px(960.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             ..Default::default()
