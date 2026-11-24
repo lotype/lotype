@@ -4,7 +4,7 @@ use std::ops::Range;
 use loro::TreeParentId;
 
 use crate::table::TABLE;
-use crate::{BlockId, BlockSpec, Document, Error, Pos, Result, Value};
+use crate::{BlockId, BlockSpec, Content, Document, Error, Pos, Result, Value};
 
 /// Edits that span more than one primitive operation.
 ///
@@ -16,8 +16,7 @@ use crate::{BlockId, BlockSpec, Document, Error, Pos, Result, Value};
 /// rolls that back as well.
 impl Document {
     /// Splits a block at `pos`. The text after `pos` and the block's children
-    /// move to a new sibling of the same type, with its attributes but
-    /// `checked` and `start`. Returns the start of that sibling.
+    /// move to a new sibling of the same type. Returns the start of that sibling.
     pub fn split_block(&mut self, pos: Pos) -> Result<Pos> {
         self.check_pos(pos)?;
         let block = pos.block;
@@ -30,12 +29,6 @@ impl Document {
 
         let new = self.create_block(self.parent(block)?, index + 1, &block_type)?;
         self.copy_attrs(block, new)?;
-        // The next item of a list starts unchecked, and counts on.
-        for key in ["checked", "start"] {
-            if self.attr(new, key)?.is_some() {
-                self.remove_attr(new, key)?;
-            }
-        }
         self.copy_text(block, pos.offset..len, new, 0)?;
         self.delete_text(block, pos.offset..len)?;
         // Children follow the tail, which keeps everything in the same visual order.
@@ -59,7 +52,8 @@ impl Document {
             return Ok(None);
         };
         let Ok(join) = self.text_len(prev) else {
-            if self.parent(block)? == Some(prev) {
+            // A block of a type only a peer knows may hold text there.
+            if self.parent(block)? == Some(prev) || self.spec(prev).is_err() {
                 return Ok(None);
             }
             self.remove_block(prev)?;
@@ -204,11 +198,15 @@ impl Document {
         Ok(())
     }
 
-    /// Removes `block` where it holds no text and nothing is left in it,
-    /// as an alert whose blocks are gone, and so the blocks around it.
+    /// Removes `block` where its type holds no text but blocks, and none is
+    /// left in it, as an alert whose blocks are gone, and so the blocks
+    /// around it. A block of a type only a peer knows stays, and so does one
+    /// that a merge left with blocks its type takes none of.
     pub(crate) fn remove_if_emptied(&mut self, mut block: Option<BlockId>) -> Result<()> {
         while let Some(at) = block.filter(|at| self.contains(*at) && !self.is_table_part(*at)) {
-            let empty = self.text_len(at).is_err()
+            let container =
+                |spec: &BlockSpec| spec.content() == Content::None && spec.allows_children();
+            let empty = self.spec(at).is_ok_and(container)
                 && self
                     .child_ids(TreeParentId::Node(self.live(at)?))
                     .is_empty();
@@ -319,11 +317,14 @@ impl Document {
         after: bool,
     ) -> Result<()> {
         let parent = self.parent(target)?;
+        let from = self.parent(block)?;
         let mut index = self.index_of(target)? + usize::from(after);
         // The index is where it ends up, once it has left its place.
-        if self.parent(block)? == parent && self.index_of(block)? < index {
+        if from == parent && self.index_of(block)? < index {
             index -= 1;
         }
-        self.move_block(block, parent, index)
+        self.move_block(block, parent, index)?;
+        // An alert whose last block left goes.
+        self.remove_if_emptied(from)
     }
 }

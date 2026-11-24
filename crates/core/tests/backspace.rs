@@ -96,7 +96,7 @@ fn backspace_takes_the_first_block_out_of_an_alert() {
     assert_editor(&ed, blocks![p!["a<a>one"], tip(vec![p!["two"].into()])]);
 
     // An alert left empty goes, and its block stays to be written in.
-    let mut ed = editor(blocks![tip(vec![h1!["<a>"].into()])]);
+    let mut ed = editor(blocks![tip(vec![bullet!["<a>"].into()])]);
     ed.delete_backward().unwrap();
     ed.delete_backward().unwrap();
     assert_editor(&ed, blocks![p!["<a>"]]);

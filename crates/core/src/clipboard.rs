@@ -27,10 +27,17 @@ impl Document {
             let known = self.spec(block).is_ok();
             let parent = self.parent(block)?;
             let parent = parent.and_then(|parent| copies.get(&parent).copied());
+            // A merge can leave blocks in one whose type takes none, or a
+            // heading in a block: in the copy they are next to it.
+            let top_level = self.spec(block).is_ok_and(|spec| spec.is_top_level());
+            let takes = |parent: &BlockId| slice.check_allows_children(Some(*parent)).is_ok();
+            let parent = parent.filter(|parent| !top_level && takes(parent));
             let index = slice.children(parent)?.len();
             // A selection goes through a table only whole: its ends are text.
             if known && self.block_type(block)? == "table" {
-                slice.copy_table(self, block, parent, index)?;
+                if slice.has_tables() {
+                    slice.copy_table(self, block, parent, index)?;
+                }
                 continue;
             }
             if !known || self.is_table_part(block) {
@@ -115,12 +122,21 @@ impl Document {
         let block_type = other.block_type(block)?;
         let known = self.schema().block_spec(&block_type).is_some();
         if known && block_type == "table" {
+            // Without its rows and cells in the schema, a table is left out.
+            if !self.has_tables() {
+                return Ok(None);
+            }
             return self.copy_table(other, block, parent, index).map(Some);
         }
         if !known || other.is_table_part(block) {
             return Ok(None);
         }
-        let copy = self.insert_block(parent, index, &block_type)?;
+        let copy = match self.insert_block(parent, index, &block_type) {
+            // A heading goes in no block: one pasted into a nest is made
+            // there for the paste to lift out, as one a peer nested stays.
+            Err(Error::TopLevelOnly(_)) => self.create_block(parent, index, &block_type)?,
+            copy => copy?,
+        };
         for (key, value) in other.attrs(block)? {
             self.set_attr(copy, &key, value)?;
         }
@@ -138,8 +154,6 @@ impl Document {
         Ok(Some(copy))
     }
 
-    /// Copies a table with the text of its cells. Its rows and columns are
-    /// all copied, whatever their attributes.
     /// Copies the cells between two cells of one table into a document of
     /// its own, as a table of just those cells.
     pub fn slice_cells(&self, a: BlockId, b: BlockId) -> Result<Document> {
@@ -160,6 +174,38 @@ impl Document {
         Ok(slice)
     }
 
+    /// The document as plain text: a block a line, and a table's rows a line
+    /// each with tabs between its cells, as spreadsheets take them. Blocks
+    /// without text, as a divider, are left out.
+    pub fn to_plain_text(&self) -> String {
+        let mut lines = Vec::new();
+        for block in self.blocks() {
+            if let Ok(text) = self.plain_text(block) {
+                lines.push(text);
+                continue;
+            }
+            let Ok(columns) = self.columns(block) else {
+                continue;
+            };
+            for row in self.children(Some(block)).unwrap_or_default() {
+                let cells = columns
+                    .iter()
+                    .filter_map(|column| self.cell(row, *column).ok());
+                let cells = cells.filter_map(|cell| self.plain_text(cell).ok());
+                lines.push(cells.collect::<Vec<_>>().join("\t"));
+            }
+        }
+        lines.join("\n")
+    }
+
+    /// Whether the schema has tables whole, with their rows and cells.
+    fn has_tables(&self) -> bool {
+        let known = |name| self.schema().block_spec(name).is_some();
+        known("table") && known("table_row") && known("table_cell")
+    }
+
+    /// Copies a table with the text of its cells. Its rows and columns are
+    /// all copied, whatever their attributes.
     fn copy_table(
         &mut self,
         other: &Document,

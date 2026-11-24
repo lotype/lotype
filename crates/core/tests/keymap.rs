@@ -51,19 +51,23 @@ fn outdent_takes_the_later_siblings_along_so_nothing_changes_place() {
 
 #[test]
 fn blocks_stay_where_the_move_does_not_fit() {
-    // A heading takes no children: nothing nests under it, and it cannot
-    // take its later siblings along.
+    // A heading takes no children: nothing nests under it. Nor does a code
+    // block, which cannot take its later siblings along.
     let mut ed = editor(blocks![h1!["title"], p!["b<a>"]]);
     ed.indent().unwrap();
     assert_eq!(
         shown(&ed),
         "heading level=1 \"title\"\nparagraph \"b<a>\"\n"
     );
-    let mut ed = editor(blocks![p!["top", h1!["x<a>"], p!["z"]]]);
+    let mut ed = editor(blocks![p![
+        "top",
+        block_node("code_block", vec!["x<a>".into()]),
+        p!["z"]
+    ]]);
     ed.outdent().unwrap();
     assert_eq!(
         shown(&ed),
-        "paragraph \"top\"\n  heading level=1 \"x<a>\"\n  paragraph \"z\"\n"
+        "paragraph \"top\"\n  code_block \"x<a>\"\n  paragraph \"z\"\n"
     );
     assert!(!ed.can_undo());
 }
@@ -267,11 +271,15 @@ fn a_block_selection_moves_each_block_once_whatever_its_order() {
 
 #[test]
 fn outdent_frees_a_block_that_takes_no_children_from_the_end() {
-    let mut ed = editor(blocks![p!["top", h1!["x<a>"], p!["y<b>"]]]);
+    let mut ed = editor(blocks![p![
+        "top",
+        block_node("code_block", vec!["x<a>".into()]),
+        p!["y<b>"]
+    ]]);
     ed.outdent().unwrap();
     assert_eq!(
         shown(&ed),
-        "paragraph \"top\"\nheading level=1 \"x<a>\"\nparagraph \"y<b>\"\n"
+        "paragraph \"top\"\ncode_block \"x<a>\"\nparagraph \"y<b>\"\n"
     );
 }
 

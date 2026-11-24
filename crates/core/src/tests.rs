@@ -8,7 +8,7 @@ use loro::TreeParentId;
 use crate::document::TYPE;
 use crate::test_support::{assert_document, build, outline};
 use crate::trash::TRASH;
-use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Schema, Selection, b, blocks, p};
+use crate::{BlockId, Document, Editor, Error, MAX_DEPTH, Pos, Schema, Selection, blocks, p};
 
 fn highlight(doc: &Document, block: BlockId, range: Range<usize>) {
     let text = doc.raw_text(block).unwrap();
@@ -145,10 +145,12 @@ fn range_commands_skip_blocks_of_an_unknown_type() {
         "paragraph \"o[bold|ne]\"\nembed\nparagraph \"[bold|th]ree\"\n"
     );
 
-    let caret = doc.merge_backward(three).unwrap().unwrap();
-    assert_eq!(caret, Pos::new(three, 0));
-    let expected = blocks![p!["o", b!["ne"]], p![b!["th"], "ree"]];
-    assert_document(&doc, None, expected);
+    // Nothing joins over it, and it stays: it may hold what only a peer reads.
+    assert_eq!(doc.merge_backward(three).unwrap(), None);
+    assert_eq!(
+        outline(&doc, None),
+        "paragraph \"o[bold|ne]\"\nembed\nparagraph \"[bold|th]ree\"\n"
+    );
 }
 
 #[test]

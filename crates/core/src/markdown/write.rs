@@ -329,15 +329,23 @@ fn reference(c: char) -> String {
     format!("&#{};", c as u32)
 }
 
+/// Code, a span a line: a code span reads a line break in it as a space,
+/// so the breaks go between the spans.
 fn code(text: &str) -> String {
-    let text = text.replace(['\n', '\r'], " ");
-    let fence = "`".repeat(longest_run(&text, '`') + 1);
-    let pad = if text.starts_with('`') || text.ends_with('`') {
-        " "
-    } else {
-        ""
+    let span = |line: &str| {
+        if line.is_empty() {
+            return String::new();
+        }
+        let fence = "`".repeat(longest_run(line, '`') + 1);
+        let pad = if line.starts_with('`') || line.ends_with('`') {
+            " "
+        } else {
+            ""
+        };
+        format!("{fence}{pad}{line}{pad}{fence}")
     };
-    format!("{fence}{pad}{text}{pad}{fence}")
+    let lines: Vec<_> = text.split(['\n', '\r']).map(span).collect();
+    lines.join("\\\n")
 }
 
 /// Text with every sign Markdown would read as markup escaped.

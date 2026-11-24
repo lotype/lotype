@@ -511,3 +511,11 @@ fn a_heading_deeper_than_five_reads_as_five() {
     let doc = read("###### Six");
     assert_eq!(shown(&doc), "heading level=5 \"Six\"\n");
 }
+
+#[test]
+fn a_line_break_in_code_is_written_between_two_spans() {
+    let doc = rich("paragraph", &[("a\nb", &["code"])]);
+    assert_eq!(doc.to_markdown(), "`a`\\\n`b`\n");
+    let back = read(&doc.to_markdown());
+    assert_eq!(back.text(back.blocks()[0]).unwrap(), "a\nb");
+}

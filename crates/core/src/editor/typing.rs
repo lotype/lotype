@@ -133,7 +133,11 @@ impl Editor {
                 if len == 0
                     && self.doc.next_block(head.block)?.is_none()
                     && self.doc.children(Some(head.block))?.is_empty()
-                    && self.doc.prev_block(head.block)?.is_some() =>
+                    // Not after a divider or an image, which Backspace
+                    // would take instead.
+                    && self.doc.prev_block(head.block)?.is_some_and(|prev| {
+                        self.doc.text_len(prev).is_ok() || self.last_cell(prev).is_some()
+                    }) =>
             {
                 self.join_or_drop(head)
             }
@@ -185,13 +189,15 @@ impl Editor {
         let Some(Selection::Text { anchor, head }) = self.selection else {
             return Ok(false);
         };
-        if head.block.column().is_some()
-            || anchor.block.column().is_some()
-            || LIST_ITEMS.contains(&self.doc.block_type(head.block)?.as_str())
-        {
+        if head.block.column().is_some() || anchor.block.column().is_some() {
             return Ok(false);
         }
-        let mut at = Some(head.block);
+        // Where the caret is once the selected text is gone.
+        let start = self.doc.ordered(anchor, head)?.0.block;
+        if LIST_ITEMS.contains(&self.doc.block_type(start)?.as_str()) {
+            return Ok(false);
+        }
+        let mut at = Some(start);
         let container = loop {
             let Some(block) = at else {
                 return Ok(false);

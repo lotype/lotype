@@ -131,8 +131,13 @@ impl Editor {
             if backward {
                 outermost.reverse();
             }
+            let around: Vec<_> = outermost.iter().map(|block| doc.parent(*block)).collect();
             for block in outermost {
                 shift(doc, block)?;
+            }
+            // An alert whose blocks all left goes.
+            for parent in around {
+                doc.remove_if_emptied(parent?)?;
             }
             Ok(selection.cloned())
         })
@@ -204,13 +209,8 @@ impl Editor {
             };
         let mut spans = match top[..] {
             _ if plain => {
-                // Blocks without text, such as a divider, are left out.
-                let texts = pasted.blocks().into_iter();
-                let texts: Vec<_> = texts
-                    .filter_map(|block| pasted.plain_text(block).ok())
-                    .collect();
                 let marks = self.active_marks()?;
-                vec![Span::new(texts.join("\n"), marks)]
+                vec![Span::new(pasted.to_plain_text(), marks)]
             }
             [only] if paragraph(only)? => pasted.spans(only)?,
             _ => Vec::new(),
@@ -287,6 +287,12 @@ impl Editor {
     /// block in it; in a closed one, into a toggle after it, and what it
     /// hides stays in it. Elsewhere it is [`Self::split_block`].
     pub fn split_toggle(&mut self, open: bool) -> Result<()> {
+        // A selection that starts elsewhere ends up there, where Enter is Enter.
+        let (anchor, head) = text_selection(self.selection.as_ref())?;
+        let start = self.doc.ordered(anchor, head)?.0.block;
+        if self.doc.block_type(start)? != "toggle_list_item" {
+            return self.split_block();
+        }
         if self.leave_list()? {
             return Ok(());
         }
@@ -294,9 +300,6 @@ impl Editor {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;
             let block = caret.block;
-            if doc.block_type(block)? != "toggle_list_item" {
-                return Ok(Some(Selection::caret(doc.split_block(caret)?)));
-            }
             let new = if open {
                 doc.create_block(Some(block), 0, "paragraph")?
             } else {

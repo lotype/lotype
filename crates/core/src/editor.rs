@@ -124,6 +124,8 @@ impl Editor {
         self.finish_edit_group();
         if self.selection != selection {
             self.pending_marks = None;
+            // Backspace takes an input rule back only right after it.
+            self.rule = None;
         }
         self.selection = selection;
         self.live_anchors = None;
@@ -299,7 +301,14 @@ impl Editor {
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;
-            Ok(Some(Selection::caret(doc.split_block(caret)?)))
+            let new = doc.split_block(caret)?;
+            // The next item of a list starts unchecked, and counts on.
+            for key in ["checked", "start"] {
+                if doc.attr(new.block, key)?.is_some() {
+                    doc.remove_attr(new.block, key)?;
+                }
+            }
+            Ok(Some(Selection::caret(new)))
         })
     }
 

@@ -155,12 +155,17 @@ impl Document {
         self.create_block(parent, index, block_type)
     }
 
-    /// Rows go in tables and nothing else does. A cell is no block to place.
+    /// Rows go in tables and nothing else does. A cell is no block to
+    /// place, and a block of a top-level type, as a heading, goes in none.
     fn check_place(&self, parent: Option<BlockId>, block_type: &str) -> Result<()> {
         let table = |parent| self.block_type(parent).is_ok_and(|parent| parent == TABLE);
         let in_table = parent.is_some_and(table);
         if block_type == CELL || in_table != (block_type == ROW) {
             return Err(Error::TablePart);
+        }
+        let spec = self.schema.block_spec(block_type);
+        if parent.is_some() && spec.is_some_and(BlockSpec::is_top_level) {
+            return Err(Error::TopLevelOnly(block_type.to_owned()));
         }
         Ok(())
     }
@@ -214,9 +219,6 @@ impl Document {
         // A row keeps to its table: its cells are those of that table's columns.
         if block_type == ROW && self.parent(block)? != parent {
             return Err(Error::TablePart);
-        }
-        if parent.is_some() && self.spec(block).is_ok_and(BlockSpec::is_top_level) {
-            return Err(Error::TopLevelOnly(block_type));
         }
         // Before the depth rule: a block is always "too deep" for its own subtree.
         if parent.is_some_and(|parent| self.is_within(parent, block)) {
