@@ -277,3 +277,20 @@ fn a_remote_insert_before_the_caret_keeps_pending_marks() {
     pull(&mut ed, &b);
     assert!(ed.active_marks().unwrap().contains_key("bold"));
 }
+
+/// Loro 1.18 reported a block made in a step as made again when a peer's
+/// block came in, and its undo then failed and took the history with it.
+#[test]
+fn a_step_that_made_a_block_undoes_after_a_peer_made_one_meanwhile() {
+    let mut a = editor(blocks![p!["o<a>ne"], p!["two"]]);
+    let mut b = peer(a.document());
+    a.split_block().unwrap();
+    // The peer has not seen the Enter.
+    b.insert_block(None, 2, "paragraph").unwrap();
+    pull(&mut a, &b);
+    assert_editor(&a, blocks![p!["o"], p!["<a>ne"], p!["two"], p![""]]);
+    assert!(a.undo().unwrap());
+    assert_editor(&a, blocks![p!["o<a>ne"], p!["two"], p![""]]);
+    assert!(a.redo().unwrap());
+    assert_editor(&a, blocks![p!["o"], p!["<a>ne"], p!["two"], p![""]]);
+}
