@@ -1,5 +1,5 @@
 use super::PAGE_BREAK;
-use crate::{BlockId, Document, Span, Value};
+use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value};
 
 /// A block with what the line before it, its first line and its later lines
 /// start with.
@@ -151,7 +151,7 @@ impl Document {
             }
             "heading" => {
                 let level = match self.attr(block, "level") {
-                    Ok(Some(Value::Int(level))) => level.clamp(1, 6) as usize,
+                    Ok(Some(Value::Int(level))) => level.clamp(1, MAX_HEADING_LEVEL) as usize,
                     _ => 1,
                 };
                 let mut title = inline(&self.plain_spans(block).ok()?).replace("\\\n", " ");

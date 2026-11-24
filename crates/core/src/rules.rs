@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::Value;
+use crate::{MAX_HEADING_LEVEL, Value};
 
 /// What a paragraph becomes.
 #[derive(Debug, PartialEq)]
@@ -35,8 +35,9 @@ pub(crate) fn block_rule(typed: &str) -> Option<BlockRule> {
         "[x]" | "[X]" => return Some(block_with("check_list_item", "checked", true)),
         _ => {}
     }
-    if (1..=6).contains(&marker.len()) && marker.bytes().all(|b| b == b'#') {
-        return Some(block_with("heading", "level", marker.len() as i64));
+    let level = marker.len() as i64;
+    if (1..=MAX_HEADING_LEVEL).contains(&level) && marker.bytes().all(|b| b == b'#') {
+        return Some(block_with("heading", "level", level));
     }
     if let Some(language) = marker.strip_prefix("```") {
         let plain = !language.contains(|c: char| c == '`' || c.is_whitespace());
@@ -110,10 +111,10 @@ mod tests {
     fn block_rules_match_markdown_prefixes() {
         assert_eq!(attrs("# "), Some(("heading", vec![("level", 1.into())])));
         assert_eq!(
-            attrs("###### "),
-            Some(("heading", vec![("level", 6.into())]))
+            attrs("##### "),
+            Some(("heading", vec![("level", 5.into())]))
         );
-        assert_eq!(attrs("####### "), None);
+        assert_eq!(attrs("###### "), None);
         for bullet in ["- ", "+ ", "* "] {
             assert_eq!(attrs(bullet), Some(("bullet_list_item", vec![])));
         }

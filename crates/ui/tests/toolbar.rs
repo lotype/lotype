@@ -138,7 +138,7 @@ fn a_dropdown_near_the_bottom_takes_its_clicks_alone(cx: &mut TestAppContext) {
     ed.keys("shift-right shift-left");
     press(&mut ed, "toolbar-block-type");
     // Check List, the last entry, is where the dropdown would cover the bar.
-    press(&mut ed, "block-type-11");
+    press(&mut ed, "block-type-10");
     let last = ed.editor(|editor| {
         let doc = editor.document();
         let block = *doc.blocks().last().unwrap();

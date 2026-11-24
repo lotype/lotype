@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
     TextStyle, UnderlineStyle, Window, div, px, rems, rgb,
 };
-use lotype_core::{Atom, BlockId, Content, Selection, Span, Value};
+use lotype_core::{Atom, BlockId, Content, MAX_HEADING_LEVEL, Selection, Span, Value};
 
 use super::EditorView;
 
@@ -57,10 +57,10 @@ impl EditorView {
         match block_type.as_str() {
             "heading" => {
                 let level = match doc.attr(block, "level") {
-                    Ok(Some(Value::Int(level))) => level.clamp(1, 6),
+                    Ok(Some(Value::Int(level))) => level.clamp(1, MAX_HEADING_LEVEL),
                     _ => 1,
                 };
-                let sizes = [2.0, 1.5, 1.25, 1.125, 1.0, 0.875];
+                let sizes = [2.0, 1.5, 1.25, 1.125, 1.0];
                 // The text takes its size from the element around it.
                 line = line.text_size(rems(sizes[level as usize - 1]));
                 style.font_weight = FontWeight::BOLD;

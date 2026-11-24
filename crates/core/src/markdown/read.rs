@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use super::PAGE_BREAK;
-use crate::{BlockId, Document, MAX_DEPTH, Result, Span, Value};
+use crate::{BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value};
 
 /// A block to make.
 struct Node {
@@ -149,7 +149,8 @@ impl Reader {
         match tag {
             Tag::Paragraph => self.open(Node::new("paragraph")),
             Tag::Heading { level, .. } => {
-                self.open(Node::new("heading").with("level", level as i64));
+                let level = (level as i64).min(MAX_HEADING_LEVEL);
+                self.open(Node::new("heading").with("level", level));
             }
             Tag::CodeBlock(kind) => {
                 let mut node = Node::new("code_block");

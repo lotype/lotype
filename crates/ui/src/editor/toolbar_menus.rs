@@ -11,7 +11,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::list::ListItem;
 use gpui_component::{Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, Value};
+use lotype_core::{BlockId, MAX_HEADING_LEVEL, Value};
 
 use super::EditorView;
 use super::block_menu::swatch_row;
@@ -20,14 +20,13 @@ use crate::icons::{self, icon};
 
 /// The types the select offers: a block type, a heading's level, an icon
 /// and a title, as BlockNote's block type select has them.
-const BLOCK_TYPES: [(&str, Option<i64>, &[u8], &str); 13] = [
+const BLOCK_TYPES: [(&str, Option<i64>, &[u8], &str); 12] = [
     ("paragraph", None, icons::PARAGRAPH, "Paragraph"),
     ("heading", Some(1), icons::HEADING_1, "Heading 1"),
     ("heading", Some(2), icons::HEADING_2, "Heading 2"),
     ("heading", Some(3), icons::HEADING_3, "Heading 3"),
     ("heading", Some(4), icons::HEADING_4, "Heading 4"),
     ("heading", Some(5), icons::HEADING_5, "Heading 5"),
-    ("heading", Some(6), icons::HEADING_6, "Heading 6"),
     ("quote", None, icons::QUOTE, "Quote"),
     ("toggle_list_item", None, icons::TOGGLE, "Toggle List"),
     ("bullet_list_item", None, icons::BULLET, "Bullet List"),
@@ -66,7 +65,7 @@ impl EditorView {
         let doc = self.editor.document();
         let kind = doc.block_type(first).ok()?;
         let level = match doc.attr(first, "level") {
-            Ok(Some(Value::Int(level))) => Some(level.clamp(1, 6)),
+            Ok(Some(Value::Int(level))) => Some(level.clamp(1, MAX_HEADING_LEVEL)),
             _ => Some(1),
         };
         let schema = doc.schema();

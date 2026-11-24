@@ -505,3 +505,9 @@ proptest! {
         prop_assert_eq!(marked(&back), marked(&doc), "{:?}", markdown);
     }
 }
+
+#[test]
+fn a_heading_deeper_than_five_reads_as_five() {
+    let doc = read("###### Six");
+    assert_eq!(shown(&doc), "heading level=5 \"Six\"\n");
+}

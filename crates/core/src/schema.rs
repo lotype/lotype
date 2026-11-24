@@ -61,6 +61,10 @@ impl BlockSpec {
     }
 }
 
+/// The deepest heading: a level beyond it, from Markdown or a peer, is read
+/// as this one.
+pub const MAX_HEADING_LEVEL: i64 = 5;
+
 /// Whether a mark grows when text is typed at its edges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expand {

@@ -16,7 +16,6 @@ icons! {
     HEADING_3 = "heading-3",
     HEADING_4 = "heading-4",
     HEADING_5 = "heading-5",
-    HEADING_6 = "heading-6",
     QUOTE = "text-quote",
     TOGGLE = "list-collapse",
     BULLET = "list",
