@@ -176,11 +176,7 @@ fn window_handlers(view: Entity<EditorView>, focus: FocusHandle) -> impl IntoEle
         let left = view.clone();
         window.on_mouse_event(move |_: &MouseExitEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble {
-                left.update(cx, |view, cx| {
-                    if view.side_menu_leave() {
-                        cx.notify();
-                    }
-                });
+                left.update(cx, |view, cx| view.side_menu_leave(cx));
             }
         });
         let released = view.clone();
@@ -208,6 +204,7 @@ impl Render for EditorView {
         }
         self.place_slash_menu();
         self.place_toolbar();
+        self.place_side_menu();
         self.place_links();
         self.layouts.clear();
         self.order.clear();

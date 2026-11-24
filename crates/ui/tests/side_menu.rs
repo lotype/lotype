@@ -230,3 +230,42 @@ fn a_code_block_has_no_colors_in_its_menu(cx: &mut TestAppContext) {
     assert!(find(&mut ed, "text_color-red").is_none());
     assert!(find(&mut ed, "background_color-default").is_none());
 }
+
+#[gpui::test]
+fn the_side_menu_is_centred_on_the_first_line_of_any_block(cx: &mut TestAppContext) {
+    let code = lotype_core::test_support::block("code_block", vec!["fn a() {}".into()]);
+    let quote = lotype_core::test_support::block("quote", vec!["said".into()]);
+    let mut ed = EditorTestContext::new(cx, blocks![p!["text"], h1!["Title"], code, quote]);
+    for index in 0..4 {
+        hover(&mut ed, index);
+        let handle = find(&mut ed, "side-handle").unwrap();
+        let block = block_at(&mut ed, index);
+        let line = ed.view.update(ed.cx, |view, _| {
+            view.caret_bounds(lotype_core::Pos::new(block, 0)).unwrap()
+        });
+        let off = (handle.y - line.center().y).abs();
+        assert!(off < px(1.5), "block {index}: {handle:?} against {line:?}");
+    }
+}
+
+#[gpui::test]
+fn the_side_menu_stays_a_moment_after_the_mouse_leaves(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one"], p!["two"]]);
+    hover(&mut ed, 0);
+    let away = over(&mut ed, 1, true) + point(px(0.), px(300.));
+    ed.cx.simulate_mouse_move(away, None, Modifiers::none());
+    ed.settle();
+    assert!(find(&mut ed, "side-handle").is_some());
+    // Back over a row in time, it stays.
+    hover(&mut ed, 1);
+    ed.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    assert!(find(&mut ed, "side-handle").is_some());
+    // Away for longer, it goes.
+    ed.cx.simulate_mouse_move(away, None, Modifiers::none());
+    ed.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    assert!(find(&mut ed, "side-handle").is_none());
+}

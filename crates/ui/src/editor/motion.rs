@@ -248,7 +248,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         let pressed = event.pressed_button == Some(MouseButton::Left);
-        if self.side_menu_move(event.position, pressed) {
+        if self.side_menu_move(event.position, pressed, cx) {
             cx.notify();
         }
         if !self.dragging {

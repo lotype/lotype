@@ -1,10 +1,14 @@
-//! The side menu: left of the block the mouse is over, a button that adds a
-//! block below it through the slash menu, and a handle that selects the
-//! block when clicked and moves it when dragged, with a line where it lands.
+//! The side menu: left of the block the mouse is over, centred on its first
+//! line, a button that adds a block below it through the slash menu, and a
+//! handle that opens the block menu when clicked and moves the block when
+//! dragged, with a line where it lands. It stays a moment after the mouse
+//! leaves the rows.
+
+use std::time::Duration;
 
 use gpui::{
     AnyElement, Bounds, ClickEvent, Context, CursorStyle, MouseButton, MouseDownEvent, Pixels,
-    Point, Window, div, prelude::*, px, rgb,
+    Point, Task, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Sizable, h_flex};
@@ -17,6 +21,11 @@ use crate::icons::{self, icon};
 pub(crate) const GUTTER: f32 = 48.;
 /// How far the mouse goes with the handle held before it drags the block.
 const DRAG_START: f32 = 4.;
+/// How tall the side menu is: its buttons, the extra small ones.
+const MENU_HEIGHT: Pixels = px(20.);
+/// How long the side menu stays once the mouse has left the rows, so that
+/// it does not flicker away on the way to it or between blocks.
+const HIDE_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(Default)]
 pub(crate) struct SideMenu {
@@ -25,6 +34,10 @@ pub(crate) struct SideMenu {
     dragged: Option<Dragged>,
     /// The block whose block menu is open.
     pub(super) menu: Option<BlockId>,
+    /// How far down its row the side menu goes, as the last frame laid it out.
+    top: Option<Pixels>,
+    /// Hides the side menu after `HIDE_DELAY`, unless the mouse comes back.
+    leaving: Option<Task<()>>,
 }
 
 /// A block held by its handle.
@@ -79,7 +92,12 @@ impl EditorView {
 
     /// Follows the mouse: the row it is over, and where a dragged block goes.
     /// Returns whether anything changed.
-    pub(super) fn side_menu_move(&mut self, position: Point<Pixels>, pressed: bool) -> bool {
+    pub(super) fn side_menu_move(
+        &mut self,
+        position: Point<Pixels>,
+        pressed: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.side_menu.dragged.is_some() {
             if !pressed {
                 // A release the window never heard of.
@@ -98,10 +116,54 @@ impl EditorView {
             dragged.target = target;
             return changed;
         }
-        let hovered = self.row_at(position).map(|(block, _)| block);
-        let changed = hovered != self.side_menu.hovered;
-        self.side_menu.hovered = hovered;
+        let Some((hovered, _)) = self.row_at(position) else {
+            self.leave_later(cx);
+            return false;
+        };
+        self.side_menu.leaving = None;
+        let changed = Some(hovered) != self.side_menu.hovered;
+        self.side_menu.hovered = Some(hovered);
         changed
+    }
+
+    /// Hides the side menu after a moment, unless the mouse is over a row again by then.
+    fn leave_later(&mut self, cx: &mut Context<Self>) {
+        if self.side_menu.hovered.is_none() || self.side_menu.leaving.is_some() {
+            return;
+        }
+        let leave = cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(HIDE_DELAY).await;
+            view.update(cx, |view, cx| {
+                view.side_menu.leaving = None;
+                if view.side_menu.hovered.take().is_some() {
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+        self.side_menu.leaving = Some(leave);
+    }
+
+    /// Where the side menu goes down the row of `block`: centred on its
+    /// first line of text, whatever its type makes of that line's height or
+    /// of the room above it, or on a short row without text, or at the top
+    /// of a tall one, as an image's.
+    fn side_menu_top(&self, block: BlockId) -> Option<Pixels> {
+        let at = self.rows.iter().position(|row| *row == block)?;
+        let row = self.row_bounds(at)?;
+        Some(match self.caret_bounds(Pos::new(block, 0)) {
+            Some(line) => line.top() - row.top() + (line.size.height - MENU_HEIGHT) / 2.,
+            None if row.size.height <= MENU_HEIGHT * 2. => (row.size.height - MENU_HEIGHT) / 2.,
+            None => px(2.),
+        })
+    }
+
+    /// Notes where the side menu goes, at the start of a frame, from the
+    /// layout of the frame before.
+    pub(super) fn place_side_menu(&mut self) {
+        let held = self.side_menu.dragged.as_ref().map(|dragged| dragged.block);
+        let block = held.or(self.side_menu.menu).or(self.side_menu.hovered);
+        self.side_menu.top = block.and_then(|block| self.side_menu_top(block));
     }
 
     /// Drops a dragged block, or opens its block menu where the handle was
@@ -121,8 +183,8 @@ impl EditorView {
     }
 
     /// The mouse left the window.
-    pub(super) fn side_menu_leave(&mut self) -> bool {
-        self.side_menu.hovered.take().is_some()
+    pub(super) fn side_menu_leave(&mut self, cx: &mut Context<Self>) {
+        self.leave_later(cx);
     }
 
     /// Ends text being composed, as a click anywhere does, and takes the focus.
@@ -223,7 +285,7 @@ impl EditorView {
             .children(self.block_menu(block, cx));
         let menu = h_flex()
             .absolute()
-            .top(px(2.))
+            .top(self.side_menu.top.unwrap_or(px(2.)))
             .left(px(indent - GUTTER + 4.))
             .gap_1()
             .items_center()
