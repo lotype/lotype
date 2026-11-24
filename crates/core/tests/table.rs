@@ -226,8 +226,8 @@ fn typing_in_a_cell_is_typing() {
         "paragraph \"before\"\ntable\n  table_row | \"hi [bold|there]<a>\" | \"\"\nparagraph \"after\"\n"
     );
     assert!(ed.take_changes().blocks.contains(&cell));
-    // Enter is a line break, and there is nothing to join with.
-    ed.split_block().unwrap();
+    // Shift-Enter is a line break, and there is nothing to join with.
+    ed.insert_line_break().unwrap();
     assert_eq!(ed.document().text(cell).unwrap(), "hi there\n");
     caret(&mut ed, cell, 0);
     ed.delete_backward().unwrap();
@@ -436,14 +436,31 @@ fn a_table_and_its_rows_stay_what_they_are() {
 }
 
 #[test]
-fn enter_in_a_cell_is_a_step_of_its_own() {
+fn enter_in_a_cell_goes_down_and_out_of_the_table() {
+    let (doc, table) = with_table(2, 2);
+    let (rows, columns) = grid(&doc, table);
+    let mut ed = Editor::new(doc);
+    let cell = ed.document().cell(rows[0], columns[1]).unwrap();
+    caret(&mut ed, cell, 0);
+    ed.insert_text("b").unwrap();
+    ed.split_block().unwrap();
+    ed.insert_text("d").unwrap();
+    ed.split_block().unwrap();
+    assert_eq!(
+        outline(ed.document(), ed.selection()),
+        "paragraph \"before\"\ntable\n  table_row | \"\" | \"b\"\n  table_row | \"\" | \"d\"\nparagraph \"<a>after\"\n"
+    );
+}
+
+#[test]
+fn a_line_break_in_a_cell_is_a_step_of_its_own() {
     let (doc, table) = with_table(1, 1);
     let (rows, columns) = grid(&doc, table);
     let cell = doc.cell(rows[0], columns[0]).unwrap();
     let mut ed = Editor::new(doc);
     caret(&mut ed, cell, 0);
     ed.insert_text("ab").unwrap();
-    ed.split_block().unwrap();
+    ed.run(&lotype_core::Command::LineBreak).unwrap();
     ed.insert_text("cd").unwrap();
     for expected in ["ab\n", "ab", ""] {
         assert!(ed.undo().unwrap());

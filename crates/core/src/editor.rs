@@ -277,24 +277,28 @@ impl Editor {
     }
 
     /// Replaces the selected text with a block break, as Enter does. In a
-    /// cell of a table, which cannot split, that is a line break.
+    /// cell of a table, which cannot split, it goes to the cell below, or
+    /// past the table from its last row, as in a spreadsheet.
     pub fn split_block(&mut self) -> Result<()> {
-        let in_cell = |selection: &Selection| match selection {
-            Selection::Text { anchor, head } => anchor.block.column().or(head.block.column()),
-            _ => None,
-        };
-        if self.selection.as_ref().and_then(in_cell).is_some() {
-            // A step of its own, as Enter is everywhere else.
-            self.finish_edit_group();
-            let typed = self.insert_text("\n");
-            self.finish_edit_group();
-            return typed;
+        if let Some(Selection::Text { head, .. }) = self.selection
+            && head.block.column().is_some()
+        {
+            return self.enter_in_cell(head.block);
         }
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;
             Ok(Some(Selection::caret(doc.split_block(caret)?)))
         })
+    }
+
+    /// Replaces the selected text with a line break in the block, as
+    /// Shift-Enter does, as an undo step of its own.
+    pub fn insert_line_break(&mut self) -> Result<()> {
+        self.finish_edit_group();
+        let typed = self.insert_text("\n");
+        self.finish_edit_group();
+        typed
     }
 
     /// Joins the block onto the one before it when the caret is at its start.

@@ -17,6 +17,8 @@ pub enum Command {
     Redo,
     /// Enter.
     SplitBlock,
+    /// Shift-Enter: a line break in the block.
+    LineBreak,
     /// Backspace.
     DeleteBackward,
     /// Delete.
@@ -75,6 +77,7 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Mod-Shift-z", Command::Redo),
         ("Mod-y", Command::Redo),
         ("Enter", Command::SplitBlock),
+        ("Shift-Enter", Command::LineBreak),
         ("Backspace", Command::DeleteBackward),
         ("Delete", Command::DeleteForward),
     ];
@@ -110,6 +113,7 @@ impl Editor {
             Command::Undo => self.undo().map(drop),
             Command::Redo => self.redo().map(drop),
             Command::SplitBlock => self.split_block(),
+            Command::LineBreak => self.insert_line_break(),
             Command::DeleteBackward => self.delete_backward(),
             Command::DeleteForward => self.delete_forward(),
         }

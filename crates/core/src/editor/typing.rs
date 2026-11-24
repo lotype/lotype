@@ -3,7 +3,7 @@ use unicode_segmentation::GraphemeCursor;
 
 use super::{Editor, text_selection};
 use crate::editor::BLOCK_STYLE;
-use crate::{BlockId, Document, Pos, Result, Selection};
+use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
 const PARAGRAPH: &str = "paragraph";
 
@@ -120,6 +120,29 @@ impl Editor {
                 self.apply(|doc, _| Ok(Some(Selection::caret(join_forward(doc, head)?))))
             }
             _ => self.delete_grapheme(head, kind),
+        }
+    }
+
+    /// Enter in `cell`: the caret goes to the end of the cell below it, or
+    /// from the last row to the text after the table, where there is some.
+    pub(super) fn enter_in_cell(&mut self, cell: BlockId) -> Result<()> {
+        let row = self.doc.parent(cell)?.ok_or(Error::NotATable)?;
+        let rows = self.doc.children(self.doc.parent(row)?)?;
+        let next = rows
+            .iter()
+            .position(|at| *at == row)
+            .and_then(|at| rows.get(at + 1));
+        let column = cell.column().ok_or(Error::NotATable)?;
+        let caret = match next {
+            Some(next) => {
+                let below = self.doc.cell(*next, column)?;
+                Some(Pos::new(below, self.doc.text_len(below)?))
+            }
+            None => next_text_block(&self.doc, row)?.map(|after| Pos::new(after, 0)),
+        };
+        match caret {
+            Some(caret) => self.set_selection(Some(Selection::caret(caret))),
+            None => Ok(()),
         }
     }
 
