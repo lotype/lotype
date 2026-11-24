@@ -4,12 +4,13 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, FontStyle, FontWeight, Hsla, MouseButton, Pixels,
-    SharedString, TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, SharedString,
+    TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
 use lotype_core::{BlockId, Document, Pos, Selection, Value};
 
 use super::EditorView;
+use super::alert::alert_color;
 use super::input::Shown;
 
 /// How far each level of nesting moves a block to the right.
@@ -86,7 +87,7 @@ pub(crate) fn rows(
         numbers[depth] = number;
         let bar = match block_type.as_str() {
             "quote" => Some((depth, quote_color())),
-            "alert" => Some((depth, alert_style(&text_attr(doc, block, "kind")).1)),
+            "alert" => Some((depth, alert_color(doc, block))),
             _ => None,
         };
         let outer = around.last();
@@ -129,22 +130,6 @@ fn text_attr(doc: &Document, block: BlockId, key: &str) -> String {
 
 fn muted() -> Hsla {
     rgb(0x8a8f98).into()
-}
-
-/// The title and colour of an alert of `kind`, as GitHub draws them; a
-/// kind it does not know is a note.
-fn alert_style(kind: &str) -> (&'static str, Hsla) {
-    let kinds = [
-        ("Tip", 0x1a7f37),
-        ("Important", 0x8250df),
-        ("Warning", 0x9a6700),
-        ("Caution", 0xd1242f),
-    ];
-    let known = kinds
-        .into_iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(kind));
-    let (title, color) = known.unwrap_or(("Note", 0x0969da));
-    (title, rgb(color).into())
 }
 
 fn quote_color() -> Hsla {
@@ -239,14 +224,7 @@ impl EditorView {
                 let name = if name.is_empty() { url } else { name };
                 div().text_color(rgb(0x0969da)).child(format!("📎 {name}"))
             }
-            "alert" => {
-                let (title, color) = alert_style(&text_attr(doc, block, "kind"));
-                div()
-                    .pl(px(INDENT))
-                    .text_color(color)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title)
-            }
+            "alert" => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
             "quote" => div()
                 .pl(px(INDENT))
                 .child(self.block_text(block, base, shown, window, cx)?),

@@ -1,3 +1,4 @@
+mod alert;
 mod blink;
 mod block_menu;
 mod canvas;
@@ -66,6 +67,8 @@ pub struct EditorView {
     toolbar: toolbar::Toolbar,
     links: link::Links,
     side_menu: side_menu::SideMenu,
+    /// The alert whose menu of kinds is open.
+    alert_menu: Option<BlockId>,
     blink: blink::Blink,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
@@ -98,6 +101,7 @@ impl EditorView {
             toolbar: toolbar::Toolbar::default(),
             links: link::Links::default(),
             side_menu: side_menu::SideMenu::default(),
+            alert_menu: None,
             blink: blink::Blink::default(),
             blur: None,
         }
@@ -236,13 +240,19 @@ impl Render for EditorView {
         {
             rows.push(render::empty_document());
         }
-        // A block menu goes with its block, deleted or hidden.
+        // A block's menu goes with it, deleted or hidden.
         if self
             .side_menu
             .menu
             .is_some_and(|block| !self.rows.contains(&block))
         {
             self.side_menu.menu = None;
+        }
+        if self
+            .alert_menu
+            .is_some_and(|block| !self.rows.contains(&block))
+        {
+            self.alert_menu = None;
         }
         div()
             .id("lotype-editor")

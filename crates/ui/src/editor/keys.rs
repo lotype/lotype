@@ -96,9 +96,9 @@ impl EditorView {
         if self.start_writing() {
             self.selection_changed(window, cx);
         }
-        // Any key closes the block menu or a toolbar's dropdown, and Escape
-        // does nothing else.
-        let dropdown = self.toolbar.menu.take().is_some();
+        // Any key closes the block menu, an alert's menu or a toolbar's
+        // dropdown, and Escape does nothing else.
+        let dropdown = self.toolbar.menu.take().is_some() | self.alert_menu.take().is_some();
         if self.side_menu.menu.take().is_some() || dropdown {
             cx.notify();
             if name == "Escape" {
