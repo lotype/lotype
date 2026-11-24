@@ -200,13 +200,7 @@ impl EditorView {
     fn drop_block(&mut self, block: BlockId, target: BlockId, after: bool) {
         self.editor
             .apply(|doc, selection| {
-                let parent = doc.parent(target)?;
-                let mut index = doc.index_of(target)? + usize::from(after);
-                // The index is where it ends up, once it has left its place.
-                if doc.parent(block)? == parent && doc.index_of(block)? < index {
-                    index -= 1;
-                }
-                doc.move_block(block, parent, index)?;
+                doc.move_block_next_to(block, target, after)?;
                 Ok(selection.cloned())
             })
             .ok();

@@ -35,7 +35,12 @@ impl EditorView {
                     }
                     "Enter" => return self.enter_text(head),
                     "Backspace" | "Delete" => self.delete_selection(),
-                    "Escape" => {}
+                    // Escape again goes back into the text, as Enter does.
+                    "Escape" => return self.enter_text(head),
+                    // Up or down the page, as dragging their handle does.
+                    "Mod-Shift-ArrowUp" | "Mod-Shift-ArrowDown" => {
+                        self.editor.move_blocks(name == "Mod-Shift-ArrowUp").ok();
+                    }
                     _ => return false,
                 }
                 true

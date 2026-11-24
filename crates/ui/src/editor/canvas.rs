@@ -36,8 +36,9 @@ pub(crate) struct Row {
     pub number: Option<i64>,
     /// The quotes and alerts around the block, itself included.
     pub bars: Vec<Bar>,
-    /// The block or one around it is selected whole.
-    pub selected: bool,
+    /// How deep the selected block is that this one is, or is in, where
+    /// one is: the selection is painted from there.
+    pub selected: Option<usize>,
     /// The block is a quote or in one, so its text is italic.
     pub quoted: bool,
 }
@@ -47,7 +48,7 @@ struct Around {
     block: BlockId,
     /// It, or one around it, hides what is in it.
     hides: bool,
-    selected: bool,
+    selected: Option<usize>,
     quoted: bool,
     bar: Option<Bar>,
 }
@@ -90,7 +91,9 @@ pub(crate) fn rows(
         };
         let outer = around.last();
         let hidden = outer.is_some_and(|outer| outer.hides);
-        let chosen = selected.contains(&block) || outer.is_some_and(|outer| outer.selected);
+        let chosen = outer
+            .and_then(|outer| outer.selected)
+            .or(selected.contains(&block).then_some(depth));
         let quoted = block_type == "quote" || outer.is_some_and(|outer| outer.quoted);
         if !hidden {
             let outer = around.iter().filter_map(|outer| outer.bar);
@@ -261,9 +264,16 @@ impl EditorView {
             bar.bg(*color)
         });
         // Over the block's own colors, as the text selection is.
-        let selected = row.selected.then(|| {
-            let overlay = div().absolute().top_0().bottom_0().left_0().right_0();
-            overlay.bg(super::paint::selection_color())
+        // From the selected block's indent, so that it and what is in it
+        // read as one, with an edge on the left that marks it.
+        let selected = row.selected.map(|depth| {
+            let overlay = div().absolute().top_0().bottom_0().right_0();
+            let overlay = overlay.left(px(indent(depth)));
+            let edge = rgb(0x0969da);
+            overlay
+                .bg(super::paint::selection_color())
+                .border_l_2()
+                .border_color(edge)
         });
         let row_element = div()
             .relative()

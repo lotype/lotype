@@ -121,3 +121,31 @@ fn a_block_selection_is_scrolled_after_its_head(cx: &mut TestAppContext) {
     let selected = ed.editor(|editor| editor.selection().cloned());
     assert_eq!(selected, Some(lotype_core::Selection::Blocks(vec![row])));
 }
+
+#[gpui::test]
+fn command_shift_arrows_move_the_selected_blocks(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["a"], p!["b<a>"], p!["c"]]);
+    ed.keys("escape cmd-shift-down");
+    assert_eq!(
+        shown(&mut ed),
+        "paragraph \"a\"\nparagraph \"c\"\n* paragraph \"b\"\n"
+    );
+    ed.keys("cmd-shift-up cmd-shift-up");
+    assert_eq!(
+        shown(&mut ed),
+        "* paragraph \"b\"\nparagraph \"a\"\nparagraph \"c\"\n"
+    );
+    // In the text, the same keys still select to the document's ends.
+    let mut ed = EditorTestContext::new(cx, blocks![p!["a"], p!["b<a>"]]);
+    ed.keys("cmd-shift-up");
+    ed.assert(blocks![p!["<b>a"], p!["b<a>"]]);
+}
+
+#[gpui::test]
+fn escape_again_goes_back_into_the_text(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], p!["two"]]);
+    ed.keys("escape");
+    assert_eq!(shown(&mut ed), "* paragraph \"one\"\nparagraph \"two\"\n");
+    ed.keys("escape");
+    ed.assert(blocks![p!["one<a>"], p!["two"]]);
+}
