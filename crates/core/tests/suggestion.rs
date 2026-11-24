@@ -155,3 +155,26 @@ fn a_table_part_is_not_an_item_to_insert() {
     assert!(matches!(result, Err(Error::TablePart)));
     assert_eq!(shown(&ed), "paragraph \"text /row<a>\"\n");
 }
+
+#[test]
+fn a_heading_picked_in_a_nested_block_goes_out_to_the_top_level() {
+    use lotype_core::bullet;
+    let nested = || bullet!["item", bullet!["deep", p!["/<a>"]], p!["after"]];
+    let mut ed = editor(blocks![nested(), p!["end"]]);
+    ed.accept_slash_item(&item("heading_2")).unwrap();
+    assert_eq!(
+        shown(&ed),
+        "bullet_list_item \"item\"\n  bullet_list_item \"deep\"\n  paragraph \"after\"\n\
+         heading level=2 \"<a>\"\nparagraph \"end\"\n"
+    );
+    ed.undo().unwrap();
+    assert_eq!(shown(&ed), shown(&editor(blocks![nested(), p!["end"]])));
+
+    // A block with text in it stays where it is.
+    let mut ed = editor(blocks![bullet!["item", p!["text /<a>"]]]);
+    ed.accept_slash_item(&item("heading_2")).unwrap();
+    assert_eq!(
+        shown(&ed),
+        "bullet_list_item \"item\"\n  paragraph \"text \"\nheading level=2 \"<a>\"\n"
+    );
+}
