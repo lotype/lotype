@@ -4,13 +4,15 @@
 //! menu's while it shows. gpui-component's popover would take the focus, so
 //! the menu is its list items, placed as `popup` places them.
 
-use gpui::{AnyElement, Context, MouseButton, ScrollHandle, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, MouseButton, ScrollHandle, Window, div, prelude::*, px, rgb};
 use gpui_component::list::ListItem;
-use gpui_component::{ThemeStyled, v_flex};
-use lotype_core::{BlockId, SlashItem, SlashQuery, filter_slash_items};
+use gpui_component::{ThemeStyled, h_flex, v_flex};
+use lotype_core::{BlockId, Command, SlashItem, SlashQuery, filter_slash_items};
 
 use super::EditorView;
+use super::keys::shortcut_label;
 use super::popup::{Placement, popup};
+use crate::icons::{self, icon};
 
 /// The menu's state between frames.
 #[derive(Default)]
@@ -60,7 +62,16 @@ impl EditorView {
 
     fn highlight(&mut self, at: usize) {
         self.slash.highlighted = at;
-        self.slash.scroll.scroll_to_item(at);
+        // The list has a heading before each group's first entry.
+        let Some((_, items)) = self.slash_matches() else {
+            return;
+        };
+        let shown = &items[..=at.min(items.len() - 1)];
+        let headings = 1 + shown
+            .windows(2)
+            .filter(|pair| pair[0].group != pair[1].group)
+            .count();
+        self.slash.scroll.scroll_to_item(at + headings);
     }
 
     fn accept_slash(&mut self, item: &SlashItem) {
@@ -105,31 +116,113 @@ impl EditorView {
         let (_, items) = self.slash_matches()?;
         let at = self.slash.place.get(window)?;
         let highlighted = self.slash.highlighted.min(items.len() - 1);
-        let entries = items.into_iter().enumerate().map(|(index, item)| {
-            let title = div().child(item.title.clone());
+        let muted = rgb(0x8a8f98);
+        let mut rows = Vec::new();
+        let mut group = None;
+        for (index, item) in items.into_iter().enumerate() {
+            // Each group is headed once: the items come grouped.
+            if group.as_ref() != Some(&item.group) {
+                group = Some(item.group.clone());
+                let heading = div().px_2().pt_2().pb_1().text_xs().text_color(muted);
+                rows.push(heading.child(item.group.clone()).into_any_element());
+            }
+            let shortcut = self.shortcut_for(&item).map(|keys| {
+                let badge = div()
+                    .px_1()
+                    .rounded_sm()
+                    .bg(rgb(0xf0f1f3))
+                    .text_xs()
+                    .text_color(muted);
+                badge.child(keys)
+            });
+            let tile = div()
+                .size(px(32.))
+                .flex_none()
+                .rounded_md()
+                .bg(rgb(0xf3f4f6))
+                .flex()
+                .items_center()
+                .justify_center()
+                .children(slash_icon(&item.key).map(icon));
+            let words = div()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_sm().child(item.title.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(item.subtext.clone()),
+                );
+            let row = h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(tile)
+                .child(words)
+                .children(shortcut);
+            let key = item.key.clone();
             let click = cx.listener(move |view: &mut Self, _: &gpui::ClickEvent, window, cx| {
                 view.accept_slash(&item);
                 view.selection_changed(window, cx);
             });
-            ListItem::new(("slash-item", index))
+            let entry = ListItem::new(("slash-item", index))
                 .selected(index == highlighted)
-                .child(title)
-                .on_click(click)
-        });
+                .child(row)
+                .on_click(click);
+            let entry = div()
+                .debug_selector(move || format!("slash-{key}"))
+                .child(entry);
+            rows.push(entry.into_any_element());
+        }
         let list = div()
             .id("slash-menu")
+            .debug_selector(|| "slash-list".to_owned())
             .track_scroll(&self.slash.scroll)
             .overflow_y_scroll()
-            .max_h(px(320.))
-            .children(entries);
+            .max_h(px(360.))
+            .children(rows);
         let menu = v_flex()
             .popover_style(cx)
             .occlude()
-            .w(px(240.))
+            .w(px(320.))
             .p_1()
             // A click on the menu is no click in the text.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(list);
         Some(popup(at, false, menu))
     }
+
+    /// The keys bound to what `item` makes, as the keymap has them.
+    fn shortcut_for(&self, item: &SlashItem) -> Option<String> {
+        let binding = self.keymap.iter().find(|binding| {
+            matches!(&binding.command, Command::SetBlock { block_type, attrs }
+                if *block_type == item.block_type && *attrs == item.attrs)
+        })?;
+        Some(shortcut_label(&binding.key))
+    }
+}
+
+/// The icon of a built-in entry, by its key.
+fn slash_icon(key: &str) -> Option<&'static [u8]> {
+    Some(match key {
+        "heading_1" => icons::HEADING_1,
+        "heading_2" => icons::HEADING_2,
+        "heading_3" => icons::HEADING_3,
+        "heading_4" => icons::HEADING_4,
+        "heading_5" => icons::HEADING_5,
+        "quote" => icons::QUOTE,
+        "toggle_list" => icons::TOGGLE,
+        "bullet_list" => icons::BULLET,
+        "numbered_list" => icons::NUMBERED,
+        "check_list" => icons::CHECK_LIST,
+        "code_block" => icons::CODE,
+        "alert" => icons::ALERT,
+        "divider" => icons::DIVIDER,
+        "page_break" => icons::PAGE_BREAK,
+        "table" => icons::TABLE,
+        "image" => icons::IMAGE,
+        "file" => icons::FILE,
+        _ => return None,
+    })
 }

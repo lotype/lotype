@@ -49,6 +49,30 @@ pub(crate) fn key_name(keystroke: &Keystroke) -> String {
     name
 }
 
+/// A key name of the keymap as a menu shows it: `⌥⌘1` on macOS, in Apple's
+/// order of modifiers, and `Ctrl+Alt+1` elsewhere.
+pub(crate) fn shortcut_label(name: &str) -> String {
+    let mut rest = name;
+    let mut held = [false; 4];
+    // Mod, Ctrl, Alt and Shift, as `key_name` writes them.
+    for (at, prefix) in ["Mod-", "Ctrl-", "Alt-", "Shift-"].iter().enumerate() {
+        if let Some(after) = rest.strip_prefix(prefix) {
+            (held[at], rest) = (true, after);
+        }
+    }
+    let [command, control, alt, shift] = held;
+    let key = rest.to_uppercase();
+    if cfg!(target_os = "macos") {
+        let signs = [(control, "⌃"), (alt, "⌥"), (shift, "⇧"), (command, "⌘")];
+        let signs = signs.iter().filter(|(on, _)| *on).map(|(_, sign)| *sign);
+        signs.chain([key.as_str()]).collect()
+    } else {
+        let words = [(command || control, "Ctrl"), (alt, "Alt"), (shift, "Shift")];
+        let words = words.iter().filter(|(on, _)| *on).map(|(_, word)| *word);
+        words.chain([key.as_str()]).collect::<Vec<_>>().join("+")
+    }
+}
+
 fn capitalized(key: &str) -> String {
     let mut chars = key.chars();
     chars.next().map_or_else(String::new, |first| {
@@ -142,6 +166,16 @@ mod tests {
         assert_eq!(key_name(&shifted.unwrap()), "Mod-Shift-7");
         if cfg!(target_os = "macos") {
             assert_eq!(name("ctrl-b"), "Ctrl-b");
+        }
+    }
+
+    #[test]
+    fn shortcuts_are_shown_as_menus_show_them() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(shortcut_label("Mod-Alt-1"), "⌥⌘1");
+            assert_eq!(shortcut_label("Mod-Shift-6"), "⇧⌘6");
+        } else {
+            assert_eq!(shortcut_label("Mod-Alt-1"), "Ctrl+Alt+1");
         }
     }
 }

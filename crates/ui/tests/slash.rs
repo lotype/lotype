@@ -14,7 +14,7 @@ fn a_slash_query_picks_a_block_with_enter(cx: &mut TestAppContext) {
 #[gpui::test]
 fn arrows_move_through_the_entries_and_wrap(cx: &mut TestAppContext) {
     let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
-    // Headings 1 to 3 match, and Up from the first goes to the last.
+    // Headings 1 to 5 match, and Up from the first goes to the last.
     ed.type_text("/heading");
     ed.keys("down tab");
     ed.assert(blocks![
@@ -24,7 +24,7 @@ fn arrows_move_through_the_entries_and_wrap(cx: &mut TestAppContext) {
     ed.type_text("/heading");
     ed.keys("up enter");
     ed.assert(blocks![
-        block("heading", vec!["<a>".into()]).attr("level", 3)
+        block("heading", vec!["<a>".into()]).attr("level", 5)
     ]);
 }
 
@@ -76,4 +76,21 @@ fn a_peer_typing_before_the_slash_keeps_the_menu_closed(cx: &mut TestAppContext)
     });
     ed.keys("enter");
     ed.assert(blocks![p!["x /h1"], p!["<a>"]]);
+}
+
+#[gpui::test]
+fn the_highlighted_entry_is_scrolled_into_the_list(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
+    ed.type_text("/");
+    // Up from the first entry goes to the last, File, under several headings.
+    ed.keys("up");
+    let (list, file) = (
+        ed.cx.debug_bounds("slash-list"),
+        ed.cx.debug_bounds("slash-file"),
+    );
+    let (list, file) = (list.unwrap(), file.unwrap());
+    assert!(
+        file.top() >= list.top() && file.bottom() <= list.bottom(),
+        "{file:?} in {list:?}"
+    );
 }

@@ -35,6 +35,12 @@ icons! {
     LINK = "link",
     CHEVRON_DOWN = "chevron-down",
     CHECK = "check",
+    ALERT = "info",
+    DIVIDER = "minus",
+    PAGE_BREAK = "scissors-line-dashed",
+    TABLE = "table",
+    IMAGE = "image",
+    FILE = "file",
 }
 
 /// An icon drawn from one of the SVGs above, in the text's color.
