@@ -46,6 +46,9 @@ pub struct Editor {
     replaced: bool,
     /// The copy of the document that drafts run on, while it can serve another.
     fork: Option<Document>,
+    /// The version and selection an input rule left, while nothing has
+    /// changed since: Backspace then takes the rule back.
+    rule: Option<(crate::Version, Option<Selection>)>,
 }
 
 /// The selection around one undo step. Anchored, so that it is still in the
@@ -62,6 +65,7 @@ impl Editor {
             seen,
             _watching,
             replaced: false,
+            rule: None,
             fork: None,
             history: new_history(&doc),
             doc,

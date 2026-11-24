@@ -2,7 +2,22 @@ use loro::TreeParentId;
 use unicode_segmentation::GraphemeCursor;
 
 use super::{Editor, text_selection};
-use crate::{Document, Pos, Result, Selection};
+use crate::editor::BLOCK_STYLE;
+use crate::{BlockId, Document, Pos, Result, Selection};
+
+const PARAGRAPH: &str = "paragraph";
+
+/// The first block after `block` in document order that holds text.
+fn next_text_block(doc: &Document, block: BlockId) -> Result<Option<BlockId>> {
+    let mut at = doc.next_block(block)?;
+    while let Some(next) = at {
+        if doc.text_len(next).is_ok() {
+            return Ok(Some(next));
+        }
+        at = doc.next_block(next)?;
+    }
+    Ok(None)
+}
 
 /// Consecutive typing or deleting that undoes as one step.
 pub(super) struct Run {
@@ -71,13 +86,68 @@ impl Editor {
         }
         let (_, head) = text_selection(self.selection.as_ref())?;
         self.pending_marks = None;
+        // Backspace right after an input rule takes the rule back, and
+        // leaves what was typed.
+        let rule = self.rule.take();
+        let unchanged = rule == Some((self.doc.version(), self.selection.clone()));
+        if kind == Kind::DeleteBackward && unchanged && self.can_undo() {
+            return self.undo().map(drop);
+        }
+        let len = self.doc.text_len(head.block)?;
+        // A block that is no paragraph becomes one first, keeping its text,
+        // where Backspace is at its start or Delete in it once it is empty
+        // and the last; another press then joins it, as for any paragraph.
+        let edge = match kind {
+            Kind::DeleteBackward => head.offset == 0,
+            _ => len == 0 && next_text_block(&self.doc, head.block)?.is_none(),
+        };
+        if edge && self.becomes_paragraph(head.block)? {
+            return self.apply(|doc, selection| {
+                let paragraph = doc.schema().block_spec(PARAGRAPH);
+                let style = paragraph.is_some_and(|spec| spec.takes_style());
+                for key in doc.attrs(head.block)?.into_keys() {
+                    if !(style && BLOCK_STYLE.contains(&key.as_str())) {
+                        doc.remove_attr(head.block, &key)?;
+                    }
+                }
+                doc.set_block_type(head.block, PARAGRAPH)?;
+                Ok(selection.cloned())
+            });
+        }
         match kind {
-            Kind::DeleteBackward if head.offset == 0 => self.join_backward(),
-            Kind::DeleteForward if head.offset == self.doc.text_len(head.block)? => {
+            Kind::DeleteBackward if head.offset == 0 => self.join_or_drop(head),
+            Kind::DeleteForward if head.offset == len => {
                 self.apply(|doc, _| Ok(Some(Selection::caret(join_forward(doc, head)?))))
             }
             _ => self.delete_grapheme(head, kind),
         }
+    }
+
+    /// Whether `block` is no paragraph and can become one where it is: a
+    /// cell cannot, nor a block in a schema without paragraphs.
+    fn becomes_paragraph(&self, block: BlockId) -> Result<bool> {
+        let kind = self.doc.block_type(block)?;
+        let paragraph = self.doc.schema().block_spec(PARAGRAPH);
+        Ok(kind != PARAGRAPH && block.column().is_none() && paragraph.is_some())
+    }
+
+    /// Backspace at the start of a paragraph: joins it onto the block before
+    /// it, or, for an empty one at the very start, removes it and goes to
+    /// the text after it, so that no empty block is left there for good.
+    fn join_or_drop(&mut self, head: Pos) -> Result<()> {
+        if self.doc.prev_block(head.block)?.is_some() {
+            return self.join_backward();
+        }
+        let empty =
+            self.doc.text_len(head.block)? == 0 && self.doc.children(Some(head.block))?.is_empty();
+        let next = next_text_block(&self.doc, head.block)?;
+        let Some(next) = next.filter(|_| empty) else {
+            return Ok(());
+        };
+        self.apply(|doc, _| {
+            doc.remove_block(head.block)?;
+            Ok(Some(Selection::caret(Pos::new(next, 0))))
+        })
     }
 
     fn delete_grapheme(&mut self, head: Pos, kind: Kind) -> Result<()> {

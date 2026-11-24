@@ -18,7 +18,9 @@ impl Editor {
         if let Some(rule) = rules::block_rule(typed)
             && self.takes(block, &rule, text.len() == typed.len())?
         {
-            return self.turn_into(block, typed.len(), rule);
+            self.turn_into(block, typed.len(), rule)?;
+            self.note_rule();
+            return Ok(());
         }
         // Code is typed as it is, in a code block and in inline code alike.
         if self.doc.block_type(block)? == "code_block"
@@ -32,9 +34,18 @@ impl Editor {
                 .is_ok_and(|spec| spec.allows_boolean())
         };
         match rules::mark_rule(typed) {
-            Some(rule) if on_off(rule.mark) => self.mark_typed(block, rule),
+            Some(rule) if on_off(rule.mark) => {
+                self.mark_typed(block, rule)?;
+                self.note_rule();
+                Ok(())
+            }
             _ => Ok(()),
         }
+    }
+
+    /// Notes that an input rule was just applied, for Backspace to take back.
+    fn note_rule(&mut self) {
+        self.rule = Some((self.doc.version(), self.selection.clone()));
     }
 
     /// Whether `block` is a paragraph that can become what the rule says.
