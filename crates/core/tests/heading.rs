@@ -55,3 +55,18 @@ fn a_heading_moves_past_blocks_and_never_into_them() {
     ed.indent().unwrap();
     assert!(ed.document().parent(title).unwrap().is_none());
 }
+
+#[test]
+fn a_heading_markdown_nests_is_read_as_a_paragraph() {
+    let mut doc = lotype_core::Document::new(lotype_core::Schema::builtin());
+    doc.insert_markdown(
+        None,
+        0,
+        "# Top\n\n- item\n\n  ## Inside\n\n> [!NOTE]\n> ### Note\n",
+    )
+    .unwrap();
+    assert_eq!(
+        outline(&doc, None),
+        "heading level=1 \"Top\"\nbullet_list_item \"item\"\n  paragraph \"Inside\"\nalert kind=note\n  paragraph \"Note\"\n"
+    );
+}

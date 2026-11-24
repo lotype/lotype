@@ -148,6 +148,9 @@ impl Reader {
     fn start(&mut self, tag: Tag) {
         match tag {
             Tag::Paragraph => self.open(Node::new("paragraph")),
+            // A heading goes in no list item, quote or alert: there it is
+            // read as a paragraph, the text of a list item where it leads.
+            Tag::Heading { .. } if self.nested() => self.open(Node::new("paragraph")),
             Tag::Heading { level, .. } => {
                 let level = (level as i64).min(MAX_HEADING_LEVEL);
                 self.open(Node::new("heading").with("level", level));
@@ -241,6 +244,12 @@ impl Reader {
             }
             _ => {}
         }
+    }
+
+    /// Whether what is read now goes in a list item, a quote or an alert.
+    fn nested(&self) -> bool {
+        let nests = |(container, _): &(Container, _)| !matches!(container, Container::Root);
+        self.stack.iter().any(nests)
     }
 
     fn leave(&mut self) {
@@ -372,7 +381,13 @@ impl Document {
             let unmade = node.block_type == "table"
                 && (depth + 2 > MAX_DEPTH || lacks("table_row") || lacks("table_cell"));
             let part = matches!(node.block_type, "table_row" | "table_cell");
-            if unmade || part || lacks(node.block_type) {
+            // Nor is a heading in another block, where none goes.
+            let top_level = |name: &str| {
+                let spec = self.schema().block_spec(name);
+                spec.is_some_and(|spec| spec.is_top_level())
+            };
+            let nested = parent.is_some() && top_level(node.block_type);
+            if unmade || part || nested || lacks(node.block_type) {
                 if node.block_type == "image" {
                     node.spans = image_link(&node.attrs);
                 }
