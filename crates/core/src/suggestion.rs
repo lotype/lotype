@@ -213,8 +213,11 @@ impl Editor {
                 return Ok(Some(Selection::caret(Pos::new(first, 0))));
             }
             let target = if empty {
+                let spec = doc.schema().block_spec(&item.block_type);
+                let colored = spec.is_some_and(|spec| spec.takes_colors());
+                let kept = |key: &String| colored && BLOCK_COLORS.contains(&key.as_str());
                 let keys = doc.attrs(block)?.into_keys();
-                for key in keys.filter(|key| !BLOCK_COLORS.contains(&key.as_str())) {
+                for key in keys.filter(|key| !kept(key)) {
                     doc.remove_attr(block, &key)?;
                 }
                 doc.set_block_type(block, &item.block_type)?;

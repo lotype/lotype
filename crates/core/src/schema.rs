@@ -17,6 +17,7 @@ pub struct BlockSpec {
     name: String,
     content: Content,
     children: bool,
+    colors: bool,
 }
 
 impl BlockSpec {
@@ -25,11 +26,19 @@ impl BlockSpec {
             name: name.into(),
             content,
             children: false,
+            colors: true,
         }
     }
 
     pub fn with_children(mut self) -> Self {
         self.children = true;
+        self
+    }
+
+    /// A block of this type has no text or background color of its own, as
+    /// code, math and diagrams, which are drawn in colors of their own.
+    pub fn without_colors(mut self) -> Self {
+        self.colors = false;
         self
     }
 
@@ -43,6 +52,11 @@ impl BlockSpec {
 
     pub fn allows_children(&self) -> bool {
         self.children
+    }
+
+    /// Whether a block of this type takes `text_color` and `background_color`.
+    pub fn takes_colors(&self) -> bool {
+        self.colors
     }
 }
 
@@ -150,9 +164,8 @@ impl Schema {
             schema = schema.block(BlockSpec::new(name, Inline).with_children());
         }
         schema = schema.block(BlockSpec::new("alert", None).with_children());
-        for name in ["heading", "code_block"] {
-            schema = schema.block(BlockSpec::new(name, Inline));
-        }
+        schema = schema.block(BlockSpec::new("heading", Inline));
+        schema = schema.block(BlockSpec::new("code_block", Inline).without_colors());
         for name in ["image", "file", "divider", "page_break", "table_row"] {
             schema = schema.block(BlockSpec::new(name, None));
         }

@@ -122,6 +122,9 @@ fn set_block_changes_the_type_and_replaces_the_attributes() {
     ed.set_block("heading", &[("level".to_owned(), 1.into())])
         .unwrap();
     assert_eq!(shown(&ed), "heading level=1 text_color=red \"a<a>\"\n");
+    // A code block takes no colors.
+    ed.set_block("code_block", &[]).unwrap();
+    assert_eq!(shown(&ed), "code_block \"a<a>\"\n");
 }
 
 #[test]

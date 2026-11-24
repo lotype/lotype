@@ -13,10 +13,11 @@ impl Editor {
     pub fn set_block(&mut self, block_type: &str, attrs: &[(String, Value)]) -> Result<()> {
         let blocks = self.selected_blocks()?;
         self.apply(|doc, selection| {
-            let (holds_text, nests) = {
+            let (holds_text, nests, colored) = {
                 let spec = doc.schema().block_spec(block_type);
                 let spec = spec.ok_or_else(|| Error::UnknownBlockType(block_type.to_owned()))?;
-                (spec.content() == Content::Inline, spec.allows_children())
+                let content = spec.content() == Content::Inline;
+                (content, spec.allows_children(), spec.takes_colors())
             };
             for block in blocks {
                 let fits = doc.spec(block).is_ok()
@@ -27,11 +28,11 @@ impl Editor {
                     continue;
                 }
                 // Only what changes, so that asking for what a block already
-                // is makes no undo step. Its colors stay, as BlockNote keeps them.
+                // is makes no undo step. Its colors stay, as BlockNote keeps
+                // them, where the type takes colors.
                 for key in doc.attrs(block)?.into_keys() {
-                    if !attrs.iter().any(|(kept, _)| *kept == key)
-                        && !BLOCK_COLORS.contains(&key.as_str())
-                    {
+                    let color = colored && BLOCK_COLORS.contains(&key.as_str());
+                    if !attrs.iter().any(|(kept, _)| *kept == key) && !color {
                         doc.remove_attr(block, &key)?;
                     }
                 }
