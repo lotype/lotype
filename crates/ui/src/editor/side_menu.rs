@@ -197,7 +197,7 @@ impl EditorView {
     }
 
     /// Ends text being composed, as a click anywhere does, and takes the focus.
-    fn press(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn press(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(composition) = self.composition.take() {
             self.commit(&composition.text);
         }

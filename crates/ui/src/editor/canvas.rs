@@ -225,7 +225,7 @@ impl EditorView {
                 div().text_color(rgb(0x0969da)).child(format!("📎 {name}"))
             }
             "alert" => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
-            "table" => self.table_grid(block, base, shown, window, cx)?,
+            "table" => div().child(self.table_grid(block, base, shown, window, cx)?),
             "quote" => div()
                 .pl(px(INDENT))
                 .child(self.block_text(block, base, shown, window, cx)?),

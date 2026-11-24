@@ -70,6 +70,11 @@ pub struct EditorView {
     side_menu: side_menu::SideMenu,
     /// The alert whose menu of kinds is open.
     alert_menu: Option<BlockId>,
+    /// The table the mouse is over, and the cell whose menu is open.
+    table_hover: Option<BlockId>,
+    table_menu: Option<BlockId>,
+    /// Where a drag with the mouse started.
+    drag_anchor: Option<Pos>,
     blink: blink::Blink,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
@@ -103,6 +108,9 @@ impl EditorView {
             links: link::Links::default(),
             side_menu: side_menu::SideMenu::default(),
             alert_menu: None,
+            table_hover: None,
+            table_menu: None,
+            drag_anchor: None,
             blink: blink::Blink::default(),
             blur: None,
         }
@@ -254,6 +262,9 @@ impl Render for EditorView {
             .is_some_and(|block| !self.rows.contains(&block))
         {
             self.alert_menu = None;
+        }
+        if self.table_menu.is_some() && self.table_menu != self.editor.current_cell() {
+            self.table_menu = None;
         }
         div()
             .id("lotype-editor")

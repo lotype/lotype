@@ -45,6 +45,21 @@ pub(crate) fn motion(name: &str) -> Option<(Motion, bool)> {
     Some((motion, extend))
 }
 
+/// The selection from `anchor` to `head`: text, or, from one cell into
+/// another, the cells between them whole.
+fn between(anchor: Pos, head: Pos) -> Selection {
+    let cells = anchor.block.column().is_some()
+        && head.block.column().is_some()
+        && head.block != anchor.block;
+    match cells {
+        true => Selection::Cells {
+            anchor: anchor.block,
+            head: head.block,
+        },
+        false => Selection::Text { anchor, head },
+    }
+}
+
 impl EditorView {
     fn layout(&self, block: BlockId) -> Option<&TextLayout> {
         self.layouts.get(&block)
@@ -227,6 +242,9 @@ impl EditorView {
         let (anchor, head) = match event.click_count {
             1 => match self.editor.selection() {
                 Some(Selection::Text { anchor, .. }) if event.modifiers.shift => (*anchor, pos),
+                Some(Selection::Cells { anchor, .. }) if event.modifiers.shift => {
+                    (Pos::new(*anchor, 0), pos)
+                }
                 _ => (pos, pos),
             },
             2 => {
@@ -240,9 +258,8 @@ impl EditorView {
             }
             _ => (Pos::new(pos.block, 0), Pos::new(pos.block, text.len())),
         };
-        self.editor
-            .set_selection(Some(Selection::Text { anchor, head }))
-            .ok();
+        self.editor.set_selection(Some(between(anchor, head))).ok();
+        self.drag_anchor = Some(anchor);
         self.dragging = true;
         self.selection_changed(window, cx);
     }
@@ -266,15 +283,12 @@ impl EditorView {
             cx.notify();
             return;
         }
-        let (Some(Selection::Text { anchor, .. }), Some((head, affinity))) =
-            (self.editor.selection().cloned(), self.hit(event.position))
+        let (Some(anchor), Some((head, affinity))) = (self.drag_anchor, self.hit(event.position))
         else {
             return;
         };
         self.side = Some((head, affinity));
-        self.editor
-            .set_selection(Some(Selection::Text { anchor, head }))
-            .ok();
+        self.editor.set_selection(Some(between(anchor, head))).ok();
         self.selection_changed(window, cx);
     }
 

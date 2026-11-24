@@ -23,6 +23,7 @@ impl EditorView {
         let slice = match self.editor.selection() {
             Some(Selection::Text { anchor, head }) if anchor != head => doc.slice(*anchor, *head),
             Some(Selection::Blocks(blocks)) => doc.slice_blocks(blocks),
+            Some(Selection::Cells { anchor, head }) => doc.slice_cells(*anchor, *head),
             _ => return false,
         };
         let Ok(slice) = slice else {
@@ -31,9 +32,7 @@ impl EditorView {
         let Ok(bytes) = slice.export_snapshot() else {
             return false;
         };
-        let texts = slice.blocks().into_iter();
-        let texts = texts.filter_map(|block| slice.plain_text(block).ok());
-        let text = texts.collect::<Vec<_>>().join("\n");
+        let text = plain_text(&slice);
         let mut metadata = String::with_capacity(TAG.len() + bytes.len() * 2);
         metadata.push_str(TAG);
         for byte in bytes {
@@ -80,4 +79,27 @@ fn from_hex(hex: &str) -> Option<Vec<u8>> {
     hex.len()
         .is_multiple_of(2)
         .then(|| digits.map(byte).collect())?
+}
+
+/// A document as plain text: a block a line, and a table's rows a line
+/// each with tabs between its cells, as spreadsheets take them.
+fn plain_text(doc: &Document) -> String {
+    let mut lines = Vec::new();
+    for block in doc.blocks() {
+        if let Ok(text) = doc.plain_text(block) {
+            lines.push(text);
+            continue;
+        }
+        let Ok(columns) = doc.columns(block) else {
+            continue;
+        };
+        for row in doc.children(Some(block)).unwrap_or_default() {
+            let cells = columns
+                .iter()
+                .filter_map(|column| doc.cell(row, *column).ok());
+            let cells = cells.filter_map(|cell| doc.plain_text(cell).ok());
+            lines.push(cells.collect::<Vec<_>>().join("\t"));
+        }
+    }
+    lines.join("\n")
 }

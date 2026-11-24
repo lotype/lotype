@@ -99,7 +99,9 @@ impl EditorView {
         }
         // Any key closes the block menu, an alert's menu or a toolbar's
         // dropdown, and Escape does nothing else.
-        let dropdown = self.toolbar.menu.take().is_some() | self.alert_menu.take().is_some();
+        let dropdown = self.toolbar.menu.take().is_some()
+            | self.alert_menu.take().is_some()
+            | self.table_menu.take().is_some();
         if self.side_menu.menu.take().is_some() || dropdown {
             cx.notify();
             if name == "Escape" {
@@ -108,6 +110,21 @@ impl EditorView {
             }
         }
         let tab = name == "Tab" || name == "Shift-Tab";
+        // Cells selected are for Backspace, Delete, copy and cut: any other
+        // key goes on from the cell the selection ends in, as from a caret
+        // there, and Escape only goes back to it.
+        if let Some(Selection::Cells { head, .. }) = self.editor.selection().cloned()
+            && !["Backspace", "Delete", "Mod-c", "Mod-x"].contains(&name.as_str())
+        {
+            let end = self.editor.document().text_len(head).unwrap_or(0);
+            let caret = Selection::caret(lotype_core::Pos::new(head, end));
+            self.editor.set_selection(Some(caret)).ok();
+            if name == "Escape" {
+                cx.stop_propagation();
+                self.selection_changed(window, cx);
+                return;
+            }
+        }
         if self.slash_key(&name) || self.block_key(&name) || tab && self.tab_cell(name != "Tab") {
             // Handled as a key on whole blocks.
         } else if let Some((motion, extend)) = motion::motion(&name) {
