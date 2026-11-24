@@ -239,7 +239,7 @@ impl Document {
     }
 
     /// Removes `block`, leaving its children where it was.
-    fn dissolve_block(&mut self, block: BlockId) -> Result<()> {
+    pub(crate) fn dissolve_block(&mut self, block: BlockId) -> Result<()> {
         let children = self.child_ids(TreeParentId::Node(self.live(block)?));
         if !children.is_empty() {
             let parent = self.parent(block)?;

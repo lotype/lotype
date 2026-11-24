@@ -285,6 +285,9 @@ impl Editor {
         {
             return self.enter_in_cell(head.block);
         }
+        if self.leave_list()? {
+            return Ok(());
+        }
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;

@@ -100,3 +100,18 @@ fn backspace_takes_the_first_block_out_of_an_alert() {
     ed.undo().unwrap();
     assert_editor(&ed, blocks![tip(vec![p!["<a>"].into()])]);
 }
+
+#[test]
+fn delete_before_an_alert_joins_its_first_block_on() {
+    let tip = |items| block("alert", items).attr("kind", "tip");
+    let mut ed = editor(blocks![
+        p!["a<a>"],
+        tip(vec![p!["one"].into(), p!["two"].into()])
+    ]);
+    ed.delete_forward().unwrap();
+    assert_editor(&ed, blocks![p!["a<a>one"], tip(vec![p!["two"].into()])]);
+    // An alert left empty goes.
+    let mut ed = editor(blocks![p!["a<a>"], tip(vec![p!["two"].into()])]);
+    ed.delete_forward().unwrap();
+    assert_editor(&ed, blocks![p!["a<a>two"]]);
+}

@@ -6,6 +6,24 @@ use crate::editor::BLOCK_STYLE;
 use crate::{BlockId, Document, Error, Pos, Result, Selection};
 
 const PARAGRAPH: &str = "paragraph";
+const LIST_ITEMS: [&str; 4] = [
+    "bullet_list_item",
+    "numbered_list_item",
+    "check_list_item",
+    "toggle_list_item",
+];
+
+/// Makes `block` a paragraph, keeping its text, its children and its style.
+fn make_paragraph(doc: &mut Document, block: BlockId) -> Result<()> {
+    let paragraph = doc.schema().block_spec(PARAGRAPH);
+    let style = paragraph.is_some_and(|spec| spec.takes_style());
+    for key in doc.attrs(block)?.into_keys() {
+        if !(style && BLOCK_STYLE.contains(&key.as_str())) {
+            doc.remove_attr(block, &key)?;
+        }
+    }
+    doc.set_block_type(block, PARAGRAPH)
+}
 
 /// The first block after `block` in document order that holds text.
 fn next_text_block(doc: &Document, block: BlockId) -> Result<Option<BlockId>> {
@@ -103,14 +121,7 @@ impl Editor {
         };
         if edge && self.becomes_paragraph(head.block)? {
             return self.apply(|doc, selection| {
-                let paragraph = doc.schema().block_spec(PARAGRAPH);
-                let style = paragraph.is_some_and(|spec| spec.takes_style());
-                for key in doc.attrs(head.block)?.into_keys() {
-                    if !(style && BLOCK_STYLE.contains(&key.as_str())) {
-                        doc.remove_attr(head.block, &key)?;
-                    }
-                }
-                doc.set_block_type(head.block, PARAGRAPH)?;
+                make_paragraph(doc, head.block)?;
                 Ok(selection.cloned())
             });
         }
@@ -121,6 +132,38 @@ impl Editor {
             }
             _ => self.delete_grapheme(head, kind),
         }
+    }
+
+    /// Enter in an empty list item with nothing in it leaves the list, as in
+    /// word processors: one in another list item moves out a level, and any
+    /// other becomes a paragraph. Returns whether it did.
+    pub(super) fn leave_list(&mut self) -> Result<bool> {
+        let Some(Selection::Text { anchor, head }) = self.selection else {
+            return Ok(false);
+        };
+        let list_item = |kind: &str| LIST_ITEMS.contains(&kind);
+        let block = head.block;
+        let empty = anchor == head
+            && block.column().is_none()
+            && list_item(&self.doc.block_type(block)?)
+            && self.doc.text_len(block)? == 0
+            && self.doc.children(Some(block))?.is_empty();
+        if !empty || !self.becomes_paragraph(block)? {
+            return Ok(false);
+        }
+        let parent = self.doc.parent(block)?;
+        let nested = parent.is_some_and(|parent| {
+            self.doc
+                .block_type(parent)
+                .is_ok_and(|kind| list_item(&kind))
+        });
+        self.apply(|doc, selection| {
+            if !(nested && doc.outdent_block(block)?) {
+                make_paragraph(doc, block)?;
+            }
+            Ok(selection.cloned())
+        })?;
+        Ok(true)
     }
 
     /// Enter in `cell`: the caret goes to the end of the cell below it, or
@@ -269,7 +312,8 @@ impl Editor {
 }
 
 /// Joins the block after `block` onto it. A textless block there is removed
-/// instead, unless it has children.
+/// instead, unless it has children: then the first of those joins on, as
+/// the first block in an alert, and an alert left empty goes.
 fn join_forward(doc: &mut Document, caret: Pos) -> Result<Pos> {
     let Some(next) = doc.next_block(caret.block)? else {
         return Ok(caret);
@@ -282,6 +326,17 @@ fn join_forward(doc: &mut Document, caret: Pos) -> Result<Pos> {
         .is_empty()
     {
         doc.remove_block(next)?;
+        return Ok(caret);
+    }
+    let first = doc.children(Some(next))?.first().copied();
+    if let Some(first) = first.filter(|first| doc.text_len(*first).is_ok())
+        && !doc.is_table_part(next)
+    {
+        doc.copy_text(first, 0..doc.text_len(first)?, caret.block, caret.offset)?;
+        doc.dissolve_block(first)?;
+        if doc.children(Some(next))?.is_empty() {
+            doc.remove_block(next)?;
+        }
     }
     Ok(caret)
 }

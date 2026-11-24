@@ -226,11 +226,9 @@ fn the_default_keymap_runs_and_binds_each_key_once() {
     ed.run(&command("Mod-Shift-z")).unwrap();
     ed.run(&command("Shift-Tab")).unwrap();
     ed.run(&command("Backspace")).unwrap();
+    // Enter in the item left empty leaves the list.
     ed.run(&command("Enter")).unwrap();
-    assert_eq!(
-        shown(&ed),
-        "paragraph \"a\"\nbullet_list_item \"\"\nbullet_list_item \"<a>\"\n"
-    );
+    assert_eq!(shown(&ed), "paragraph \"a\"\nparagraph \"<a>\"\n");
     // Every command names a mark or block type the built-in schema has.
     for binding in &keymap {
         let mut ed = editor(blocks![p!["a"], p!["<a>bc<b>"]]);

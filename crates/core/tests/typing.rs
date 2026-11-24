@@ -398,7 +398,9 @@ fn delete_at_the_end_of_a_block_joins_the_next_one() {
 
 #[test]
 fn delete_does_not_remove_a_textless_block_that_has_children() {
-    let alert = || block("alert", vec![p!["inside"].into()]);
+    // One whose first block has text gives it to join on; this one has none.
+    let divider = || block("divider", vec![]);
+    let alert = || block("alert", vec![divider().into(), p!["inside"].into()]);
     let mut ed = editor(blocks![p!["ab<a>"], alert()]);
     ed.delete_forward().unwrap();
     assert_editor(&ed, blocks![p!["ab<a>"], alert()]);

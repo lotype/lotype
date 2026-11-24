@@ -287,6 +287,9 @@ impl Editor {
     /// block in it; in a closed one, into a toggle after it, and what it
     /// hides stays in it. Elsewhere it is [`Self::split_block`].
     pub fn split_toggle(&mut self, open: bool) -> Result<()> {
+        if self.leave_list()? {
+            return Ok(());
+        }
         self.apply(|doc, selection| {
             let (anchor, head) = text_selection(selection)?;
             let caret = doc.delete_range(anchor, head)?;
