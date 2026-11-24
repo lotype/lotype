@@ -273,6 +273,33 @@ impl Editor {
         })
     }
 
+    /// Enter in a toggle list item, which a view opens and closes. In an
+    /// open one, the text after the caret goes into a paragraph, the first
+    /// block in it; in a closed one, into a toggle after it, and what it
+    /// hides stays in it. Elsewhere it is [`Self::split_block`].
+    pub fn split_toggle(&mut self, open: bool) -> Result<()> {
+        self.apply(|doc, selection| {
+            let (anchor, head) = text_selection(selection)?;
+            let caret = doc.delete_range(anchor, head)?;
+            let block = caret.block;
+            if doc.block_type(block)? != "toggle_list_item" {
+                return Ok(Some(Selection::caret(doc.split_block(caret)?)));
+            }
+            let new = if open {
+                doc.create_block(Some(block), 0, "paragraph")?
+            } else {
+                let after = doc.index_of(block)? + 1;
+                let new = doc.create_block(doc.parent(block)?, after, "toggle_list_item")?;
+                doc.copy_attrs(block, new)?;
+                new
+            };
+            let len = doc.text_len(block)?;
+            doc.copy_text(block, caret.offset..len, new, 0)?;
+            doc.delete_text(block, caret.offset..len)?;
+            Ok(Some(Selection::caret(Pos::new(new, 0))))
+        })
+    }
+
     /// The blocks the selection touches, in document order for a text selection.
     fn selected_blocks(&self) -> Result<Vec<BlockId>> {
         match &self.selection {
