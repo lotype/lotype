@@ -63,3 +63,91 @@ fn a_selection_in_a_table_cell_asks_for_no_frames(cx: &mut TestAppContext) {
     // Settling would panic on a view that asks for every frame.
     assert!(button(&mut ed, "toolbar-bold").is_none());
 }
+
+fn press(ed: &mut EditorTestContext, selector: &'static str) {
+    let at = button(ed, selector).unwrap_or_else(|| panic!("{selector} shows"));
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.settle();
+}
+
+#[gpui::test]
+fn the_block_type_select_turns_the_selected_blocks(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one <a>two<b>"], p!["three"]]);
+    press(&mut ed, "toolbar-block-type");
+    // Heading 2 is the third entry, after paragraph and heading 1.
+    press(&mut ed, "block-type-2");
+    let heading = lotype_core::test_support::block("heading", vec!["one <a>two<b>".into()]);
+    ed.assert(blocks![heading.attr("level", 2), p!["three"]]);
+    assert!(button(&mut ed, "block-type-2").is_none());
+}
+
+#[gpui::test]
+fn alignment_moves_the_lines_and_stays_with_the_block(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>one<b>"]]);
+    let block = ed.editor(|editor| editor.document().blocks()[0]);
+    let start = |ed: &mut EditorTestContext| {
+        ed.view.update(ed.cx, |view, _| {
+            view.caret_bounds(lotype_core::Pos::new(block, 0))
+                .unwrap()
+                .left()
+        })
+    };
+    let left = start(&mut ed);
+    press(&mut ed, "toolbar-center");
+    let center = start(&mut ed);
+    press(&mut ed, "toolbar-right");
+    let right = start(&mut ed);
+    assert!(
+        left < center && center < right,
+        "{left:?} {center:?} {right:?}"
+    );
+    let value = ed.editor(|editor| editor.document().attr(block, "text_alignment").unwrap());
+    assert_eq!(value, Some(lotype_core::Value::from("right")));
+    press(&mut ed, "toolbar-left");
+    assert_eq!(start(&mut ed), left);
+}
+
+#[gpui::test]
+fn the_color_dropdown_marks_the_selection(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one <a>two<b>"]]);
+    press(&mut ed, "toolbar-color");
+    press(&mut ed, "mark-text_color-red");
+    let red = lotype_core::test_support::marked("text_color", "red", vec!["<a>two<b>".into()]);
+    ed.assert(blocks![p!["one ", red]]);
+    // A key closes a dropdown.
+    press(&mut ed, "toolbar-color");
+    assert!(button(&mut ed, "mark-text_color-red").is_some());
+    ed.keys("shift-left");
+    assert!(button(&mut ed, "mark-text_color-red").is_none());
+}
+
+#[gpui::test]
+fn nest_and_unnest_move_the_selected_block(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one"], p!["<a>two<b>"]]);
+    press(&mut ed, "toolbar-nest");
+    ed.assert(blocks![p!["one", p!["<a>two<b>"]]]);
+    press(&mut ed, "toolbar-unnest");
+    ed.assert(blocks![p!["one"], p!["<a>two<b>"]]);
+}
+
+#[gpui::test]
+fn a_dropdown_near_the_bottom_takes_its_clicks_alone(cx: &mut TestAppContext) {
+    let mut many: Vec<_> = (0..59).map(|_| p!["line"]).collect();
+    many.push(p!["one <a>two<b>"]);
+    let mut ed = EditorTestContext::new(cx, many);
+    ed.keys("shift-right shift-left");
+    press(&mut ed, "toolbar-block-type");
+    // Check List, the last entry, is where the dropdown would cover the bar.
+    press(&mut ed, "block-type-11");
+    let last = ed.editor(|editor| {
+        let doc = editor.document();
+        let block = *doc.blocks().last().unwrap();
+        (doc.block_type(block).unwrap(), doc.spans(block).unwrap())
+    });
+    assert_eq!(last.0, "check_list_item");
+    assert!(
+        last.1.iter().all(|span| span.marks.is_empty()),
+        "{:?}",
+        last.1
+    );
+}

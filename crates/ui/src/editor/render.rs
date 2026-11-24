@@ -32,6 +32,15 @@ impl EditorView {
         if spec.content() != Content::Inline {
             return None;
         }
+        // Where the lines go in their room, for a type that takes a style.
+        let align = match doc.attr(block, "text_alignment") {
+            Ok(Some(Value::Str(align))) if spec.takes_style() => match align.as_str() {
+                "center" => 0.5,
+                "right" => 1.,
+                _ => 0.,
+            },
+            _ => 0.,
+        };
         let mut style = base.clone();
         let mut line = div();
         match block_type.as_str() {
@@ -78,7 +87,7 @@ impl EditorView {
             at += span.text.len();
         }
         let text: String = spans.iter().map(|span| span.text.as_str()).collect();
-        let element = TextElement::new(text.into(), runs, atoms);
+        let element = TextElement::new(text.into(), runs, atoms).align(align);
         self.layouts.insert(block, element.layout().clone());
         self.order.push(block);
         let line = line.relative().child(element);

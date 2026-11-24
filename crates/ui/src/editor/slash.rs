@@ -22,7 +22,7 @@ pub(crate) struct SlashMenu {
     /// The block whose slash Escape closed the menu for, until the query ends.
     dismissed: Option<BlockId>,
     /// The slash: the menu goes under it, or over it where there is no room below.
-    place: Placement,
+    pub(super) place: Placement,
     scroll: ScrollHandle,
 }
 
@@ -68,15 +68,17 @@ impl EditorView {
         self.slash.highlighted = 0;
     }
 
+    /// The slash, as last laid out.
+    pub(super) fn slash_target(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let query = self.editor.slash_query()?;
+        self.caret_bounds(lotype_core::Pos::new(query.block, query.range.start))
+    }
+
     /// Notes where the slash is, at the start of a frame. The slash stays
     /// where it is while the query is typed after it.
     pub(super) fn place_slash_menu(&mut self) {
         let query = self.editor.slash_query();
-        let slash = query
-            .as_ref()
-            .map(|query| lotype_core::Pos::new(query.block, query.range.start));
-        let at = slash.and_then(|slash| self.caret_bounds(slash));
-        self.slash.place.update(at);
+        self.slash.place.update(self.slash_target());
         // The menu closed by Escape opens for the next query.
         let block = query.as_ref().map(|query| query.block);
         if self.slash.dismissed != block {

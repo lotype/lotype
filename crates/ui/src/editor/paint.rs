@@ -126,6 +126,16 @@ pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
     let revealed = view.clone();
     let prepaint = move |_: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
         reveal(&revealed, window, cx);
+        // An edit that moves the text, as an alignment does, leaves the
+        // popups placed by the last frame behind: they follow in the next.
+        let view = revealed.read(cx);
+        let behind = view.slash.place.left_behind(view.slash_target())
+            || view.toolbar.place.left_behind(view.toolbar_target())
+            || view.links.place.left_behind(view.links_target());
+        if behind {
+            let id = revealed.entity_id();
+            window.on_next_frame(move |_, cx| cx.notify(id));
+        }
     };
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
         let view = view.read(cx);

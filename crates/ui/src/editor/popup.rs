@@ -25,6 +25,12 @@ impl Placement {
         self.at = at;
     }
 
+    /// Whether the text is not where the popup was placed: it moved while
+    /// this frame laid it out.
+    pub(crate) fn left_behind(&self, at: Option<Bounds<Pixels>>) -> bool {
+        at.is_some() && at != self.at
+    }
+
     /// Where the popup goes. Text not laid out yet, or moved since, is laid
     /// out where it stays in this frame, so the view draws again in the next.
     pub(crate) fn get(&mut self, window: &mut Window) -> Option<Bounds<Pixels>> {

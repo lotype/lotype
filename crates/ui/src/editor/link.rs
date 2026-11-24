@@ -23,7 +23,7 @@ pub(crate) struct Links {
     /// The field for an address, while it is open, and what it listens to.
     field: Option<(Entity<InputState>, Subscription)>,
     /// The start of the text the field or the toolbar goes under.
-    place: Placement,
+    pub(super) place: Placement,
 }
 
 /// Whether opening `url` stays on the web or in mail: a peer's link must not
@@ -115,6 +115,12 @@ impl EditorView {
 
     /// Notes where the field or the link toolbar goes, at the start of a frame.
     pub(super) fn place_links(&mut self) {
+        self.links.place.update(self.links_target());
+    }
+
+    /// The start of the text the field or the link toolbar goes under, as
+    /// last laid out.
+    pub(super) fn links_target(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
         let start = match (&self.links.field, self.editor.selection()) {
             (Some(_), Some(Selection::Text { anchor, head })) => {
                 let ordered = self.editor.document().ordered(*anchor, *head).ok();
@@ -123,9 +129,7 @@ impl EditorView {
             (Some(_), _) => None,
             (None, _) => self.link_at_caret().map(|(from, ..)| from),
         };
-        self.links
-            .place
-            .update(start.and_then(|start| self.caret_bounds(start)));
+        start.and_then(|start| self.caret_bounds(start))
     }
 
     /// The field for an address, while it is open.

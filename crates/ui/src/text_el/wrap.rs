@@ -16,6 +16,8 @@ pub(super) struct Input {
     pub(super) atoms: Vec<(Range<usize>, Size<Pixels>)>,
     pub(super) font_size: Pixels,
     pub(super) line_height: Pixels,
+    /// How far right each line goes in the room it leaves: 0 left, 1 right.
+    pub(super) align: f32,
 }
 
 /// A run of text or an atom in a line between line breaks.
@@ -168,8 +170,16 @@ impl Input {
             for range in self.breaks(&line, range, wrap_width) {
                 // Space hanging past the edge takes no width.
                 let content = range.start + self.text[range.clone()].trim_end().len();
-                widest = widest.max(line.x(content) - line.x(range.start));
-                let laid = self.line(&line, range, top, window);
+                let width = line.x(content) - line.x(range.start);
+                widest = widest.max(width);
+                let mut laid = self.line(&line, range, top, window);
+                if let Some(room) = wrap_width.map(|wrap| wrap - width) {
+                    let left = (room * self.align).max(Pixels::ZERO);
+                    for piece in &mut laid.pieces {
+                        piece.x += left;
+                    }
+                    laid.left = left;
+                }
                 top += laid.height;
                 lines.push(laid);
             }
@@ -284,6 +294,7 @@ impl Input {
         Line {
             range,
             wraps: true,
+            left: Pixels::ZERO,
             top,
             height,
             text_top,

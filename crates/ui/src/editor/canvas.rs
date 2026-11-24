@@ -140,7 +140,7 @@ impl EditorView {
         // A block's own colors, which its marks go on top of, where its
         // type takes colors: code, math and diagrams have their own.
         let spec = doc.schema().block_spec(&row.block_type);
-        let colored = spec.is_some_and(|spec| spec.takes_colors());
+        let colored = spec.is_some_and(|spec| spec.takes_style());
         let painted = |key| match doc.attr(block, key) {
             Ok(Some(value)) if colored => crate::marks::color(&value, key == "background_color"),
             _ => None,

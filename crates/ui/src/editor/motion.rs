@@ -204,6 +204,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        self.toolbar.menu = None;
         // A click ends a composition with what was composed.
         if let Some(composition) = self.composition.take() {
             self.commit(&composition.text);

@@ -50,44 +50,15 @@ impl EditorView {
     /// A row of swatches for the block's colors under `key`, the first one
     /// the default.
     fn swatches(&self, block: BlockId, key: &'static str, cx: &mut Context<Self>) -> Div {
-        let doc = self.editor.document();
-        let current = match doc.attr(block, key) {
+        let current = match self.editor.document().attr(block, key) {
             Ok(Some(Value::Str(name))) => Some(name),
             _ => None,
         };
-        let background = key == BACKGROUND_COLOR;
-        let names = std::iter::once(None).chain(COLORS.iter().map(|(name, ..)| Some(*name)));
-        let swatches = names.map(|name| {
-            let click = cx.listener(move |view: &mut Self, _: &MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                view.color_block(block, key, name);
-                view.side_menu.menu = None;
-                view.selection_changed(window, cx);
-            });
-            let fill = name.and_then(|name| color(&Value::Str(name.to_owned()), background));
-            let mut swatch = div()
-                .size(px(20.))
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(0xd0d4d9))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(12.))
-                .cursor_pointer()
-                .debug_selector(move || format!("{key}-{}", name.unwrap_or("default")))
-                .on_mouse_down(MouseButton::Left, click);
-            swatch = match fill {
-                Some(fill) if background => swatch.bg(fill),
-                Some(fill) => swatch.text_color(fill).child("A"),
-                None => swatch.child("A"),
-            };
-            if current.as_deref() == name {
-                swatch = swatch.border_2().border_color(rgb(0x0969da));
-            }
-            swatch
-        });
-        div().flex().gap_1().px_2().pb_1().children(swatches)
+        let pick = move |view: &mut Self, name: Option<&'static str>| {
+            view.color_block(block, key, name);
+            view.side_menu.menu = None;
+        };
+        swatch_row(current.as_deref(), key == BACKGROUND_COLOR, key, pick, cx)
     }
 
     /// The block menu for `block`, placed where it is rendered, when open.
@@ -101,7 +72,7 @@ impl EditorView {
             .block_type(block)
             .ok()
             .and_then(|kind| doc.schema().block_spec(&kind).cloned());
-        let colored = spec.is_some_and(|spec| spec.takes_colors());
+        let colored = spec.is_some_and(|spec| spec.takes_style());
         let delete = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
             view.side_menu.menu = None;
             view.delete_from_menu(block);
@@ -147,4 +118,50 @@ impl EditorView {
                 .into_any_element(),
         )
     }
+}
+
+/// A row of swatches for BlockNote's colors, the first one the default, with
+/// `current` marked; `pick` gets the name clicked, or `None` for the default.
+/// Each swatch's debug selector is `{selector}-{name}`.
+pub(super) fn swatch_row(
+    current: Option<&str>,
+    background: bool,
+    selector: &'static str,
+    pick: impl Fn(&mut EditorView, Option<&'static str>) + Clone + 'static,
+    cx: &mut Context<EditorView>,
+) -> Div {
+    let names = std::iter::once(None).chain(COLORS.iter().map(|(name, ..)| Some(*name)));
+    let swatches = names.map(|name| {
+        let pick = pick.clone();
+        let click = cx.listener(
+            move |view: &mut EditorView, _: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                pick(view, name);
+                view.selection_changed(window, cx);
+            },
+        );
+        let fill = name.and_then(|name| color(&Value::Str(name.to_owned()), background));
+        let mut swatch = div()
+            .size(px(20.))
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd0d4d9))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(12.))
+            .cursor_pointer()
+            .debug_selector(move || format!("{selector}-{}", name.unwrap_or("default")))
+            .on_mouse_down(MouseButton::Left, click);
+        swatch = match fill {
+            Some(fill) if background => swatch.bg(fill),
+            Some(fill) => swatch.text_color(fill).child("A"),
+            None => swatch.child("A"),
+        };
+        if current == name {
+            swatch = swatch.border_2().border_color(rgb(0x0969da));
+        }
+        swatch
+    });
+    div().flex().gap_1().px_2().pb_1().children(swatches)
 }

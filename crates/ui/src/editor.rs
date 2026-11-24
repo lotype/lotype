@@ -12,6 +12,7 @@ mod selection;
 mod side_menu;
 mod slash;
 mod toolbar;
+mod toolbar_menus;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -61,8 +62,7 @@ pub struct EditorView {
     block_range: Option<(BlockId, BlockId)>,
     slash_items: Vec<SlashItem>,
     slash: slash::SlashMenu,
-    /// The start of the selection, which the formatting toolbar goes over.
-    toolbar: popup::Placement,
+    toolbar: toolbar::Toolbar,
     links: link::Links,
     side_menu: side_menu::SideMenu,
     /// Redraws when the focus leaves, which closes the menus.
@@ -93,7 +93,7 @@ impl EditorView {
             block_range: None,
             slash_items: default_slash_items(),
             slash: slash::SlashMenu::default(),
-            toolbar: popup::Placement::default(),
+            toolbar: toolbar::Toolbar::default(),
             links: link::Links::default(),
             side_menu: side_menu::SideMenu::default(),
             blur: None,

@@ -37,6 +37,8 @@ struct Line {
     range: Range<usize>,
     /// Whether the text goes on in the next line without a line break.
     wraps: bool,
+    /// Where the line starts, right of the left edge when it is aligned.
+    left: Pixels,
     top: Pixels,
     height: Pixels,
     /// Where text is painted in the line, below an atom taller than it.
@@ -62,6 +64,7 @@ pub(crate) struct TextElement {
     text: SharedString,
     runs: Vec<TextRun>,
     atoms: Vec<(Range<usize>, AnyElement)>,
+    align: f32,
     layout: TextLayout,
 }
 
@@ -77,8 +80,16 @@ impl TextElement {
             text,
             runs,
             atoms,
+            align: 0.,
             layout,
         }
+    }
+
+    /// Moves each line right in the room it leaves: by none of it for 0,
+    /// half of it to centre the line, all of it for 1.
+    pub(crate) fn align(mut self, align: f32) -> Self {
+        self.align = align;
+        self
     }
 
     pub(crate) fn layout(&self) -> &TextLayout {
@@ -145,6 +156,7 @@ impl Element for TextElement {
             atoms,
             font_size,
             line_height,
+            align: self.align,
         };
         let shared = self.layout.clone();
         let measure = move |known: Size<Option<Pixels>>,

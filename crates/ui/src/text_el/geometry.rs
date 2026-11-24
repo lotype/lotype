@@ -32,7 +32,7 @@ impl Line {
         }
         self.pieces
             .last()
-            .map_or(Pixels::ZERO, |piece| piece.x + piece.width)
+            .map_or(self.left, |piece| piece.x + piece.width)
     }
 
     /// The place nearest to `x`.
