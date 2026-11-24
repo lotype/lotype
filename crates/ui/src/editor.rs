@@ -1,3 +1,4 @@
+mod block_menu;
 mod canvas;
 mod clipboard;
 mod input;
@@ -225,6 +226,14 @@ impl Render for EditorView {
                 rows.push(element);
             }
         }
+        // A block menu goes with its block, deleted or hidden.
+        if self
+            .side_menu
+            .menu
+            .is_some_and(|block| !self.rows.contains(&block))
+        {
+            self.side_menu.menu = None;
+        }
         div()
             .id("lotype-editor")
             .track_scroll(&self.scroll)
@@ -240,8 +249,9 @@ impl Render for EditorView {
             .relative()
             .flex()
             .flex_col()
-            .child(paint::selection(cx.entity()))
             .children(rows)
+            // Over the rows, whose colors would hide it, and see-through.
+            .child(paint::selection(cx.entity()))
             .child(paint::caret(cx.entity()))
             .children(self.slash_menu(window, cx))
             .children(self.toolbar(window, cx))

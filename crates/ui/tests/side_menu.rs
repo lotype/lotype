@@ -144,3 +144,77 @@ fn below_a_row_with_children_is_before_its_first_child(cx: &mut TestAppContext) 
     ed.settle();
     ed.assert(blocks![p!["a", p!["b<a>"], p!["child"]]]);
 }
+
+/// Opens the block menu of the block at `index` with a click on its handle.
+fn open_menu(ed: &mut EditorTestContext, index: usize) {
+    hover(ed, index);
+    let handle = find(ed, "side-handle").unwrap();
+    ed.cx.simulate_click(handle, Modifiers::none());
+    ed.settle();
+}
+
+fn tap(ed: &mut EditorTestContext, selector: &'static str) {
+    let at = find(ed, selector).unwrap_or_else(|| panic!("{selector} shows"));
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.settle();
+}
+
+#[gpui::test]
+fn the_block_menu_deletes_the_block(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one"], p!["two"], p!["three<a>"]]);
+    open_menu(&mut ed, 1);
+    tap(&mut ed, "block-menu-delete");
+    ed.assert(blocks![p!["one<a>"], p!["three"]]);
+    assert!(find(&mut ed, "block-menu-delete").is_none());
+}
+
+#[gpui::test]
+fn the_block_menu_colors_the_block(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], p!["two"]]);
+    open_menu(&mut ed, 1);
+    tap(&mut ed, "text_color-red");
+    open_menu(&mut ed, 1);
+    tap(&mut ed, "background_color-blue");
+    assert_eq!(
+        shown(&mut ed),
+        "paragraph \"one\"\n* paragraph background_color=blue text_color=red \"two\"\n"
+    );
+    // Default takes a color off, and Escape closes the menu.
+    open_menu(&mut ed, 1);
+    tap(&mut ed, "text_color-default");
+    open_menu(&mut ed, 1);
+    ed.keys("escape");
+    assert!(find(&mut ed, "block-menu-delete").is_none());
+    assert_eq!(
+        shown(&mut ed),
+        "paragraph \"one\"\n* paragraph background_color=blue \"two\"\n"
+    );
+}
+
+#[gpui::test]
+fn a_key_closes_the_block_menu_and_a_deleted_block_takes_it(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one"], p!["two"], p!["three<a>"]]);
+    open_menu(&mut ed, 1);
+    // The key does what it does, and the menu goes.
+    ed.keys("down");
+    assert!(find(&mut ed, "block-menu-delete").is_none());
+    assert!(shown(&mut ed).ends_with("* paragraph \"three\"\n"));
+
+    open_menu(&mut ed, 1);
+    // A peer deletes the block: its menu goes, and other rows get their side menu.
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let block = editor.document().blocks()[1];
+            let mut peer = lotype_core::Document::new(lotype_core::Schema::builtin());
+            peer.import(&editor.document().export_snapshot().unwrap())
+                .unwrap();
+            peer.remove_block(block).unwrap();
+            let update = peer.export_updates(&editor.document().version()).unwrap();
+            editor.import(&update).unwrap();
+        });
+    });
+    ed.settle();
+    assert!(find(&mut ed, "block-menu-delete").is_none());
+    hover(&mut ed, 0);
+    assert!(find(&mut ed, "side-handle").is_some());
+}

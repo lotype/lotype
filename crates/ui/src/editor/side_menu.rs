@@ -22,6 +22,8 @@ pub(crate) struct SideMenu {
     /// The row the mouse is over.
     hovered: Option<BlockId>,
     dragged: Option<Dragged>,
+    /// The block whose block menu is open.
+    pub(super) menu: Option<BlockId>,
 }
 
 /// A block held by its handle.
@@ -37,9 +39,8 @@ struct Dragged {
 impl EditorView {
     /// The rows' bounds in the last frame, where they are on the screen.
     fn row_bounds(&self, at: usize) -> Option<Bounds<Pixels>> {
-        // The scroll handle has them before scrolling, after the selection,
-        // which is painted first.
-        let row = self.scroll.bounds_for_item(at + 1)?;
+        // The scroll handle has them before scrolling: the rows come first.
+        let row = self.scroll.bounds_for_item(at)?;
         Some(Bounds::new(row.origin + self.scroll.offset(), row.size))
     }
 
@@ -115,6 +116,7 @@ impl EditorView {
                 let selected = self.editor.set_selection(Some(selected)).is_ok();
                 if selected {
                     self.block_range = Some((block, block));
+                    self.side_menu.menu = Some(block);
                 }
                 return Some(selected);
             }
@@ -185,10 +187,12 @@ impl EditorView {
         indent: f32,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        // The block held, or whose menu is open, keeps its side menu.
         let held = self.side_menu.dragged.as_ref().map(|dragged| dragged.block);
+        let kept = held.or(self.side_menu.menu);
         if self.dragging
-            || held.unwrap_or(block) != block
-            || self.side_menu.hovered != Some(block) && held.is_none()
+            || kept.unwrap_or(block) != block
+            || self.side_menu.hovered != Some(block) && kept.is_none()
         {
             return None;
         }
@@ -219,7 +223,8 @@ impl EditorView {
             .cursor(CursorStyle::OpenHand)
             .debug_selector(|| "side-handle".to_owned())
             .on_mouse_down(MouseButton::Left, hold)
-            .child("⠿");
+            .child("⠿")
+            .children(self.block_menu(block, cx));
         let menu = h_flex()
             .absolute()
             .top(px(2.))

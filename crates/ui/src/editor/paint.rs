@@ -62,7 +62,8 @@ impl EditorView {
     }
 }
 
-/// Paints the selection, before the text so that it stays readable.
+/// Paints the selection over the rows, whose colors would hide it, and
+/// see-through, so that the text stays readable.
 pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
         for bounds in view.read(cx).selection_rectangles() {
@@ -90,9 +91,8 @@ fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
                 .filter(|head| blocks.contains(head))
                 .or(blocks.last().copied());
             let at = head.and_then(|head| view.rows.iter().position(|row| *row == head));
-            // The scroll handle has the rows where they are before scrolling,
-            // after the selection, which is painted first.
-            let row = at.and_then(|at| scroll.bounds_for_item(at + 1));
+            // The scroll handle has the rows where they are before scrolling.
+            let row = at.and_then(|at| scroll.bounds_for_item(at));
             row.map(|row| {
                 Bounds::new(
                     row.origin + point(Pixels::ZERO, scroll.offset().y),

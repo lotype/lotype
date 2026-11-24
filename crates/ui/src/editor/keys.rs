@@ -69,6 +69,14 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
+        // Any key closes the block menu, and Escape does nothing else.
+        if self.side_menu.menu.take().is_some() {
+            cx.notify();
+            if name == "Escape" {
+                cx.stop_propagation();
+                return;
+            }
+        }
         if self.slash_key(&name) || self.block_key(&name) {
             // Handled as a key on whole blocks.
         } else if let Some((motion, extend)) = motion::motion(&name) {

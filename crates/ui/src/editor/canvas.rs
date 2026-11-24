@@ -137,6 +137,19 @@ impl EditorView {
     ) -> Option<AnyElement> {
         let block = row.block;
         let doc = self.editor.document();
+        // A block's own colors, which its marks go on top of.
+        let painted = |key| match doc.attr(block, key) {
+            Ok(Some(value)) => crate::marks::color(&value, key == "background_color"),
+            _ => None,
+        };
+        let (ink, fill) = (painted("text_color"), painted("background_color"));
+        // A code block takes the color in place of its own background.
+        let code = row.block_type == "code_block";
+        let mut colored = base.clone();
+        if let Some(ink) = ink {
+            colored.color = ink;
+        }
+        let base = &colored;
         let content = match row.block_type.as_str() {
             "divider" | "page_break" => {
                 let line = div().h(px(1.)).w_full().bg(rgb(0xe1e4e8));
@@ -185,7 +198,7 @@ impl EditorView {
                 .w_full()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(0xf3f4f6))
+                .bg(fill.unwrap_or(rgb(0xf3f4f6).into()))
                 .child(self.block_text(block, base, shown, window, cx)?),
             _ => self.block_text(block, base, shown, window, cx)?,
         };
@@ -194,11 +207,13 @@ impl EditorView {
             let bar = div().absolute().top_0().bottom_0().left(left).w(px(3.));
             bar.bg(*color)
         });
-        let mut row_element = div().relative();
-        if row.selected {
-            row_element = row_element.bg(super::paint::selection_color());
-        }
-        let row_element = row_element
+        // Over the block's own colors, as the text selection is.
+        let selected = row.selected.then(|| {
+            let overlay = div().absolute().top_0().bottom_0().left_0().right_0();
+            overlay.bg(super::paint::selection_color())
+        });
+        let row_element = div()
+            .relative()
             .flex()
             .items_start()
             .py(px(2.))
@@ -207,7 +222,15 @@ impl EditorView {
             .children(self.side_menu(row.block, indent(row.depth), cx))
             .children(self.drop_line(row.block, indent(row.depth)))
             .children(self.marker(row, cx))
-            .child(div().flex_1().min_w_0().child(content));
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .rounded_sm()
+                    .when_some(fill.filter(|_| !code), |content, fill| content.bg(fill))
+                    .child(content),
+            )
+            .children(selected);
         Some(row_element.into_any_element())
     }
 

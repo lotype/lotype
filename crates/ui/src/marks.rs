@@ -10,7 +10,7 @@ pub(crate) const CODE_FONT: &str = "Menlo";
 
 /// BlockNote's named colors, text then background, so that documents
 /// written with it look the same.
-const COLORS: [(&str, u32, u32); 9] = [
+pub(crate) const COLORS: [(&str, u32, u32); 9] = [
     ("gray", 0x9b9a97, 0xebeced),
     ("brown", 0x64473a, 0xe9e5e3),
     ("red", 0xe03e3e, 0xfbe4e4),
@@ -67,8 +67,12 @@ fn text_run(span: &Span, base: &TextStyle) -> TextRun {
 }
 
 /// A color mark's value: one of BlockNote's names or a CSS hex color.
-fn color(value: &Value, background: bool) -> Option<Hsla> {
+pub(crate) fn color(value: &Value, background: bool) -> Option<Hsla> {
     let Value::Str(name) = value else { return None };
+    // Longer than `#rrggbbaa` is no color, and a peer's long text is not parsed.
+    if name.len() > 9 {
+        return None;
+    }
     let named = COLORS.iter().find(|(known, ..)| known == name);
     let named = named.map(|&(_, text, fill)| rgb(if background { fill } else { text }));
     let hex = || Rgba::try_from(name.as_str()).ok();
