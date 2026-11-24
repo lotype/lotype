@@ -230,8 +230,8 @@ impl Editor {
             let (parent, below) = (doc.parent(block)?, doc.index_of(block)? + 1);
             let empty = doc.text_len(block)? == 0 && doc.children(Some(block))?.is_empty();
             if item.block_type == TABLE {
-                // Three by three to start with, and typing goes on in the first cell.
-                let table = doc.create_table(parent, below, 3, 3)?;
+                // Two by two to start with, and typing goes on in the first cell.
+                let table = doc.create_table(parent, below, 2, 2)?;
                 if empty {
                     doc.remove_block(block)?;
                 }

@@ -99,17 +99,17 @@ fn the_slash_menu_inserts_a_table_and_goes_to_its_first_cell() {
     let table = items.iter().find(|item| item.key == "table").unwrap();
     let mut ed = editor(blocks![p!["/tab<a>"], p!["after"]]);
     ed.accept_slash_item(table).unwrap();
-    let row = "  table_row | \"\" | \"\" | \"\"\n";
+    let row = "  table_row | \"\" | \"\"\n";
     assert_eq!(
         outline(ed.document(), None),
-        format!("table\n{row}{row}{row}paragraph \"after\"\n")
+        format!("table\n{row}{row}paragraph \"after\"\n")
     );
     let Some(Selection::Text { head, .. }) = ed.selection() else {
         panic!()
     };
     assert_eq!(ed.document().index_of(head.block).unwrap(), 0);
     ed.insert_text("first").unwrap();
-    assert!(outline(ed.document(), None).contains("table_row | \"first\" | \"\" | \"\""));
+    assert!(outline(ed.document(), None).contains("table_row | \"first\" | \"\""));
 
     assert!(ed.undo().unwrap());
     assert!(ed.undo().unwrap());
