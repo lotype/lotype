@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, MouseButton, SharedString, TextStyle, Window, div, img,
-    prelude::*, px, rgb,
+    AnyElement, App, Bounds, Context, FontWeight, Hsla, MouseButton, Pixels, SharedString,
+    TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
 use lotype_core::{BlockId, Document, Pos, Selection, Value};
 
@@ -152,9 +152,34 @@ impl EditorView {
         }
         let base = &colored;
         let content = match row.block_type.as_str() {
-            "divider" | "page_break" => {
+            "divider" => {
                 let line = div().h(px(1.)).w_full().bg(rgb(0xe1e4e8));
                 div().h(px(17.)).w_full().flex().items_center().child(line)
+            }
+            // Where printing starts a new page: dashed, and named, as word
+            // processors draw it, so it is not taken for a divider.
+            "page_break" => {
+                // GPUI draws no dashed border on one side alone.
+                let dashes = || {
+                    let paint =
+                        |bounds: Bounds<Pixels>, _: (), window: &mut Window, _: &mut App| {
+                            let y = bounds.center().y;
+                            let mut x = bounds.left();
+                            while x < bounds.right() {
+                                let dash = Bounds::new(point(x, y), size(px(4.), px(1.)));
+                                window.paint_quad(gpui::fill(dash, muted()));
+                                x += px(8.);
+                            }
+                        };
+                    canvas(|_, _, _| (), paint).flex_1().h(px(1.))
+                };
+                let label = div()
+                    .px_2()
+                    .text_size(px(11.))
+                    .text_color(muted())
+                    .child("Page break");
+                let row = div().h(px(17.)).w_full().flex().items_center();
+                row.child(dashes()).child(label).child(dashes())
             }
             "image" => {
                 let (url, caption) = (

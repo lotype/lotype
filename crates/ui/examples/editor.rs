@@ -13,7 +13,7 @@ over several lines when the window is narrow enough, to see how lines break. \
 日本語のテキストも。\n\n```\nfn main() {}\n```\n\n\
 - A bullet\n  - nested under it\n    1. numbered\n    2. and counted\n\
 - [ ] a task\n- [x] a task done\n\n> A quote\n>\n> - with a list in it\n\n\
-> [!TIP]\n> An alert.\n\n---\n\nThe end.\n";
+> [!TIP]\n> An alert.\n\n---\n\nAfter a divider.\n\n<!-- page-break -->\n\nThe end.\n";
 
 /// A mention, written as `@name`.
 fn mention(atom: &Atom) -> String {
