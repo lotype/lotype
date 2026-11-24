@@ -107,7 +107,8 @@ impl EditorView {
                 return;
             }
         }
-        if self.slash_key(&name) || self.block_key(&name) {
+        let tab = name == "Tab" || name == "Shift-Tab";
+        if self.slash_key(&name) || self.block_key(&name) || tab && self.tab_cell(name != "Tab") {
             // Handled as a key on whole blocks.
         } else if let Some((motion, extend)) = motion::motion(&name) {
             self.move_cursor(motion, extend);

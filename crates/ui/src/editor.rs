@@ -13,6 +13,7 @@ mod render;
 mod selection;
 mod side_menu;
 mod slash;
+mod table;
 mod toolbar;
 mod toolbar_menus;
 

@@ -57,17 +57,23 @@ impl EditorView {
     /// The place in the text under a point, or nearest to it, and the side
     /// of a soft wrap it is on.
     pub(crate) fn hit(&self, at: Point<Pixels>) -> Option<(Pos, Affinity)> {
+        // Up and down first, then, for the cells of a row, left and right.
         let distance = |block: &BlockId| {
             let bounds = self.layout(*block)?.bounds()?;
-            let above = bounds.top() - at.y;
-            let below = at.y - bounds.bottom();
-            Some(above.max(below).max(Pixels::ZERO))
+            let gap =
+                |before: Pixels, after: Pixels| f32::from(before.max(after).max(Pixels::ZERO));
+            let y = gap(bounds.top() - at.y, at.y - bounds.bottom());
+            let x = gap(bounds.left() - at.x, at.x - bounds.right());
+            Some((y, x))
         };
         let nearest = self
             .order
             .iter()
             .filter_map(|block| Some((*block, distance(block)?)));
-        let (block, _) = nearest.min_by(|a, b| f32::from(a.1).total_cmp(&f32::from(b.1)))?;
+        let closer = |a: &(BlockId, (f32, f32)), b: &(BlockId, (f32, f32))| {
+            a.1.0.total_cmp(&b.1.0).then(a.1.1.total_cmp(&b.1.1))
+        };
+        let (block, _) = nearest.min_by(closer)?;
         let layout = self.layout(block)?;
         let bounds = layout.bounds()?;
         let downstream = |offset| Some((Pos::new(block, offset), Affinity::Downstream));
