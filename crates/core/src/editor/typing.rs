@@ -134,8 +134,25 @@ impl Editor {
     /// Backspace at the start of a paragraph: joins it onto the block before
     /// it, or, for an empty one at the very start, removes it and goes to
     /// the text after it, so that no empty block is left there for good.
+    /// The first block in an alert, which has no text to join onto, goes out
+    /// before it, and takes the alert away once it is left empty.
     fn join_or_drop(&mut self, head: Pos) -> Result<()> {
-        if self.doc.prev_block(head.block)?.is_some() {
+        let prev = self.doc.prev_block(head.block)?;
+        let parent = self.doc.parent(head.block)?;
+        if let Some(parent) = parent.filter(|parent| {
+            prev == Some(*parent)
+                && self.doc.text_len(*parent).is_err()
+                && !self.doc.is_table_part(*parent)
+        }) {
+            return self.apply(|doc, selection| {
+                doc.move_block_next_to(head.block, parent, false)?;
+                if doc.children(Some(parent))?.is_empty() {
+                    doc.remove_block(parent)?;
+                }
+                Ok(selection.cloned())
+            });
+        }
+        if prev.is_some() {
             return self.join_backward();
         }
         let empty =

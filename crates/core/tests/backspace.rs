@@ -75,3 +75,28 @@ fn backspace_right_after_an_input_rule_takes_it_back() {
     ed.delete_backward().unwrap();
     assert_editor(&ed, blocks![h1!["<a>"]]);
 }
+
+#[test]
+fn backspace_takes_the_first_block_out_of_an_alert() {
+    let tip = |items| block("alert", items).attr("kind", "tip");
+    let mut ed = editor(blocks![
+        p!["a"],
+        tip(vec![p!["<a>one"].into(), p!["two"].into()])
+    ]);
+    ed.delete_backward().unwrap();
+    assert_editor(
+        &ed,
+        blocks![p!["a"], p!["<a>one"], tip(vec![p!["two"].into()])],
+    );
+    // Then it joins the block before it, as a paragraph does.
+    ed.delete_backward().unwrap();
+    assert_editor(&ed, blocks![p!["a<a>one"], tip(vec![p!["two"].into()])]);
+
+    // An alert left empty goes, and its block stays to be written in.
+    let mut ed = editor(blocks![tip(vec![h1!["<a>"].into()])]);
+    ed.delete_backward().unwrap();
+    ed.delete_backward().unwrap();
+    assert_editor(&ed, blocks![p!["<a>"]]);
+    ed.undo().unwrap();
+    assert_editor(&ed, blocks![tip(vec![p!["<a>"].into()])]);
+}

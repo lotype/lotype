@@ -117,8 +117,8 @@ pub fn default_slash_items() -> Vec<SlashItem> {
         basic(
             "alert",
             "Alert",
-            "Note, tip, warning or caution",
-            &["callout", "note", "warning"],
+            "Note, tip, important, warning or caution",
+            &["callout", "note", "tip", "important", "warning", "caution"],
             "alert",
         )
         .with("kind", "note"),
