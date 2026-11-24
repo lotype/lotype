@@ -94,3 +94,38 @@ fn the_highlighted_entry_is_scrolled_into_the_list(cx: &mut TestAppContext) {
         "{file:?} in {list:?}"
     );
 }
+
+#[gpui::test]
+fn the_shortcuts_the_menu_shows_turn_the_block(cx: &mut TestAppContext) {
+    let cases = [
+        ("cmd-alt-1", "heading", Some(1)),
+        ("cmd-alt-2", "heading", Some(2)),
+        ("cmd-alt-3", "heading", Some(3)),
+        ("cmd-alt-4", "heading", Some(4)),
+        ("cmd-alt-5", "heading", Some(5)),
+        ("cmd-shift-6", "toggle_list_item", None),
+        ("cmd-shift-7", "numbered_list_item", None),
+        ("cmd-shift-8", "bullet_list_item", None),
+        ("cmd-shift-9", "check_list_item", None),
+        ("cmd-alt-c", "code_block", None),
+    ];
+    for (keys, block_type, level) in cases {
+        let keys = if cfg!(target_os = "macos") {
+            keys.to_owned()
+        } else {
+            keys.replace("cmd", "ctrl")
+        };
+        let mut ed = EditorTestContext::new(cx, blocks![p!["a<a>"]]);
+        ed.keys(&keys);
+        let (kind, found) = ed.editor(|editor| {
+            let doc = editor.document();
+            let block = doc.blocks()[0];
+            let level = match doc.attr(block, "level") {
+                Ok(Some(lotype_core::Value::Int(level))) => Some(level),
+                _ => None,
+            };
+            (doc.block_type(block).unwrap(), level)
+        });
+        assert_eq!((kind.as_str(), found), (block_type, level), "{keys}");
+    }
+}
