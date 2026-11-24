@@ -243,6 +243,37 @@ impl EditorView {
         done.ok();
     }
 
+    /// Shift and an arrow with cells selected moves the cell the selection
+    /// ends in one cell that way, within the table. Returns whether it did.
+    pub(super) fn extend_cells(&mut self, name: &str) -> bool {
+        let (down, right): (isize, isize) = match name {
+            "Shift-ArrowUp" => (-1, 0),
+            "Shift-ArrowDown" => (1, 0),
+            "Shift-ArrowLeft" => (0, -1),
+            "Shift-ArrowRight" => (0, 1),
+            _ => return false,
+        };
+        let Some(Selection::Cells { anchor, head }) = self.editor.selection().cloned() else {
+            return false;
+        };
+        let Some((table, row, column)) = place(&self.editor, head) else {
+            return false;
+        };
+        let doc = self.editor.document();
+        let (rows, columns) = match (doc.children(Some(table)), doc.columns(table)) {
+            (Ok(rows), Ok(columns)) => (rows, columns),
+            _ => return false,
+        };
+        let step = |at: usize, by: isize, len: usize| at.saturating_add_signed(by).min(len - 1);
+        let row = rows[step(row, down, rows.len())];
+        let column = columns[step(column, right, columns.len())];
+        if let Ok(head) = doc.cell(row, column) {
+            let cells = Selection::Cells { anchor, head };
+            self.editor.set_selection(Some(cells)).ok();
+        }
+        true
+    }
+
     /// Tab in a cell goes to the next one, and from the last a new row
     /// begins; Shift-Tab goes to the one before. Returns whether the caret
     /// was in a cell.

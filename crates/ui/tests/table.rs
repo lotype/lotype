@@ -222,3 +222,22 @@ fn selected_cells_copy_as_rows_of_tabs_and_give_way_to_typing(cx: &mut TestAppCo
         "table\n  table_row | \"a!<a>\" | \"b\"\n  table_row | \"\" | \"\"\n"
     );
 }
+
+#[gpui::test]
+fn shift_and_arrows_go_from_text_into_cells_and_from_cell_to_cell(cx: &mut TestAppContext) {
+    let mut ed = table_doc(cx);
+    let copied = |ed: &mut EditorTestContext| {
+        ed.keys("cmd-c");
+        ed.cx.read_from_clipboard().and_then(|item| item.text())
+    };
+    // In a cell's text, Shift and an arrow select text.
+    ed.keys("shift-left");
+    assert_eq!(copied(&mut ed).as_deref(), Some("b"));
+    // Past its edge, cells; then a cell at a time, within the table.
+    ed.keys("shift-down");
+    assert_eq!(copied(&mut ed).as_deref(), Some("b\n"));
+    ed.keys("shift-left");
+    assert_eq!(copied(&mut ed).as_deref(), Some("a\tb\n\t"));
+    ed.keys("shift-up shift-up shift-left");
+    assert_eq!(copied(&mut ed).as_deref(), Some("a\tb"));
+}

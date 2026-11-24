@@ -113,6 +113,11 @@ impl EditorView {
         // Cells selected are for Backspace, Delete, copy and cut: any other
         // key goes on from the cell the selection ends in, as from a caret
         // there, and Escape only goes back to it.
+        if self.extend_cells(&name) {
+            cx.stop_propagation();
+            self.selection_changed(window, cx);
+            return;
+        }
         if let Some(Selection::Cells { head, .. }) = self.editor.selection().cloned()
             && !["Backspace", "Delete", "Mod-c", "Mod-x"].contains(&name.as_str())
         {

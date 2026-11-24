@@ -198,11 +198,10 @@ impl EditorView {
         };
         self.side = Some((target, affinity));
         let anchor = if extend { anchor } else { target };
-        let selection = Selection::Text {
-            anchor,
-            head: target,
-        };
-        self.editor.set_selection(Some(selection)).ok();
+        // Past the edge of a cell, Shift and an arrow select cells.
+        self.editor
+            .set_selection(Some(between(anchor, target)))
+            .ok();
         self.goal = vertical.then_some((target, goal));
     }
 
