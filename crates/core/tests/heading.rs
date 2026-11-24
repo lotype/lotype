@@ -6,12 +6,21 @@ fn shown(ed: &Editor) -> String {
 }
 
 #[test]
-fn a_heading_typed_in_a_nest_comes_out_where_it_reads() {
-    let mut ed = editor(blocks![bullet!["item", p!["<a>"], p!["next"]]]);
-    ed.insert_text("# ").unwrap();
+fn markdown_typed_in_a_nest_stays_text() {
+    for typed in ["# ", "> ", "- ", "1. ", "[] ", "```", "---"] {
+        let mut ed = editor(blocks![bullet!["item", p!["<a>"]]]);
+        ed.insert_text(typed).unwrap();
+        assert_eq!(
+            shown(&ed),
+            format!("bullet_list_item \"item\"\n  paragraph \"{typed}<a>\"\n")
+        );
+    }
+    // Marks still are marks.
+    let mut ed = editor(blocks![bullet!["item", p!["<a>"]]]);
+    ed.insert_text("**b**").unwrap();
     assert_eq!(
         shown(&ed),
-        "bullet_list_item \"item\"\nheading level=1 \"<a>\"\nparagraph \"next\"\n"
+        "bullet_list_item \"item\"\n  paragraph \"[bold|b]<a>\"\n"
     );
 }
 

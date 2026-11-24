@@ -49,12 +49,14 @@ impl Editor {
     }
 
     /// Whether `block` is a paragraph that can become what the rule says.
+    /// One in another block stays one: what is typed there is text.
     fn takes(&self, block: BlockId, rule: &BlockRule, at_end: bool) -> Result<bool> {
         let Some(spec) = self.doc.schema().block_spec(rule.block_type) else {
             return Ok(false);
         };
         let has_children = !self.doc.children(Some(block))?.is_empty();
         Ok(self.doc.block_type(block)? == "paragraph"
+            && self.doc.parent(block)?.is_none()
             && (spec.allows_children() || !has_children)
             && (spec.content() == Content::Inline || at_end))
     }
