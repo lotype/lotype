@@ -177,3 +177,27 @@ fn an_empty_paragraph_with_the_caret_shows_the_placeholder(cx: &mut TestAppConte
     let mut ed = EditorTestContext::new(cx, blocks![heading]);
     assert!(!shows(&mut ed));
 }
+
+#[gpui::test]
+fn an_empty_document_is_where_writing_starts(cx: &mut TestAppContext) {
+    let shows = |ed: &mut EditorTestContext, selector: &'static str| {
+        ed.settle();
+        ed.cx.debug_bounds(selector)
+    };
+    let mut ed = EditorTestContext::new(cx, blocks![]);
+    assert!(shows(&mut ed, "empty-document").is_some());
+    // Typing makes the first paragraph, and undo takes it all back.
+    ed.type_text("hi");
+    ed.assert(blocks![p!["hi<a>"]]);
+    assert!(shows(&mut ed, "empty-document").is_none());
+    ed.keys("cmd-z cmd-z");
+    assert!(ed.editor(|editor| editor.document().blocks().is_empty()));
+
+    // A click there makes it too, with the caret and its placeholder in it.
+    let mut ed = EditorTestContext::new(cx, blocks![]);
+    let at = shows(&mut ed, "empty-document").unwrap().center();
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.settle();
+    ed.assert(blocks![p!["<a>"]]);
+    assert!(shows(&mut ed, "placeholder").is_some());
+}

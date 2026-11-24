@@ -226,6 +226,14 @@ impl Render for EditorView {
                 rows.push(element);
             }
         }
+        if self
+            .editor
+            .document()
+            .children(None)
+            .is_ok_and(|blocks| blocks.is_empty())
+        {
+            rows.push(render::empty_document());
+        }
         // A block menu goes with its block, deleted or hidden.
         if self
             .side_menu

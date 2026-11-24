@@ -17,6 +17,17 @@ use super::input::Shown;
 use crate::marks::{CODE_FONT, text_runs};
 use crate::text_el::TextElement;
 
+/// The row of a document with no blocks: where writing starts, as the first
+/// click, key or text makes it a paragraph.
+pub(super) fn empty_document() -> AnyElement {
+    div()
+        .py(px(2.))
+        .text_color(rgb(0x8a8f98))
+        .debug_selector(|| "empty-document".to_owned())
+        .child(PLACEHOLDER)
+        .into_any_element()
+}
+
 impl EditorView {
     pub(super) fn block_text(
         &mut self,

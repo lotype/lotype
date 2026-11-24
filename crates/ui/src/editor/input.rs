@@ -120,6 +120,23 @@ impl EditorView {
     }
 
     /// Ends the composition with its text in the document.
+    /// Gives a document with no blocks a paragraph with the caret in it, on
+    /// the first click, key or text: a document is changed only once
+    /// someone writes in it. Returns whether it did.
+    pub(crate) fn start_writing(&mut self) -> bool {
+        let doc = self.editor.document();
+        let empty = self.editor.selection().is_none()
+            && doc.children(None).is_ok_and(|blocks| blocks.is_empty());
+        empty
+            && self
+                .editor
+                .apply(|doc, _| {
+                    let paragraph = doc.insert_block(None, 0, "paragraph")?;
+                    Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
+                })
+                .is_ok()
+    }
+
     pub(crate) fn commit(&mut self, text: &str) {
         self.composition = None;
         if !text.is_empty() {
@@ -205,6 +222,7 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_writing();
         let Some(shown) = self.shown() else { return };
         // Typing over a selection that spans blocks replaces all of it, as
         // the editor does; any other range is in this block.
@@ -263,6 +281,7 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_writing();
         let Some(shown) = self.shown() else { return };
         if let Some(range) = range {
             let range = shown.utf8(&range);

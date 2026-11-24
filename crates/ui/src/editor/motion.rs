@@ -209,6 +209,10 @@ impl EditorView {
         if let Some(composition) = self.composition.take() {
             self.commit(&composition.text);
         }
+        if self.start_writing() {
+            self.selection_changed(window, cx);
+            return;
+        }
         let Some((pos, affinity)) = self.hit(event.position) else {
             return;
         };
