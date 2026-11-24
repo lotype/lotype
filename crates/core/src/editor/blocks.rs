@@ -73,8 +73,11 @@ impl Editor {
             // The block to go next to, and whether after it.
             let (target, after) = match beside {
                 Some(sibling) => {
-                    // A table's rows are its own.
-                    let children = if doc.is_table_part(sibling) {
+                    // A table's rows are its own, and a heading goes in no block.
+                    let top = outermost
+                        .iter()
+                        .any(|block| doc.spec(*block).is_ok_and(|spec| spec.is_top_level()));
+                    let children = if top || doc.is_table_part(sibling) {
                         Vec::new()
                     } else {
                         doc.children(Some(sibling))?
@@ -230,6 +233,12 @@ impl Editor {
             let tail = doc.split_block(caret)?.block;
             let parent = doc.parent(caret.block)?;
             let inserted = doc.insert_document(parent, doc.index_of(caret.block)? + 1, pasted)?;
+            // A heading pasted into a nest comes out of it where it reads.
+            for block in &inserted {
+                if doc.spec(*block)?.is_top_level() {
+                    doc.lift_to_top(*block)?;
+                }
+            }
             // Nothing the schema takes: the block is whole again.
             if inserted.is_empty() {
                 let caret = doc.merge_backward(tail)?.unwrap_or(caret);

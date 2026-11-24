@@ -182,7 +182,7 @@ fn blocks_nested_beyond_max_depth_are_not_part_of_the_document() {
     let raw_children = doc.child_ids(TreeParentId::Node(last_visible.0));
     assert_eq!(raw_children, [hidden.0]);
 
-    doc.set_block_type(last_visible, "heading").unwrap();
+    doc.set_block_type(last_visible, "code_block").unwrap();
     doc.remove_block(chain[1]).unwrap();
     assert_eq!(doc.blocks(), [top, after]);
 }

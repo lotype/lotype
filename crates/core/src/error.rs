@@ -19,6 +19,8 @@ pub enum Error {
     NoInlineContent,
     /// The block type named here cannot have child blocks.
     ChildrenNotAllowed(String),
+    /// The block type named here goes only at the top level, in no block.
+    TopLevelOnly(String),
     /// The block type named here holds no text, but the block has some.
     TextNotAllowed(String),
     /// The block would end up nested deeper than [`MAX_DEPTH`](crate::MAX_DEPTH).
@@ -69,6 +71,7 @@ impl fmt::Display for Error {
             Self::ChildrenNotAllowed(name) => {
                 write!(f, "block type `{name}` cannot have children")
             }
+            Self::TopLevelOnly(name) => write!(f, "block type `{name}` cannot be nested"),
             Self::TextNotAllowed(name) => write!(f, "block type `{name}` cannot hold text"),
             Self::TooDeep => f.write_str("blocks cannot be nested this deep"),
             Self::InvalidRange { start, end } => {

@@ -215,6 +215,9 @@ impl Document {
         if block_type == ROW && self.parent(block)? != parent {
             return Err(Error::TablePart);
         }
+        if parent.is_some() && self.spec(block).is_ok_and(BlockSpec::is_top_level) {
+            return Err(Error::TopLevelOnly(block_type));
+        }
         // Before the depth rule: a block is always "too deep" for its own subtree.
         if parent.is_some_and(|parent| self.is_within(parent, block)) {
             return Err(Error::CyclicMove);
@@ -264,8 +267,11 @@ impl Document {
         }
     }
 
+    /// Changes the block's type. A block that becomes a type that goes only
+    /// at the top level, as a heading, comes out of the blocks it is in
+    /// where it reads, and so does what follows it in them.
     pub fn set_block_type(&mut self, block: BlockId, block_type: &str) -> Result<()> {
-        let spec = self.spec_named(block_type)?;
+        let spec = self.spec_named(block_type)?.clone();
         if self.is_table_part(block) || [TABLE, ROW, CELL].contains(&block_type) {
             return Err(Error::TablePart);
         }
@@ -275,6 +281,9 @@ impl Document {
         let has_text = self.raw_text(block).is_ok_and(|text| !text.is_empty());
         if spec.content() == Content::None && has_text {
             return Err(Error::TextNotAllowed(block_type.to_owned()));
+        }
+        if spec.is_top_level() {
+            self.lift_to_top(block)?;
         }
         self.meta(block)?.insert(TYPE, block_type)?;
         self.record(|| {

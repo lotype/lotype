@@ -217,9 +217,7 @@ impl Editor {
     /// Takes the slash query out and inserts the entry's block: in place of
     /// the block the caret is in when that is left empty, and below it
     /// otherwise. The caret goes into the block, or below it when it holds no
-    /// text. A heading picked in a nested block goes out to the top level,
-    /// after the block that nest is in, and the block goes when it is left
-    /// empty. One undo step.
+    /// text. One undo step.
     pub fn accept_slash_item(&mut self, item: &SlashItem) -> Result<()> {
         if item.block_type == ROW || item.block_type == CELL {
             return Err(Error::TablePart);
@@ -241,22 +239,6 @@ impl Editor {
                 let first = doc.cell(rows[0], columns[0])?;
                 return Ok(Some(Selection::caret(Pos::new(first, 0))));
             }
-            // A heading starts a part of the page, so it goes out of what the
-            // block is in, onto a line of its own after all of that.
-            if item.block_type == "heading" && parent.is_some() {
-                let mut top = block;
-                while let Some(up) = doc.parent(top)? {
-                    top = up;
-                }
-                let heading = doc.create_block(None, doc.index_of(top)? + 1, "heading")?;
-                for (key, value) in &item.attrs {
-                    doc.set_attr(heading, key, value.clone())?;
-                }
-                if empty {
-                    doc.remove_block(block)?;
-                }
-                return Ok(Some(Selection::caret(Pos::new(heading, 0))));
-            }
             let target = if empty {
                 let spec = doc.schema().block_spec(&item.block_type);
                 let styled = spec.is_some_and(|spec| spec.takes_style());
@@ -272,6 +254,10 @@ impl Editor {
             };
             for (key, value) in &item.attrs {
                 doc.set_attr(target, key, value.clone())?;
+            }
+            // A heading picked in a nest comes out of it where it reads.
+            if doc.spec(target)?.is_top_level() {
+                doc.lift_to_top(target)?;
             }
             // Typing goes on in the block, or where text can go next to it.
             let caret = if holds_text {

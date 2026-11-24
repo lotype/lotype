@@ -157,24 +157,29 @@ fn a_table_part_is_not_an_item_to_insert() {
 }
 
 #[test]
-fn a_heading_picked_in_a_nested_block_goes_out_to_the_top_level() {
-    use lotype_core::bullet;
-    let nested = || bullet!["item", bullet!["deep", p!["/<a>"]], p!["after"]];
+fn a_heading_picked_in_a_nested_block_comes_out_where_it_reads() {
+    use lotype_core::{bullet, test_support::block};
+    let nested = || bullet!["item", bullet!["deep", p!["/<a>"], p!["next"]], p!["after"]];
     let mut ed = editor(blocks![nested(), p!["end"]]);
     ed.accept_slash_item(&item("heading_2")).unwrap();
+    // What follows it in the nest comes out after it.
     assert_eq!(
         shown(&ed),
-        "bullet_list_item \"item\"\n  bullet_list_item \"deep\"\n  paragraph \"after\"\n\
-         heading level=2 \"<a>\"\nparagraph \"end\"\n"
+        "bullet_list_item \"item\"\n  bullet_list_item \"deep\"\n\
+         heading level=2 \"<a>\"\nparagraph \"next\"\nparagraph \"after\"\nparagraph \"end\"\n"
     );
     ed.undo().unwrap();
     assert_eq!(shown(&ed), shown(&editor(blocks![nested(), p!["end"]])));
 
-    // A block with text in it stays where it is.
-    let mut ed = editor(blocks![bullet!["item", p!["text /<a>"]]]);
+    // Below a block with text, and out of an alert it leaves empty.
+    let alert = block("alert", vec![p!["text /<a>"].into()]);
+    let mut ed = editor(blocks![alert]);
     ed.accept_slash_item(&item("heading_2")).unwrap();
     assert_eq!(
         shown(&ed),
-        "bullet_list_item \"item\"\n  paragraph \"text \"\nheading level=2 \"<a>\"\n"
+        "alert\n  paragraph \"text \"\nheading level=2 \"<a>\"\n"
     );
+    let mut ed = editor(blocks![block("alert", vec![p!["/<a>"].into()])]);
+    ed.accept_slash_item(&item("heading_2")).unwrap();
+    assert_eq!(shown(&ed), "heading level=2 \"<a>\"\n");
 }

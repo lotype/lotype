@@ -143,6 +143,7 @@ impl Document {
         match self.move_block(block, Some(before), end) {
             Err(
                 Error::ChildrenNotAllowed(_)
+                | Error::TopLevelOnly(_)
                 | Error::TooDeep
                 | Error::UnknownBlockType(_)
                 | Error::TablePart,
@@ -178,6 +179,24 @@ impl Document {
         let (grandparent, index) = (self.parent(parent)?, self.index_of(parent)?);
         self.relocate_block(block, grandparent, index + 1)?;
         Ok(true)
+    }
+
+    /// Moves `block` out of every block it is in, to the top level where it
+    /// reads: what follows it in those blocks comes out after it, so no
+    /// block changes place on the page. An alert left empty goes.
+    pub(crate) fn lift_to_top(&mut self, block: BlockId) -> Result<()> {
+        while let Some(parent) = self.parent(block)? {
+            let siblings = self.children(Some(parent))?;
+            let after = siblings[self.index_of(block)? + 1..].to_vec();
+            let (grandparent, index) = (self.parent(parent)?, self.index_of(parent)?);
+            for (offset, block) in std::iter::once(block).chain(after).enumerate() {
+                self.relocate_block(block, grandparent, index + 1 + offset)?;
+            }
+            if self.text_len(parent).is_err() && self.children(Some(parent))?.is_empty() {
+                self.remove_block(parent)?;
+            }
+        }
+        Ok(())
     }
 
     /// The blocks from `first` to `last`, which comes later, in document order.

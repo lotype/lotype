@@ -210,10 +210,11 @@ fn the_default_keymap_runs_and_binds_each_key_once() {
     let mut ed = editor(blocks![p!["a"], p!["<a>bc<b>"]]);
     ed.run(&command("Mod-b")).unwrap();
     ed.run(&command("Mod-Alt-2")).unwrap();
+    // A heading goes in no block.
     ed.run(&command("Tab")).unwrap();
     assert_eq!(
         shown(&ed),
-        "paragraph \"a\"\n  heading level=2 \"<a>[bold|bc]<b>\"\n"
+        "paragraph \"a\"\nheading level=2 \"<a>[bold|bc]<b>\"\n"
     );
     ed.run(&command("Mod-Shift-8")).unwrap();
     ed.run(&command("Tab")).unwrap();
@@ -283,7 +284,7 @@ fn set_block_leaves_what_cannot_become_the_type() {
         .unwrap();
     assert_eq!(
         shown(&ed),
-        "heading level=1 \"<a>a\"\nparagraph \"b\"\n  heading level=1 \"child<b>\"\n"
+        "heading level=1 \"<a>a\"\nparagraph \"b\"\nheading level=1 \"child<b>\"\n"
     );
 
     // A block of a type only another peer knows keeps its type and attributes.

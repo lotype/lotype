@@ -18,6 +18,7 @@ pub struct BlockSpec {
     content: Content,
     children: bool,
     style: bool,
+    top_level: bool,
 }
 
 impl BlockSpec {
@@ -27,6 +28,7 @@ impl BlockSpec {
             content,
             children: false,
             style: true,
+            top_level: false,
         }
     }
 
@@ -39,6 +41,13 @@ impl BlockSpec {
     /// math and diagrams, which are drawn in a style of their own.
     pub fn without_style(mut self) -> Self {
         self.style = false;
+        self
+    }
+
+    /// A block of this type is never in another block, as a heading, which
+    /// starts a part of the page.
+    pub fn top_level(mut self) -> Self {
+        self.top_level = true;
         self
     }
 
@@ -58,6 +67,10 @@ impl BlockSpec {
     /// and `text_alignment`.
     pub fn takes_style(&self) -> bool {
         self.style
+    }
+
+    pub fn is_top_level(&self) -> bool {
+        self.top_level
     }
 }
 
@@ -169,7 +182,7 @@ impl Schema {
             schema = schema.block(BlockSpec::new(name, Inline).with_children());
         }
         schema = schema.block(BlockSpec::new("alert", None).with_children());
-        schema = schema.block(BlockSpec::new("heading", Inline));
+        schema = schema.block(BlockSpec::new("heading", Inline).top_level());
         schema = schema.block(BlockSpec::new("code_block", Inline).without_style());
         for name in ["image", "file", "divider", "page_break", "table_row"] {
             schema = schema.block(BlockSpec::new(name, None));
