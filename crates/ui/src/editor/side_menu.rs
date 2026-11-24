@@ -103,26 +103,20 @@ impl EditorView {
         changed
     }
 
-    /// Drops a dragged block, or selects it where the handle was only
-    /// clicked. Returns whether a block was held, and whether it was
-    /// selected: a drop leaves the view scrolled where it is.
-    pub(super) fn side_menu_release(&mut self) -> Option<bool> {
-        let dragged = self.side_menu.dragged.take()?;
+    /// Drops a dragged block, or opens its block menu where the handle was
+    /// only clicked, leaving the selection as it is. Returns whether a block
+    /// was held.
+    pub(super) fn side_menu_release(&mut self) -> bool {
+        let Some(dragged) = self.side_menu.dragged.take() else {
+            return false;
+        };
         let block = dragged.block;
         match dragged.target {
             Some((target, after)) if target != block => self.drop_block(block, target, after),
-            None if !dragged.moved => {
-                let selected = Selection::Blocks(vec![block]);
-                let selected = self.editor.set_selection(Some(selected)).is_ok();
-                if selected {
-                    self.block_range = Some((block, block));
-                    self.side_menu.menu = Some(block);
-                }
-                return Some(selected);
-            }
+            None if !dragged.moved => self.side_menu.menu = Some(block),
             _ => {}
         }
-        Some(false)
+        true
     }
 
     /// The mouse left the window.

@@ -275,16 +275,15 @@ impl EditorView {
     pub(super) fn mouse_up(
         &mut self,
         event: &MouseUpEvent,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if event.button != MouseButton::Left {
             return;
         }
-        match self.side_menu_release() {
-            Some(true) => self.selection_changed(window, cx),
-            Some(false) => cx.notify(),
-            None => {}
+        // A drop leaves the view scrolled where it is.
+        if self.side_menu_release() {
+            cx.notify();
         }
         if self.dragging {
             self.dragging = false;

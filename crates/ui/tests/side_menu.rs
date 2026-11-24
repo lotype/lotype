@@ -64,13 +64,15 @@ fn the_add_button_opens_the_slash_menu_in_a_new_block(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_click_on_the_handle_selects_the_block(cx: &mut TestAppContext) {
+fn a_click_on_the_handle_opens_the_block_menu_only(cx: &mut TestAppContext) {
     let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], p!["two"]]);
     hover(&mut ed, 1);
     let handle = find(&mut ed, "side-handle").unwrap();
     ed.cx.simulate_click(handle, Modifiers::none());
     ed.settle();
-    assert_eq!(shown(&mut ed), "paragraph \"one\"\n* paragraph \"two\"\n");
+    assert!(find(&mut ed, "block-menu-delete").is_some());
+    // The selection stays where it was.
+    ed.assert(blocks![p!["one<a>"], p!["two"]]);
 }
 
 #[gpui::test]
@@ -177,7 +179,7 @@ fn the_block_menu_colors_the_block(cx: &mut TestAppContext) {
     tap(&mut ed, "background_color-blue");
     assert_eq!(
         shown(&mut ed),
-        "paragraph \"one\"\n* paragraph background_color=blue text_color=red \"two\"\n"
+        "paragraph \"one<a>\"\nparagraph background_color=blue text_color=red \"two\"\n"
     );
     // Default takes a color off, and Escape closes the menu.
     open_menu(&mut ed, 1);
@@ -187,7 +189,7 @@ fn the_block_menu_colors_the_block(cx: &mut TestAppContext) {
     assert!(find(&mut ed, "block-menu-delete").is_none());
     assert_eq!(
         shown(&mut ed),
-        "paragraph \"one\"\n* paragraph background_color=blue \"two\"\n"
+        "paragraph \"one<a>\"\nparagraph background_color=blue \"two\"\n"
     );
 }
 
@@ -196,9 +198,9 @@ fn a_key_closes_the_block_menu_and_a_deleted_block_takes_it(cx: &mut TestAppCont
     let mut ed = EditorTestContext::new(cx, blocks![p!["one"], p!["two"], p!["three<a>"]]);
     open_menu(&mut ed, 1);
     // The key does what it does, and the menu goes.
-    ed.keys("down");
+    ed.keys("left");
     assert!(find(&mut ed, "block-menu-delete").is_none());
-    assert!(shown(&mut ed).ends_with("* paragraph \"three\"\n"));
+    assert!(shown(&mut ed).ends_with("paragraph \"thre<a>e\"\n"));
 
     open_menu(&mut ed, 1);
     // A peer deletes the block: its menu goes, and other rows get their side menu.
