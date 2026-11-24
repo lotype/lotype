@@ -124,26 +124,27 @@ impl Editor {
     }
 
     /// Enter in `cell`: the caret goes to the end of the cell below it, or
-    /// from the last row to the text after the table, where there is some.
+    /// from the last row into a new paragraph after the table, as Enter at
+    /// the end of a block starts the next one.
     pub(super) fn enter_in_cell(&mut self, cell: BlockId) -> Result<()> {
         let row = self.doc.parent(cell)?.ok_or(Error::NotATable)?;
-        let rows = self.doc.children(self.doc.parent(row)?)?;
+        let table = self.doc.parent(row)?.ok_or(Error::NotATable)?;
+        let rows = self.doc.children(Some(table))?;
         let next = rows
             .iter()
             .position(|at| *at == row)
             .and_then(|at| rows.get(at + 1));
         let column = cell.column().ok_or(Error::NotATable)?;
-        let caret = match next {
-            Some(next) => {
-                let below = self.doc.cell(*next, column)?;
-                Some(Pos::new(below, self.doc.text_len(below)?))
-            }
-            None => next_text_block(&self.doc, row)?.map(|after| Pos::new(after, 0)),
-        };
-        match caret {
-            Some(caret) => self.set_selection(Some(Selection::caret(caret))),
-            None => Ok(()),
+        if let Some(next) = next {
+            let below = self.doc.cell(*next, column)?;
+            let caret = Pos::new(below, self.doc.text_len(below)?);
+            return self.set_selection(Some(Selection::caret(caret)));
         }
+        self.apply(|doc, _| {
+            let after = doc.index_of(table)? + 1;
+            let paragraph = doc.create_block(doc.parent(table)?, after, PARAGRAPH)?;
+            Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
+        })
     }
 
     /// Whether `block` is no paragraph and can become one where it is: a

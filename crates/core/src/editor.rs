@@ -278,7 +278,7 @@ impl Editor {
 
     /// Replaces the selected text with a block break, as Enter does. In a
     /// cell of a table, which cannot split, it goes to the cell below, or
-    /// past the table from its last row, as in a spreadsheet.
+    /// into a new paragraph after the table from its last row.
     pub fn split_block(&mut self) -> Result<()> {
         if let Some(Selection::Text { head, .. }) = self.selection
             && head.block.column().is_some()

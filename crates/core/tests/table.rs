@@ -448,8 +448,26 @@ fn enter_in_a_cell_goes_down_and_out_of_the_table() {
     ed.split_block().unwrap();
     assert_eq!(
         outline(ed.document(), ed.selection()),
-        "paragraph \"before\"\ntable\n  table_row | \"\" | \"b\"\n  table_row | \"\" | \"d\"\nparagraph \"<a>after\"\n"
+        "paragraph \"before\"\ntable\n  table_row | \"\" | \"b\"\n  table_row | \"\" | \"d\"\nparagraph \"<a>\"\nparagraph \"after\"\n"
     );
+    // At the end of the document too, and one undo step takes it back.
+    let (mut doc, _) = build(blocks![]);
+    let table = doc.insert_table(None, 0, 1, 1).unwrap();
+    let cell = doc
+        .cell(
+            doc.children(Some(table)).unwrap()[0],
+            doc.columns(table).unwrap()[0],
+        )
+        .unwrap();
+    let mut ed = Editor::new(doc);
+    caret(&mut ed, cell, 0);
+    ed.split_block().unwrap();
+    assert_eq!(
+        outline(ed.document(), ed.selection()),
+        "table\n  table_row | \"\"\nparagraph \"<a>\"\n"
+    );
+    ed.undo().unwrap();
+    assert_eq!(outline(ed.document(), None), "table\n  table_row | \"\"\n");
 }
 
 #[test]
