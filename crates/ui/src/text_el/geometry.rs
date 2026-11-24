@@ -4,6 +4,7 @@
 use std::ops::Range;
 
 use gpui::{Bounds, Pixels, Point, ShapedLine, SharedString, point, px, size};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{Kind, Laid, Line, TextLayout};
 
@@ -121,6 +122,14 @@ impl TextLayout {
             let below = |line: &&Line| local.y < line.top + line.height;
             let line = laid.lines.iter().find(below).or(laid.lines.last())?;
             let index = line.index(local.x);
+            // A glyph can start inside a grapheme, as a combining mark's
+            // does: the caret goes before the grapheme, not into it.
+            let shown = laid.text.get(line.range.clone()).unwrap_or_default();
+            let within = index.saturating_sub(line.range.start);
+            let starts = shown.grapheme_indices(true).map(|(at, _)| at);
+            let starts = starts.chain([shown.len()]);
+            let before = starts.take_while(|at| *at <= within).last().unwrap_or(0);
+            let index = line.range.start + before;
             let at_wrap = line.wraps && index == line.range.end;
             let affinity = if at_wrap {
                 Affinity::Upstream

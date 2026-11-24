@@ -96,3 +96,26 @@ fn the_slash_menu_hides_the_link_toolbar(cx: &mut TestAppContext) {
     ed.type_text("/h");
     assert!(at(&mut ed, "link-toolbar").is_none());
 }
+
+#[gpui::test]
+fn an_address_for_text_a_peer_deleted_links_nothing(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["see <a>docs<b> here"]]);
+    click(&mut ed, "toolbar-link");
+    // A peer deletes the selected text while the field is open.
+    let block = ed.editor(|editor| editor.document().blocks()[0]);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let mut theirs = lotype_core::Document::new(lotype_core::Schema::builtin());
+            theirs
+                .import(&editor.document().export_snapshot().unwrap())
+                .unwrap();
+            theirs.delete_text(block, 4..8).unwrap();
+            editor.import(&theirs.export_snapshot().unwrap()).unwrap();
+        });
+    });
+    ed.cx.simulate_input("https://lotype.dev");
+    ed.keys("enter");
+    // What is typed next is no link.
+    ed.type_text("x");
+    ed.assert(blocks![p!["see x<a> here"]]);
+}

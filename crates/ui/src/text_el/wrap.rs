@@ -236,6 +236,12 @@ impl Input {
                 }
             }
             let end = wrap.or(grapheme).or(first).unwrap_or(range.end);
+            // Nothing but space is left: it hangs on this line, and no
+            // empty line follows a last grapheme wider than the line.
+            if end >= rest {
+                lines.push(start..range.end);
+                return lines;
+            }
             lines.push(start..end);
             start = end;
         }

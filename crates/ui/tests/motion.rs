@@ -157,3 +157,47 @@ fn dragging_past_the_editor_goes_on_selecting_until_released(cx: &mut TestAppCon
         .simulate_mouse_move(one, Some(MouseButton::Left), Modifiers::none());
     ed.assert(blocks![p!["o<a>ne"], p!["two<b>"]]);
 }
+
+#[gpui::test]
+fn a_drag_keeps_its_start_through_a_peers_edit(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["hello world"]]);
+    let (from, to) = (at(&mut ed, 0, 6), at(&mut ed, 0, 11));
+    ed.cx
+        .simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    // A peer writes before the place the drag started at.
+    let block = ed.editor(|editor| editor.document().blocks()[0]);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let mut theirs = lotype_core::Document::new(lotype_core::Schema::builtin());
+            theirs
+                .import(&editor.document().export_snapshot().unwrap())
+                .unwrap();
+            theirs.insert_text(block, 0, "XXXX ").unwrap();
+            editor.import(&theirs.export_snapshot().unwrap()).unwrap();
+        });
+    });
+    ed.settle();
+    let to = point(to.x + px(9.6 * 5.), to.y);
+    ed.cx
+        .simulate_mouse_move(to, Some(MouseButton::Left), Modifiers::none());
+    ed.cx
+        .simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    ed.assert(blocks![p!["XXXX hello <a>world<b>"]]);
+}
+
+#[gpui::test]
+fn a_click_on_a_combining_mark_goes_before_its_letter(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["e\u{301}x<a>"]]);
+    // The mark is a glyph of its own in the test fonts, one character in.
+    let mark = at(&mut ed, 0, 0);
+    let mark = point(mark.x + px(9.6), mark.y);
+    ed.cx.simulate_click(mark, Modifiers::none());
+    ed.type_text("a");
+    let text = ed.editor(|editor| {
+        editor
+            .document()
+            .text(editor.document().blocks()[0])
+            .unwrap()
+    });
+    assert!(text == "ae\u{301}x" || text == "e\u{301}ax", "{text:?}");
+}

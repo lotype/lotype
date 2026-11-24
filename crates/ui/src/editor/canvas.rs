@@ -348,11 +348,15 @@ impl EditorView {
             }
             false
         };
+        let end = Pos::new(toggle, doc.text_len(toggle).unwrap_or(0));
         let taken = match self.editor.selection() {
             Some(Selection::Text { anchor, head })
                 if hidden(&anchor.block) || hidden(&head.block) =>
             {
-                let end = Pos::new(toggle, doc.text_len(toggle).unwrap_or(0));
+                Selection::caret(end)
+            }
+            // A cell is in its row, which is in the table the toggle hides.
+            Some(Selection::Cells { anchor, head }) if hidden(anchor) || hidden(head) => {
                 Selection::caret(end)
             }
             Some(Selection::Blocks(blocks)) if blocks.iter().any(hidden) => {

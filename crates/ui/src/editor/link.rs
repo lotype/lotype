@@ -106,7 +106,13 @@ impl EditorView {
         if self.links.field.take().is_none() {
             return;
         }
-        if let Some(url) = url {
+        // The text may be gone, deleted by a peer: a link set on a caret
+        // would go on what is typed next.
+        let ranged = matches!(
+            self.editor.selection(),
+            Some(Selection::Text { anchor, head }) if anchor != head
+        );
+        if let Some(url) = url.filter(|_| ranged) {
             let value = (!url.is_empty()).then_some(Value::Str(url));
             self.editor.set_mark(LINK, value).ok();
         }

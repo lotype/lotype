@@ -176,3 +176,43 @@ fn enter_in_a_toggle_writes_in_it_while_it_is_open(cx: &mut TestAppContext) {
         toggle(vec!["<a>".into()])
     ]);
 }
+
+#[gpui::test]
+fn closing_a_toggle_takes_a_selection_of_cells_out_of_it(cx: &mut TestAppContext) {
+    use lotype_core::Selection;
+    let toggle = lotype_core::test_support::block("toggle_list_item", vec!["toggle<a>".into()]);
+    let mut ed = EditorTestContext::new(cx, blocks![toggle]);
+    let first = ed.editor(|editor| editor.document().blocks()[0]);
+    let cells = ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let mut made = None;
+            editor
+                .apply(|doc, selection| {
+                    let table = doc.insert_table(Some(first), 0, 1, 2)?;
+                    let row = doc.children(Some(table))?[0];
+                    let columns = doc.columns(table)?;
+                    let (a, b) = (doc.cell(row, columns[0])?, doc.cell(row, columns[1])?);
+                    doc.insert_text(a, 0, "kept")?;
+                    made = Some((a, b));
+                    Ok(selection.cloned())
+                })
+                .unwrap();
+            let (anchor, head) = made.unwrap();
+            let cells = Selection::Cells { anchor, head };
+            editor.set_selection(Some(cells)).unwrap();
+            anchor
+        })
+    });
+    ed.settle();
+    let arrow = ed.view.update(ed.cx, |view, _| {
+        let text = view.text_bounds(first).unwrap();
+        gpui::point(text.left() - gpui::px(12.), text.top() + gpui::px(11.))
+    });
+    ed.cx.simulate_click(arrow, gpui::Modifiers::none());
+    ed.keys("backspace");
+    // The hidden cells keep their text.
+    assert_eq!(
+        ed.editor(|editor| editor.document().text(cells).unwrap()),
+        "kept"
+    );
+}

@@ -271,23 +271,36 @@ fn the_side_menu_stays_a_moment_after_the_mouse_leaves(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-fn a_heading_has_no_place_among_nested_blocks(cx: &mut TestAppContext) {
-    let mut ed = EditorTestContext::new(cx, blocks![p!["one", p!["child"]], h1!["title<a>"]]);
-    hover(&mut ed, 2);
+fn a_heading_dragged_among_nested_blocks_lands_after_what_they_are_in(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(
+        cx,
+        blocks![h1!["title<a>"], p!["one", p!["child"]], p!["two"]],
+    );
+    hover(&mut ed, 0);
     let handle = find(&mut ed, "side-handle").unwrap();
     ed.cx
         .simulate_mouse_down(handle, MouseButton::Left, Modifiers::none());
-    let over_child = over(&mut ed, 1, false);
+    let over_child = over(&mut ed, 2, false);
     ed.cx
         .simulate_mouse_move(over_child, Some(MouseButton::Left), Modifiers::none());
-    assert!(find(&mut ed, "drop-line").is_none());
-    // Above a block at the top level, it has.
-    let over_one = over(&mut ed, 0, false);
+    // The line is under the last block in it, where the heading lands.
+    let line = find(&mut ed, "drop-line").expect("a place for it");
+    assert!(line.y > over_child.y, "{line:?} {over_child:?}");
     ed.cx
-        .simulate_mouse_move(over_one, Some(MouseButton::Left), Modifiers::none());
-    assert!(find(&mut ed, "drop-line").is_some());
-    ed.cx
-        .simulate_mouse_up(over_one, MouseButton::Left, Modifiers::none());
+        .simulate_mouse_up(over_child, MouseButton::Left, Modifiers::none());
     ed.settle();
-    ed.assert(blocks![h1!["title<a>"], p!["one", p!["child"]]]);
+    ed.assert(blocks![p!["one", p!["child"]], h1!["title<a>"], p!["two"]]);
+}
+
+#[gpui::test]
+fn a_second_click_on_the_handle_closes_the_block_menu(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], p!["two"]]);
+    hover(&mut ed, 1);
+    let handle = find(&mut ed, "side-handle").unwrap();
+    ed.cx.simulate_click(handle, Modifiers::none());
+    assert!(find(&mut ed, "block-menu-delete").is_some());
+    ed.cx.simulate_click(handle, Modifiers::none());
+    assert!(find(&mut ed, "block-menu-delete").is_none());
+    ed.cx.simulate_click(handle, Modifiers::none());
+    assert!(find(&mut ed, "block-menu-delete").is_some());
 }

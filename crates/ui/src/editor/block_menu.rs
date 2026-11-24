@@ -79,7 +79,8 @@ impl EditorView {
             view.selection_changed(window, cx);
         });
         let close = cx.listener(|view: &mut Self, _: &MouseDownEvent, _, cx| {
-            if view.side_menu.menu.take().is_some() {
+            if let Some(block) = view.side_menu.menu.take() {
+                view.side_menu.closed = Some(block);
                 cx.notify();
             }
         });

@@ -171,3 +171,28 @@ fn unbroken_text_lays_out_in_time(cx: &mut TestAppContext) {
         assert_eq!(head(&mut ed).offset % "🇦".len(), 0);
     }
 }
+
+#[gpui::test]
+fn no_empty_line_follows_a_last_atom_wider_than_the_line(cx: &mut TestAppContext) {
+    // "ab " and then an atom far wider than the window, at the very end.
+    let build = |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
+        let mut doc = Document::new(schema);
+        let block = doc.insert_block(None, 0, "paragraph").unwrap();
+        doc.insert_text(block, 0, "ab ").unwrap();
+        let mut editor = Editor::new(doc);
+        let caret = Selection::caret(Pos::new(block, 3));
+        editor.set_selection(Some(caret)).unwrap();
+        editor.insert_atom(Atom::new("mention")).unwrap();
+        let view = EditorView::new(editor, cx);
+        view.with_atom_view("mention", |_, _, _| {
+            div().w(px(5000.)).h(px(20.)).child("x").into_any_element()
+        })
+    };
+    let mut ed = EditorTestContext::with_view(cx, build);
+    // The caret after the atom is on the atom's line, not on an empty one
+    // under it.
+    let after = caret_top(&mut ed);
+    ed.keys("left");
+    assert_eq!(caret_top(&mut ed), after);
+}

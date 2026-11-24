@@ -1,5 +1,7 @@
 //! Moving the cursor and selecting, with keys and the mouse.
 
+use std::collections::HashMap;
+
 use gpui::{
     Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Window,
     point, px,
@@ -45,22 +47,22 @@ pub(crate) fn motion(name: &str) -> Option<(Motion, bool)> {
     Some((motion, extend))
 }
 
-/// The selection from `anchor` to `head`: text, or, from one cell into
-/// another, the cells between them whole.
-fn between(anchor: Pos, head: Pos) -> Selection {
-    let cells = anchor.block.column().is_some()
-        && head.block.column().is_some()
-        && head.block != anchor.block;
-    match cells {
-        true => Selection::Cells {
-            anchor: anchor.block,
-            head: head.block,
-        },
-        false => Selection::Text { anchor, head },
-    }
-}
-
 impl EditorView {
+    /// The selection from `anchor` to `head`: text, or, from one cell into
+    /// another of its table, the cells between them whole.
+    fn between(&self, anchor: Pos, head: Pos) -> Selection {
+        let doc = self.editor.document();
+        let cells =
+            head.block != anchor.block && doc.cells_between(anchor.block, head.block).is_ok();
+        match cells {
+            true => Selection::Cells {
+                anchor: anchor.block,
+                head: head.block,
+            },
+            false => Selection::Text { anchor, head },
+        }
+    }
+
     fn layout(&self, block: BlockId) -> Option<&TextLayout> {
         self.layouts.get(&block)
     }
@@ -73,11 +75,13 @@ impl EditorView {
     /// of a soft wrap it is on.
     pub(crate) fn hit(&self, at: Point<Pixels>) -> Option<(Pos, Affinity)> {
         // Up and down first, then, for the cells of a row, left and right.
+        let bands = self.bands();
         let distance = |block: &BlockId| {
             let bounds = self.layout(*block)?.bounds()?;
+            let (top, bottom) = self.extent(&bands, *block)?;
             let gap =
                 |before: Pixels, after: Pixels| f32::from(before.max(after).max(Pixels::ZERO));
-            let y = gap(bounds.top() - at.y, at.y - bounds.bottom());
+            let y = gap(top - at.y, at.y - bottom);
             let x = gap(bounds.left() - at.x, at.x - bounds.right());
             Some((y, x))
         };
@@ -103,6 +107,60 @@ impl EditorView {
         let y = at.y.min(bounds.bottom() - px(1.)).max(bounds.top());
         let (index, affinity) = layout.hit(point(at.x, y))?;
         Some((Pos::new(block, index.min(self.text_len(block))), affinity))
+    }
+
+    /// How far up and down each row of a table goes: its cells are as tall
+    /// as the tallest of them, whatever text each holds.
+    fn bands(&self) -> HashMap<BlockId, (Pixels, Pixels)> {
+        let doc = self.editor.document();
+        let mut bands: HashMap<BlockId, (Pixels, Pixels)> = HashMap::new();
+        for cell in self.order.iter().filter(|block| block.column().is_some()) {
+            let bounds = self.layout(*cell).and_then(|layout| layout.bounds());
+            let (Some(bounds), Ok(Some(row))) = (bounds, doc.parent(*cell)) else {
+                continue;
+            };
+            let band = bands.entry(row).or_insert((bounds.top(), bounds.bottom()));
+            *band = (band.0.min(bounds.top()), band.1.max(bounds.bottom()));
+        }
+        bands
+    }
+
+    /// From where to where down the page `block` is: its text, or for a
+    /// cell its row.
+    fn extent(
+        &self,
+        bands: &HashMap<BlockId, (Pixels, Pixels)>,
+        block: BlockId,
+    ) -> Option<(Pixels, Pixels)> {
+        let row = block
+            .column()
+            .and(self.editor.document().parent(block).ok()?);
+        if let Some(band) = row.and_then(|row| bands.get(&row)) {
+            return Some(*band);
+        }
+        let bounds = self.layout(block)?.bounds()?;
+        Some((bounds.top(), bounds.bottom()))
+    }
+
+    /// Where to aim to go a line up or down out of `block`: just inside the
+    /// nearest block wholly above or below it, which for a cell is no cell
+    /// of its own row.
+    fn beyond(&self, block: BlockId, down: bool) -> Option<Pixels> {
+        let bands = self.bands();
+        let (top, bottom) = self.extent(&bands, block)?;
+        let at = self.order.iter().position(|known| *known == block)?;
+        let extent = |other: &BlockId| self.extent(&bands, *other);
+        if down {
+            let mut below = self.order[at + 1..].iter().filter_map(extent);
+            below
+                .find(|other| other.0 >= bottom)
+                .map(|other| other.0 + px(1.))
+        } else {
+            let mut above = self.order[..at].iter().rev().filter_map(extent);
+            above
+                .find(|other| other.1 <= top)
+                .map(|other| other.1 - px(1.))
+        }
     }
 
     fn neighbor(&self, block: BlockId, forward: bool) -> Option<BlockId> {
@@ -155,15 +213,15 @@ impl EditorView {
             Motion::Up if line.top() > bounds.top() + px(1.) => {
                 return at(goal, line.top() - px(1.));
             }
-            Motion::Up => match self.neighbor(head.block, false) {
-                Some(block) => return at(goal, self.layout(block)?.bounds()?.bottom() - px(1.)),
+            Motion::Up => match self.beyond(head.block, false) {
+                Some(y) => return at(goal, y),
                 None => start(head.block),
             },
             Motion::Down if line.bottom() < bounds.bottom() - px(1.) => {
                 return at(goal, line.bottom() + px(1.));
             }
-            Motion::Down => match self.neighbor(head.block, true) {
-                Some(block) => return at(goal, self.layout(block)?.bounds()?.top() + px(1.)),
+            Motion::Down => match self.beyond(head.block, true) {
+                Some(y) => return at(goal, y),
                 None => end(head.block),
             },
             Motion::DocStart => start(*self.order.first()?),
@@ -199,9 +257,8 @@ impl EditorView {
         self.side = Some((target, affinity));
         let anchor = if extend { anchor } else { target };
         // Past the edge of a cell, Shift and an arrow select cells.
-        self.editor
-            .set_selection(Some(between(anchor, target)))
-            .ok();
+        let selection = self.between(anchor, target);
+        self.editor.set_selection(Some(selection)).ok();
         self.goal = vertical.then_some((target, goal));
     }
 
@@ -210,6 +267,13 @@ impl EditorView {
         let (Some(first), Some(last)) = (self.order.first(), self.order.last()) else {
             return;
         };
+        // No text selection ends in a cell, so there the blocks are selected.
+        if first.column().is_some() || last.column().is_some() {
+            if let (Some(first), Some(last)) = (self.rows.first(), self.rows.last()) {
+                self.select_rows(*first, *last);
+            }
+            return;
+        }
         let anchor = Pos::new(*first, 0);
         let head = Pos::new(*last, self.text_len(*last));
         self.editor
@@ -257,7 +321,8 @@ impl EditorView {
             }
             _ => (Pos::new(pos.block, 0), Pos::new(pos.block, text.len())),
         };
-        self.editor.set_selection(Some(between(anchor, head))).ok();
+        let selection = self.between(anchor, head);
+        self.editor.set_selection(Some(selection)).ok();
         self.drag_anchor = Some(anchor);
         self.dragging = true;
         self.selection_changed(window, cx);
@@ -282,12 +347,19 @@ impl EditorView {
             cx.notify();
             return;
         }
-        let (Some(anchor), Some((head, affinity))) = (self.drag_anchor, self.hit(event.position))
-        else {
+        // The editor keeps a text selection's anchor in place through a
+        // peer's edits; the one noted at the press only says where cells
+        // selected since started.
+        let anchor = match self.editor.selection() {
+            Some(Selection::Text { anchor, .. }) => Some(*anchor),
+            _ => self.drag_anchor,
+        };
+        let (Some(anchor), Some((head, affinity))) = (anchor, self.hit(event.position)) else {
             return;
         };
         self.side = Some((head, affinity));
-        self.editor.set_selection(Some(between(anchor, head))).ok();
+        let selection = self.between(anchor, head);
+        self.editor.set_selection(Some(selection)).ok();
         self.selection_changed(window, cx);
     }
 

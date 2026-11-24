@@ -241,3 +241,57 @@ fn shift_and_arrows_go_from_text_into_cells_and_from_cell_to_cell(cx: &mut TestA
     ed.keys("shift-up shift-up shift-left");
     assert_eq!(copied(&mut ed).as_deref(), Some("a\tb"));
 }
+
+#[gpui::test]
+fn up_and_down_go_from_row_to_row_in_every_column(cx: &mut TestAppContext) {
+    let mut ed = table_doc(cx);
+    let caret_in = |ed: &mut EditorTestContext| {
+        ed.editor(|editor| match editor.selection() {
+            Some(lotype_core::Selection::Text { head, .. }) => head.block,
+            _ => panic!("no caret"),
+        })
+    };
+    // From the first column, where the next block in reading order is the
+    // cell beside it.
+    let first = cell_at(&mut ed, 0, 0);
+    let at = center_of(&mut ed, first);
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.keys("down");
+    assert_eq!(caret_in(&mut ed), cell_at(&mut ed, 1, 0));
+    ed.keys("up");
+    assert_eq!(caret_in(&mut ed), cell_at(&mut ed, 0, 0));
+    // And from the last, up.
+    let last = cell_at(&mut ed, 1, 1);
+    let at = center_of(&mut ed, last);
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.keys("up");
+    assert_eq!(caret_in(&mut ed), cell_at(&mut ed, 0, 1));
+}
+
+#[gpui::test]
+fn a_click_under_a_cells_text_stays_in_that_cell(cx: &mut TestAppContext) {
+    let mut ed = table_doc(cx);
+    // The second cell gets three lines, so the row is taller than the first's text.
+    ed.keys("shift-enter shift-enter");
+    ed.settle();
+    let (short, tall) = (cell_at(&mut ed, 0, 0), cell_at(&mut ed, 0, 1));
+    let at = ed.view.update(ed.cx, |view, _| {
+        let (short, tall) = (
+            view.text_bounds(short).unwrap(),
+            view.text_bounds(tall).unwrap(),
+        );
+        point(short.left() + px(2.), tall.bottom() - px(2.))
+    });
+    ed.cx.simulate_click(at, Modifiers::none());
+    ed.type_text("!");
+    // Before its first character, which is where the click was across.
+    let now = shown(&mut ed);
+    assert!(now.starts_with("table\n  table_row | \"!<a>a\""), "{now}");
+}
+
+#[gpui::test]
+fn select_all_takes_the_blocks_where_the_document_ends_in_a_table(cx: &mut TestAppContext) {
+    let mut ed = table_doc(cx);
+    ed.keys("cmd-a backspace");
+    assert_eq!(shown(&mut ed), "paragraph \"<a>\"\n");
+}

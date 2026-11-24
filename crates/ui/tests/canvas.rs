@@ -221,6 +221,13 @@ fn the_caret_blinks_once_it_rests_and_only_at_a_caret(cx: &mut TestAppContext) {
     assert!(lit(&mut ed));
     ed.cx.executor().advance_clock(Duration::from_millis(300));
     assert!(lit(&mut ed));
+    // The blinking ends when the window is left, and starts when it is back.
+    ed.cx.deactivate_window();
+    ed.cx.executor().advance_clock(Duration::from_millis(2000));
+    assert!(lit(&mut ed));
+    ed.cx.update(|window, _| window.activate_window());
+    ed.cx.executor().advance_clock(Duration::from_millis(510));
+    assert!(!lit(&mut ed), "dark again once the window is back");
     // A range does not blink.
     ed.keys("shift-left");
     ed.cx.executor().advance_clock(Duration::from_millis(2000));

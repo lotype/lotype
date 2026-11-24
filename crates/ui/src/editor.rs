@@ -76,8 +76,9 @@ pub struct EditorView {
     /// Where a drag with the mouse started.
     drag_anchor: Option<Pos>,
     blink: blink::Blink,
-    /// Redraws when the focus leaves, which closes the menus.
-    blur: Option<Subscription>,
+    /// Redraws when the focus leaves, which closes the menus, and blinks
+    /// the caret again when the focus or the window comes back.
+    watches: Vec<Subscription>,
 }
 
 impl EditorView {
@@ -112,7 +113,7 @@ impl EditorView {
             table_menu: None,
             drag_anchor: None,
             blink: blink::Blink::default(),
-            blur: None,
+            watches: Vec::new(),
         }
     }
 
@@ -214,9 +215,16 @@ impl Focusable for EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.blur.is_none() {
+        if self.watches.is_empty() {
             let blur = cx.on_blur(&self.focus, window, |_, _, cx| cx.notify());
-            self.blur = Some(blur);
+            // The blinking ends with the focus, and nothing else starts it.
+            let wake = |view: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                view.restart_blink(window, cx);
+                cx.notify();
+            };
+            let focus = cx.on_focus(&self.focus, window, wake);
+            let active = cx.observe_window_activation(window, wake);
+            self.watches = vec![blur, focus, active];
         }
         // The frame's cost, up to the caret's paint, decides the blinking.
         self.blink.started.set(Some(std::time::Instant::now()));
@@ -233,14 +241,16 @@ impl Render for EditorView {
             Some(lotype_core::Selection::Blocks(blocks)) => blocks.iter().copied().collect(),
             _ => HashSet::new(),
         };
-        self.rows.clear();
-        let mut rows = Vec::new();
+        // The rows of the frame before stay whole while these are made, for
+        // what a row draws by the rows around it, as where a block lands.
+        let (mut rows, mut blocks) = (Vec::new(), Vec::new());
         for row in canvas::rows(self.editor.document(), &self.closed, &selected) {
             if let Some(element) = self.row_element(&row, &base, shown.as_ref(), window, cx) {
-                self.rows.push(row.block);
+                blocks.push(row.block);
                 rows.push(element);
             }
         }
+        self.rows = blocks;
         if self
             .editor
             .document()

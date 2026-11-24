@@ -34,6 +34,9 @@ pub(crate) struct SideMenu {
     dragged: Option<Dragged>,
     /// The block whose block menu is open.
     pub(super) menu: Option<BlockId>,
+    /// The block whose menu the press going on closed: a click on its
+    /// handle then leaves the menu closed.
+    pub(super) closed: Option<BlockId>,
     /// How far down its row the side menu goes, as the last frame laid it out.
     top: Option<Pixels>,
     /// Hides the side menu after `HIDE_DELAY`, unless the mouse comes back.
@@ -48,6 +51,8 @@ struct Dragged {
     target: Option<(BlockId, bool)>,
     /// It went far enough to be a drag, not a click.
     moved: bool,
+    /// Its block menu was open at the press, which closed it.
+    was_open: bool,
 }
 
 impl EditorView {
@@ -90,6 +95,24 @@ impl EditorView {
         Some((block, lower))
     }
 
+    /// The last row of `block` and of what shows in it.
+    fn last_within(&self, block: BlockId) -> BlockId {
+        let doc = self.editor.document();
+        let within = |row: &&BlockId| {
+            let mut at = doc.parent(**row).ok().flatten();
+            while let Some(parent) = at {
+                if parent == block {
+                    return true;
+                }
+                at = doc.parent(parent).ok().flatten();
+            }
+            false
+        };
+        let from = self.rows.iter().position(|row| *row == block);
+        let rows = from.map(|from| self.rows[from + 1..].iter().take_while(within));
+        rows.and_then(|rows| rows.last().copied()).unwrap_or(block)
+    }
+
     /// Follows the mouse: the row it is over, and where a dragged block goes.
     /// Returns whether anything changed.
     pub(super) fn side_menu_move(
@@ -108,15 +131,21 @@ impl EditorView {
             let Some(dragged) = &mut self.side_menu.dragged else {
                 return false;
             };
-            // A heading goes in no block, so it has no place among nested ones.
+            // A heading goes in no block.
             let doc = self.editor.document();
             let top_level = doc
                 .block_type(dragged.block)
                 .ok()
                 .and_then(|kind| doc.schema().block_spec(&kind))
                 .is_some_and(|spec| spec.is_top_level());
-            let target =
-                target.filter(|(at, _)| !top_level || doc.parent(*at).is_ok_and(|p| p.is_none()));
+            // Among nested blocks it goes after the block they are all in.
+            let target = target.map(|(at, after)| {
+                let mut top = at;
+                while let Some(parent) = doc.parent(top).ok().flatten().filter(|_| top_level) {
+                    top = parent;
+                }
+                (top, after || top != at)
+            });
             dragged.moved |= (position - dragged.from).magnitude() > f64::from(DRAG_START);
             if !dragged.moved {
                 return false;
@@ -179,13 +208,14 @@ impl EditorView {
     /// only clicked, leaving the selection as it is. Returns whether a block
     /// was held.
     pub(super) fn side_menu_release(&mut self) -> bool {
+        self.side_menu.closed = None;
         let Some(dragged) = self.side_menu.dragged.take() else {
             return false;
         };
         let block = dragged.block;
         match dragged.target {
             Some((target, after)) if target != block => self.drop_block(block, target, after),
-            None if !dragged.moved => self.side_menu.menu = Some(block),
+            None if !dragged.moved && !dragged.was_open => self.side_menu.menu = Some(block),
             _ => {}
         }
         true
@@ -264,11 +294,14 @@ impl EditorView {
         let hold = cx.listener(move |view: &mut Self, event: &MouseDownEvent, window, cx| {
             cx.stop_propagation();
             view.press(window, cx);
-            view.side_menu.dragged = Some(Dragged {
+            let menu = &mut view.side_menu;
+            let was_open = menu.closed.take() == Some(block) || menu.menu == Some(block);
+            menu.dragged = Some(Dragged {
                 block,
                 from: event.position,
                 target: None,
                 moved: false,
+                was_open,
             });
         });
         let add = Button::new("side-add")
@@ -308,9 +341,18 @@ impl EditorView {
     /// The line where a dragged block lands, on the row of `block`.
     pub(super) fn drop_line(&self, block: BlockId, indent: f32) -> Option<AnyElement> {
         let (target, after) = self.side_menu.dragged.as_ref()?.target?;
-        if target != block {
+        // After a block is after all that is in it.
+        let shown = if after {
+            self.last_within(target)
+        } else {
+            target
+        };
+        if shown != block {
             return None;
         }
+        // Under a block in the target, the line starts where the target does:
+        // only a block at the top level is a target with blocks showing in it.
+        let indent = if shown == target { indent } else { 0. };
         let line = div()
             .absolute()
             .left(px(indent))
