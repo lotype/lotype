@@ -39,4 +39,13 @@ fn a_table_from_the_slash_menu_is_two_by_two_and_written_in(cx: &mut TestAppCont
         shown(&mut ed),
         "table\n  table_row | \"a\" | \"b\"\n  table_row | \"c<a>\" | \"d\"\n"
     );
+    // From the cell above "d", Enter goes down to it; Shift-Enter breaks the line.
+    ed.keys("shift-tab enter");
+    ed.type_text("x");
+    ed.keys("shift-enter");
+    ed.type_text("y");
+    assert_eq!(
+        shown(&mut ed),
+        "table\n  table_row | \"a\" | \"b\"\n  table_row | \"c\" | \"dx\ny<a>\"\n"
+    );
 }
