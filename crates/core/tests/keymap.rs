@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use lotype_core::test_support::{editor, outline};
+use lotype_core::test_support::{block as block_node, editor, outline};
 use lotype_core::{
     BlockId, BlockSpec, Command, Content, Document, Editor, Schema, Selection, b, blocks,
     default_keymap, divider, h1, p,
@@ -115,6 +115,13 @@ fn set_block_changes_the_type_and_replaces_the_attributes() {
         .unwrap();
     ed.set_block("quote", &[]).unwrap();
     assert_eq!(ed.document().block_type(block).unwrap(), "quote");
+
+    // A block's own colors stay, as BlockNote keeps them.
+    let red = block_node("paragraph", vec!["a<a>".into()]).attr("text_color", "red");
+    let mut ed = editor(blocks![red]);
+    ed.set_block("heading", &[("level".to_owned(), 1.into())])
+        .unwrap();
+    assert_eq!(shown(&ed), "heading level=1 text_color=red \"a<a>\"\n");
 }
 
 #[test]

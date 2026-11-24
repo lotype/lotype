@@ -1,6 +1,9 @@
 use super::{Editor, text_selection};
 use crate::{Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Selection, Span, Value};
 
+/// A block's own colors, which go with it whatever its type becomes.
+pub(crate) const BLOCK_COLORS: [&str; 2] = ["text_color", "background_color"];
+
 impl Editor {
     /// Turns the blocks of the selection into `block_type`, with these
     /// attributes and no others. A block stays as it is when it cannot
@@ -24,9 +27,11 @@ impl Editor {
                     continue;
                 }
                 // Only what changes, so that asking for what a block already
-                // is makes no undo step.
+                // is makes no undo step. Its colors stay, as BlockNote keeps them.
                 for key in doc.attrs(block)?.into_keys() {
-                    if !attrs.iter().any(|(kept, _)| *kept == key) {
+                    if !attrs.iter().any(|(kept, _)| *kept == key)
+                        && !BLOCK_COLORS.contains(&key.as_str())
+                    {
                         doc.remove_attr(block, &key)?;
                     }
                 }

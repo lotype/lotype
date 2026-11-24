@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::editor::BLOCK_COLORS;
 use crate::table::{CELL, ROW, TABLE};
 use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
 
@@ -212,7 +213,8 @@ impl Editor {
                 return Ok(Some(Selection::caret(Pos::new(first, 0))));
             }
             let target = if empty {
-                for key in doc.attrs(block)?.into_keys() {
+                let keys = doc.attrs(block)?.into_keys();
+                for key in keys.filter(|key| !BLOCK_COLORS.contains(&key.as_str())) {
                     doc.remove_attr(block, &key)?;
                 }
                 doc.set_block_type(block, &item.block_type)?;

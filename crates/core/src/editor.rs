@@ -17,6 +17,7 @@ mod remote;
 mod transaction;
 mod typing;
 
+pub(crate) use blocks::BLOCK_COLORS;
 pub use changes::Changes;
 
 const MAX_UNDO_STEPS: usize = 100;
