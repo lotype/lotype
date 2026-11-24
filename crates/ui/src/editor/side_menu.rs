@@ -18,11 +18,11 @@ use super::EditorView;
 use crate::icons::{self, icon};
 
 /// The room left of the blocks that the side menu of a top-level block takes.
-pub(crate) const GUTTER: f32 = 48.;
+pub(crate) const GUTTER: f32 = 52.;
 /// How far the mouse goes with the handle held before it drags the block.
 const DRAG_START: f32 = 4.;
 /// How tall the side menu is: its buttons, the extra small ones.
-const MENU_HEIGHT: Pixels = px(20.);
+const MENU_HEIGHT: Pixels = px(24.);
 /// How long the side menu stays once the mouse has left the rows, so that
 /// it does not flicker away on the way to it or between blocks.
 const HIDE_DELAY: Duration = Duration::from_millis(300);
@@ -273,24 +273,25 @@ impl EditorView {
         });
         let add = Button::new("side-add")
             .ghost()
-            .xsmall()
+            // Its icon is three quarters of it, as big as the handle's.
+            .with_size(px(24.))
             .tab_stop(false)
             .icon(icon(icons::PLUS))
             .tooltip("Add a block below")
             .on_click(add);
         let handle = div()
-            .px_1()
+            .px_0p5()
             .text_color(rgb(0x8a8f98))
             .cursor(CursorStyle::OpenHand)
             .debug_selector(|| "side-handle".to_owned())
             .on_mouse_down(MouseButton::Left, hold)
-            .child(icon(icons::GRIP).size_4())
+            .child(icon(icons::GRIP).size(px(18.)))
             .children(self.block_menu(block, cx));
         let menu = h_flex()
             .absolute()
             .top(self.side_menu.top.unwrap_or(px(2.)))
-            .left(px(indent - GUTTER + 4.))
-            .gap_1()
+            .left(px(indent - GUTTER + 2.))
+            .gap_0p5()
             .items_center()
             .on_mouse_down(
                 MouseButton::Left,
