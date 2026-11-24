@@ -151,3 +151,28 @@ fn a_dropdown_near_the_bottom_takes_its_clicks_alone(cx: &mut TestAppContext) {
         last.1
     );
 }
+
+#[gpui::test]
+fn near_the_bottom_a_dropdown_opens_over_the_bar(cx: &mut TestAppContext) {
+    let mut many: Vec<_> = (0..59).map(|_| p!["line"]).collect();
+    many.push(p!["one <a>two<b>"]);
+    let mut ed = EditorTestContext::new(cx, many);
+    ed.keys("shift-right shift-left");
+    press(&mut ed, "toolbar-color");
+    let bar = ed.cx.debug_bounds("toolbar-bold").unwrap();
+    let swatch = ed.cx.debug_bounds("mark-background_color-yellow").unwrap();
+    // The whole dropdown is over the bar, which it leaves in sight.
+    assert!(swatch.bottom() < bar.top(), "{swatch:?} over {bar:?}");
+    press(&mut ed, "mark-background_color-yellow");
+    let marked = ed.editor(|editor| {
+        let doc = editor.document();
+        let block = *doc.blocks().last().unwrap();
+        doc.spans(block).unwrap()
+    });
+    assert!(
+        marked
+            .iter()
+            .any(|span| span.marks.contains_key("background_color"))
+    );
+    assert!(marked.iter().all(|span| !span.marks.contains_key("bold")));
+}

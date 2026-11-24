@@ -2,9 +2,12 @@
 //! of the blocks, the marks, the alignment, the colors, nesting and the
 //! link. Its buttons never take the focus, so the selection stays as it is.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
-    Anchor, AnyElement, ClickEvent, Context, Div, MouseButton, Window, anchored, div, prelude::*,
-    px, rgb,
+    Anchor, AnyElement, Bounds, ClickEvent, Context, Div, MouseButton, Pixels, Window, anchored,
+    canvas, div, point, prelude::*, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex};
@@ -37,6 +40,24 @@ pub(crate) struct Toolbar {
     pub(super) place: Placement,
     /// The dropdown open from it.
     pub(super) menu: Option<Dropdown>,
+    /// Where the bar was, and how tall the open dropdown, in the last frame:
+    /// the dropdown opens over the bar where there is more room there.
+    bar: Rc<Cell<Option<Bounds<Pixels>>>>,
+    dropdown_height: Rc<Cell<Option<Pixels>>>,
+}
+
+/// A dropdown's height before it is laid out: most of a dozen entries.
+const DROPDOWN_GUESS: Pixels = px(360.);
+
+/// Notes `bounds` of the element it is put in, as laid out, in `into`.
+fn measure(into: Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
+    let prepaint =
+        move |bounds: Bounds<Pixels>, _: &mut Window, _: &mut gpui::App| into.set(Some(bounds));
+    canvas(prepaint, |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,14 +201,56 @@ impl EditorView {
         // left, under the color button from the right.
         let left = type_menu.flatten().map(|menu| (menu, false));
         let dropdown = left.or(color_menu.flatten().map(|menu| (menu, true)));
+        // Under the bar, or over it where there is more room there than
+        // under it and not room enough under it for the dropdown.
+        let height = self.toolbar.dropdown_height.get().unwrap_or(DROPDOWN_GUESS);
+        let up = self.toolbar.bar.get().is_some_and(|bar| {
+            let below = window.viewport_size().height - bar.bottom();
+            below < height + px(12.) && bar.top() > below
+        });
+        if self.toolbar.menu.is_none() {
+            self.toolbar.dropdown_height.set(None);
+        }
         let dropdown = dropdown.map(|(menu, right)| {
-            let hanging = div().absolute().top_full();
-            let (hanging, anchor) = if right {
-                (hanging.right_0(), Anchor::TopRight)
+            let hanging = div().absolute();
+            let hanging = if up {
+                hanging.bottom_full()
             } else {
-                (hanging.left_0(), Anchor::TopLeft)
+                hanging.top_full()
             };
-            let placed = anchored().anchor(anchor).snap_to_window_with_margin(px(8.));
+            let hanging = if right {
+                hanging.right_0()
+            } else {
+                hanging.left_0()
+            };
+            let anchor = match (up, right) {
+                (false, false) => Anchor::TopLeft,
+                (false, true) => Anchor::TopRight,
+                (true, false) => Anchor::BottomLeft,
+                (true, true) => Anchor::BottomRight,
+            };
+            let gap = if up { px(-4.) } else { px(4.) };
+            // The dropdown's height, once laid out, decides the side in the
+            // next frame, which it asks for when that height changed.
+            let heights = self.toolbar.dropdown_height.clone();
+            let view = cx.entity().entity_id();
+            let measured = canvas(
+                move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut gpui::App| {
+                    if heights.replace(Some(bounds.size.height)) != Some(bounds.size.height) {
+                        window.on_next_frame(move |_, cx| cx.notify(view));
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
+            let menu = div().relative().child(menu).child(measured);
+            let placed = anchored()
+                .anchor(anchor)
+                .offset(point(px(0.), gap))
+                .snap_to_window_with_margin(px(8.));
             hanging.child(placed.child(menu))
         });
         let bar = h_flex()
@@ -229,6 +292,7 @@ impl EditorView {
                 button("unnest", icons::UNNEST, "Unnest block").on_click(unnest),
             ))
             .children(link)
+            .child(measure(self.toolbar.bar.clone()))
             .children(dropdown);
         Some(popup(at, true, bar))
     }
