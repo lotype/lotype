@@ -95,6 +95,13 @@ impl EditorView {
         if self.side_menu.menu != Some(block) {
             return None;
         }
+        // Code, math and diagrams have colors of their own.
+        let doc = self.editor.document();
+        let spec = doc
+            .block_type(block)
+            .ok()
+            .and_then(|kind| doc.schema().block_spec(&kind).cloned());
+        let colored = spec.is_some_and(|spec| spec.takes_colors());
         let delete = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
             view.side_menu.menu = None;
             view.delete_from_menu(block);
@@ -128,10 +135,12 @@ impl EditorView {
                             .on_click(delete),
                     ),
             )
-            .child(title("Text"))
-            .child(self.swatches(block, TEXT_COLOR, cx))
-            .child(title("Background"))
-            .child(self.swatches(block, BACKGROUND_COLOR, cx));
+            .when(colored, |menu| {
+                menu.child(title("Text"))
+                    .child(self.swatches(block, TEXT_COLOR, cx))
+                    .child(title("Background"))
+                    .child(self.swatches(block, BACKGROUND_COLOR, cx))
+            });
         Some(
             deferred(anchored().child(menu))
                 .with_priority(1)

@@ -137,14 +137,15 @@ impl EditorView {
     ) -> Option<AnyElement> {
         let block = row.block;
         let doc = self.editor.document();
-        // A block's own colors, which its marks go on top of.
+        // A block's own colors, which its marks go on top of, where its
+        // type takes colors: code, math and diagrams have their own.
+        let spec = doc.schema().block_spec(&row.block_type);
+        let colored = spec.is_some_and(|spec| spec.takes_colors());
         let painted = |key| match doc.attr(block, key) {
-            Ok(Some(value)) => crate::marks::color(&value, key == "background_color"),
+            Ok(Some(value)) if colored => crate::marks::color(&value, key == "background_color"),
             _ => None,
         };
         let (ink, fill) = (painted("text_color"), painted("background_color"));
-        // A code block takes the color in place of its own background.
-        let code = row.block_type == "code_block";
         let mut colored = base.clone();
         if let Some(ink) = ink {
             colored.color = ink;
@@ -198,7 +199,7 @@ impl EditorView {
                 .w_full()
                 .p_2()
                 .rounded_md()
-                .bg(fill.unwrap_or(rgb(0xf3f4f6).into()))
+                .bg(rgb(0xf3f4f6))
                 .child(self.block_text(block, base, shown, window, cx)?),
             _ => self.block_text(block, base, shown, window, cx)?,
         };
@@ -227,7 +228,7 @@ impl EditorView {
                     .flex_1()
                     .min_w_0()
                     .rounded_sm()
-                    .when_some(fill.filter(|_| !code), |content, fill| content.bg(fill))
+                    .when_some(fill, |content, fill| content.bg(fill))
                     .child(content),
             )
             .children(selected);

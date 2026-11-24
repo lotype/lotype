@@ -218,3 +218,13 @@ fn a_key_closes_the_block_menu_and_a_deleted_block_takes_it(cx: &mut TestAppCont
     hover(&mut ed, 0);
     assert!(find(&mut ed, "side-handle").is_some());
 }
+
+#[gpui::test]
+fn a_code_block_has_no_colors_in_its_menu(cx: &mut TestAppContext) {
+    let code = lotype_core::test_support::block("code_block", vec!["fn main() {}".into()]);
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"], code]);
+    open_menu(&mut ed, 1);
+    assert!(find(&mut ed, "block-menu-delete").is_some());
+    assert!(find(&mut ed, "text_color-red").is_none());
+    assert!(find(&mut ed, "background_color-default").is_none());
+}
