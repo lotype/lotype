@@ -10,9 +10,9 @@ fn quote(items: Vec<lotype_core::test_support::Item>) -> lotype_core::test_suppo
 }
 
 #[test]
-fn shift_enter_in_an_alert_leaves_it_for_a_paragraph() {
+fn enter_in_an_alert_leaves_it_for_a_paragraph() {
     let mut ed = editor(blocks![tip(vec![p!["one<a>"].into()]), p!["after"]]);
-    ed.insert_line_break().unwrap();
+    ed.split_block().unwrap();
     assert_editor(
         &ed,
         blocks![tip(vec![p!["one"].into()]), p!["<a>"], p!["after"]],
@@ -22,32 +22,35 @@ fn shift_enter_in_an_alert_leaves_it_for_a_paragraph() {
     assert_editor(&ed, blocks![tip(vec![p!["one<a>"].into()]), p!["after"]]);
 
     // An empty block goes out itself, and an alert it leaves empty goes.
+    // An empty list item leaves its list first.
     let mut ed = editor(blocks![tip(vec![p!["one"].into(), bullet!["<a>"].into()])]);
-    ed.insert_line_break().unwrap();
+    ed.split_block().unwrap();
+    assert_editor(&ed, blocks![tip(vec![p!["one"].into(), p!["<a>"].into()])]);
+    ed.split_block().unwrap();
     assert_editor(&ed, blocks![tip(vec![p!["one"].into()]), p!["<a>"]]);
     let mut ed = editor(blocks![tip(vec![p!["<a>"].into()])]);
-    ed.insert_line_break().unwrap();
+    ed.split_block().unwrap();
     assert_editor(&ed, blocks![p!["<a>"]]);
 }
 
 #[test]
-fn shift_enter_in_a_quote_takes_the_text_after_the_caret_out() {
+fn enter_in_a_quote_takes_the_text_after_the_caret_out() {
     let mut ed = editor(blocks![quote(vec!["q<a>uote".into(), p!["inside"].into()])]);
-    ed.insert_line_break().unwrap();
+    ed.split_block().unwrap();
     assert_editor(
         &ed,
         blocks![quote(vec!["q".into(), p!["inside"].into()]), p!["<a>uote"]],
     );
-    // From a block in it, too, and elsewhere it is a line break.
+    // From a block in it too; Shift-Enter breaks the line in it.
     let mut ed = editor(blocks![quote(vec!["q".into(), bullet!["item<a>"].into()])]);
-    ed.insert_line_break().unwrap();
+    ed.split_block().unwrap();
     assert_editor(
         &ed,
         blocks![quote(vec!["q".into(), bullet!["item"].into()]), p!["<a>"]],
     );
-    let mut ed = editor(blocks![p!["a<a>b"]]);
+    let mut ed = editor(blocks![quote(vec!["a<a>b".into()])]);
     ed.insert_line_break().unwrap();
-    assert_editor(&ed, blocks![p!["a\n<a>b"]]);
+    assert_editor(&ed, blocks![quote(vec!["a\n<a>b".into()])]);
 }
 
 #[test]

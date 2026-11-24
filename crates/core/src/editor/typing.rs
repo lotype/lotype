@@ -176,7 +176,7 @@ impl Editor {
         Ok(true)
     }
 
-    /// Shift-Enter in a quote or an alert, or in a block in one, leaves the
+    /// Enter in a quote or an alert, or in a block in one, leaves the
     /// nearest of them: the text after the caret goes into a paragraph right
     /// after it, or an empty block there goes out itself, as a paragraph,
     /// taking an alert it leaves empty away. Returns whether it did.
