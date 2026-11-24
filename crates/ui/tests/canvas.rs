@@ -207,6 +207,7 @@ fn the_caret_blinks_once_it_rests_and_only_at_a_caret(cx: &mut TestAppContext) {
     use std::time::Duration;
     let lit = |ed: &mut EditorTestContext| ed.view.update(ed.cx, |view, _| view.caret_lit());
     let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"]]);
+    ed.view.update(ed.cx, |view, _| view.take_frames_as_cheap());
     ed.cx.update(|window, _| window.activate_window());
     ed.type_text("x");
     assert!(lit(&mut ed));

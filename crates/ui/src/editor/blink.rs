@@ -29,6 +29,8 @@ pub(crate) struct Blink {
     /// When the frame being drawn started, and how long the last one took.
     pub(super) started: Rc<Cell<Option<Instant>>>,
     pub(super) cost: Rc<Cell<Duration>>,
+    /// Frames are taken as cheap whatever they cost, for tests.
+    cheap: bool,
 }
 
 impl EditorView {
@@ -66,12 +68,19 @@ impl EditorView {
             && self.composition.is_none()
             && window.is_window_active()
             && self.focus.is_focused(window)
-            && self.blink.cost.get() <= BUDGET
+            && (self.blink.cheap || self.blink.cost.get() <= BUDGET)
     }
 
     /// Whether the caret is lit, for tests of blinking.
     #[cfg(any(test, feature = "test-support"))]
     pub fn caret_lit(&self) -> bool {
         !self.blink.dark
+    }
+
+    /// Takes every frame as cheap, so that a test of blinking does not
+    /// depend on how busy the machine running it is.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_frames_as_cheap(&mut self) {
+        self.blink.cheap = true;
     }
 }
