@@ -192,9 +192,24 @@ impl Document {
             for (offset, block) in std::iter::once(block).chain(after).enumerate() {
                 self.relocate_block(block, grandparent, index + 1 + offset)?;
             }
-            if self.text_len(parent).is_err() && self.children(Some(parent))?.is_empty() {
-                self.remove_block(parent)?;
+            self.remove_if_emptied(Some(parent))?;
+        }
+        Ok(())
+    }
+
+    /// Removes `block` where it holds no text and nothing is left in it,
+    /// as an alert whose blocks are gone, and so the blocks around it.
+    pub(crate) fn remove_if_emptied(&mut self, mut block: Option<BlockId>) -> Result<()> {
+        while let Some(at) = block.filter(|at| self.contains(*at) && !self.is_table_part(*at)) {
+            let empty = self.text_len(at).is_err()
+                && self
+                    .child_ids(TreeParentId::Node(self.live(at)?))
+                    .is_empty();
+            if !empty {
+                break;
             }
+            block = self.parent(at)?;
+            self.remove_block(at)?;
         }
         Ok(())
     }

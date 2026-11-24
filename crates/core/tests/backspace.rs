@@ -115,3 +115,24 @@ fn delete_before_an_alert_joins_its_first_block_on() {
     ed.delete_forward().unwrap();
     assert_editor(&ed, blocks![p!["a<a>two"]]);
 }
+
+#[test]
+fn an_alert_goes_with_the_last_of_its_blocks() {
+    let tip = |items| block("alert", items).attr("kind", "tip");
+    let mut ed = editor(blocks![p!["a"], tip(vec![p!["one"].into()]), p!["b"]]);
+    let one = ed.document().blocks()[2];
+    ed.set_selection(Some(lotype_core::Selection::Blocks(vec![one])))
+        .unwrap();
+    ed.delete_selection().unwrap();
+    assert_eq!(shown(&ed), "paragraph \"a\"\nparagraph \"b\"\n");
+    ed.undo().unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph \"a\"\nalert kind=tip\n  * paragraph \"one\"\nparagraph \"b\"\n"
+    );
+
+    // A selection of text that ends in it takes it too.
+    let mut ed = editor(blocks![p!["a<a>"], tip(vec![p!["one<b>"].into()])]);
+    ed.delete_selection().unwrap();
+    assert_editor(&ed, blocks![p!["a<a>"]]);
+}

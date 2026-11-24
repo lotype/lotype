@@ -257,7 +257,12 @@ impl Editor {
                 Ok(Some(Selection::caret(doc.delete_range(*anchor, *head)?)))
             }
             Some(Selection::Blocks(blocks)) => {
+                let around: Vec<_> = blocks.iter().map(|block| doc.parent(*block)).collect();
                 doc.remove_blocks(blocks.iter().copied())?;
+                // An alert whose blocks all went goes with them.
+                for parent in around {
+                    doc.remove_if_emptied(parent?)?;
+                }
                 // A document left empty gets a paragraph to type in, where
                 // the schema has one.
                 if !doc.children(None)?.is_empty() {

@@ -213,9 +213,7 @@ impl Editor {
         }) {
             return self.apply(|doc, selection| {
                 doc.move_block_next_to(head.block, parent, false)?;
-                if doc.children(Some(parent))?.is_empty() {
-                    doc.remove_block(parent)?;
-                }
+                doc.remove_if_emptied(Some(parent))?;
                 Ok(selection.cloned())
             });
         }
@@ -334,9 +332,7 @@ fn join_forward(doc: &mut Document, caret: Pos) -> Result<Pos> {
     {
         doc.copy_text(first, 0..doc.text_len(first)?, caret.block, caret.offset)?;
         doc.dissolve_block(first)?;
-        if doc.children(Some(next))?.is_empty() {
-            doc.remove_block(next)?;
-        }
+        doc.remove_if_emptied(Some(next))?;
     }
     Ok(caret)
 }
