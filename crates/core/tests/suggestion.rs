@@ -21,6 +21,13 @@ fn the_default_items_are_distinct_and_fit_the_built_in_schema() {
     assert_eq!(keys.len(), items.len());
     // Typing in an empty block makes a paragraph already.
     assert!(!items.iter().any(|item| item.block_type == "paragraph"));
+    // Each says what it is for, and each group is together, for a menu
+    // that heads each group once.
+    assert!(items.iter().all(|item| !item.subtext.is_empty()));
+    let mut groups: Vec<&str> = items.iter().map(|item| item.group.as_str()).collect();
+    groups.dedup();
+    let distinct: HashSet<_> = groups.iter().collect();
+    assert_eq!(distinct.len(), groups.len(), "{groups:?}");
     let schema = Schema::builtin();
     for item in &items {
         assert!(
@@ -42,11 +49,20 @@ fn a_query_finds_items_by_title_or_alias_in_menu_order() {
             .collect::<Vec<_>>()
     };
     assert_eq!(keys("").len(), items.len());
-    assert_eq!(keys("head"), ["heading_1", "heading_2", "heading_3"]);
+    assert_eq!(
+        keys("head"),
+        [
+            "heading_1",
+            "heading_2",
+            "heading_3",
+            "heading_4",
+            "heading_5"
+        ]
+    );
     assert_eq!(keys("H2"), ["heading_2"]);
     assert_eq!(
         keys("LIST"),
-        ["bullet_list", "numbered_list", "check_list", "toggle_list"]
+        ["toggle_list", "bullet_list", "numbered_list", "check_list"]
     );
     assert_eq!(keys("todo"), ["check_list"]);
     assert_eq!(keys("zzz"), Vec::<&str>::new());

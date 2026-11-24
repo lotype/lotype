@@ -63,6 +63,7 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Mod-Alt-0", Command::set_block("paragraph")),
         ("Mod-Shift-7", Command::set_block("numbered_list_item")),
         ("Mod-Shift-8", Command::set_block("bullet_list_item")),
+        ("Mod-Shift-6", Command::set_block("toggle_list_item")),
         (
             "Mod-Shift-9",
             Command::set_block("check_list_item").with("checked", false),
@@ -78,7 +79,13 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Delete", Command::DeleteForward),
     ];
     let heading = |level| Command::set_block("heading").with("level", level);
-    let levels = ["Mod-Alt-1", "Mod-Alt-2", "Mod-Alt-3"];
+    let levels = [
+        "Mod-Alt-1",
+        "Mod-Alt-2",
+        "Mod-Alt-3",
+        "Mod-Alt-4",
+        "Mod-Alt-5",
+    ];
     bindings.extend(
         levels
             .into_iter()

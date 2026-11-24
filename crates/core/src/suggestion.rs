@@ -11,6 +11,8 @@ pub struct SlashItem {
     /// A stable name, for a view to pick an icon or a translation by.
     pub key: String,
     pub title: String,
+    /// What the block is for, in a few words under the title.
+    pub subtext: String,
     pub group: String,
     /// Other words that find the item.
     pub aliases: Vec<String>,
@@ -18,10 +20,18 @@ pub struct SlashItem {
     pub attrs: Vec<(String, Value)>,
 }
 
-fn item(key: &str, title: &str, group: &str, aliases: &[&str], block_type: &str) -> SlashItem {
+fn item(
+    key: &str,
+    title: &str,
+    subtext: &str,
+    group: &str,
+    aliases: &[&str],
+    block_type: &str,
+) -> SlashItem {
     SlashItem {
         key: key.to_owned(),
         title: title.to_owned(),
+        subtext: subtext.to_owned(),
         group: group.to_owned(),
         aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
         block_type: block_type.to_owned(),
@@ -36,92 +46,108 @@ impl SlashItem {
     }
 }
 
-/// The built-in entries, for the built-in schema, in menu order.
+/// The built-in entries, for the built-in schema, in menu order, each group
+/// together.
 pub fn default_slash_items() -> Vec<SlashItem> {
-    let heading = |level: i64, alias: &str| {
-        let key = format!("heading_{level}");
-        let title = format!("Heading {level}");
-        item(&key, &title, "Headings", &[alias, "title"], "heading").with("level", level)
+    let heading = |level: i64, subtext: &str| {
+        let (key, title, alias) = (
+            format!("heading_{level}"),
+            format!("Heading {level}"),
+            format!("h{level}"),
+        );
+        let group = if level <= 3 {
+            "Headings"
+        } else {
+            "Subheadings"
+        };
+        item(&key, &title, subtext, group, &[&alias, "title"], "heading").with("level", level)
+    };
+    let basic = |key, title, subtext, aliases, block_type| {
+        item(key, title, subtext, "Basic blocks", aliases, block_type)
     };
     vec![
-        heading(1, "h1"),
-        heading(2, "h2"),
-        heading(3, "h3"),
-        item(
+        heading(1, "Top-level heading"),
+        heading(2, "Key section heading"),
+        heading(3, "Subsection and group heading"),
+        heading(4, "Minor subsection heading"),
+        heading(5, "Small subsection heading"),
+        basic(
             "quote",
             "Quote",
-            "Basic blocks",
+            "Quote or excerpt",
             &["blockquote", "citation"],
             "quote",
         ),
-        item(
+        basic(
+            "toggle_list",
+            "Toggle List",
+            "List with hideable sub-items",
+            &["collapsible", "list"],
+            "toggle_list_item",
+        ),
+        basic(
             "bullet_list",
-            "Bullet list",
-            "Basic blocks",
+            "Bullet List",
+            "List with unordered items",
             &["ul", "unordered", "list"],
             "bullet_list_item",
         ),
-        item(
+        basic(
             "numbered_list",
-            "Numbered list",
-            "Basic blocks",
+            "Numbered List",
+            "List with ordered items",
             &["ol", "ordered", "list"],
             "numbered_list_item",
         ),
-        item(
+        basic(
             "check_list",
-            "Check list",
-            "Basic blocks",
+            "Check List",
+            "List with checkboxes",
             &["todo", "task", "checkbox", "list"],
             "check_list_item",
         )
         .with("checked", false),
-        item(
-            "toggle_list",
-            "Toggle list",
-            "Basic blocks",
-            &["collapsible", "list"],
-            "toggle_list_item",
-        ),
-        item(
+        basic(
             "code_block",
-            "Code block",
-            "Basic blocks",
+            "Code Block",
+            "Code in a block of its own",
             &["pre", "code"],
             "code_block",
         ),
-        item(
+        basic(
             "alert",
             "Alert",
-            "Basic blocks",
+            "Note, tip, warning or caution",
             &["callout", "note", "warning"],
             "alert",
         )
         .with("kind", "note"),
-        item(
+        basic(
             "divider",
             "Divider",
-            "Basic blocks",
+            "Visually divide blocks",
             &["hr", "rule", "line", "separator"],
             "divider",
         ),
-        item(
+        basic(
             "page_break",
-            "Page break",
-            "Basic blocks",
+            "Page Break",
+            "Start a new page when printed",
             &["page"],
             "page_break",
         ),
         item(
             "table",
             "Table",
-            "Basic blocks",
+            "Table with editable cells",
+            "Advanced",
             &["grid", "rows", "columns"],
             "table",
         ),
         item(
             "image",
             "Image",
+            "Image with a caption",
             "Media",
             &["picture", "photo", "media"],
             "image",
@@ -129,6 +155,7 @@ pub fn default_slash_items() -> Vec<SlashItem> {
         item(
             "file",
             "File",
+            "Embedded file",
             "Media",
             &["attachment", "upload", "media"],
             "file",
