@@ -1,6 +1,7 @@
 //! Keys, bound to editor commands by the core's keymap.
 
 use gpui::{Context, KeyDownEvent, Keystroke, Window};
+use lotype_core::{Command, Selection};
 
 use super::{EditorView, motion};
 
@@ -131,7 +132,20 @@ impl EditorView {
             return;
         };
         let command = binding.command.clone();
-        self.editor.run(&command).ok();
+        // Enter in a toggle goes by whether it is open, which is the view's.
+        let toggle = match self.editor.selection() {
+            Some(Selection::Text { head, .. }) if command == Command::SplitBlock => {
+                let doc = self.editor.document();
+                let kind = doc.block_type(head.block).unwrap_or_default();
+                (kind == "toggle_list_item").then_some(head.block)
+            }
+            _ => None,
+        };
+        match toggle {
+            Some(toggle) => self.editor.split_toggle(!self.closed.contains(&toggle)),
+            None => self.editor.run(&command),
+        }
+        .ok();
         cx.stop_propagation();
         // A command may move the caret, and the IME's window with it.
         window.notify_text_input_changed(&self.focus);

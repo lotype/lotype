@@ -149,3 +149,30 @@ fn escape_again_goes_back_into_the_text(cx: &mut TestAppContext) {
     ed.keys("escape");
     ed.assert(blocks![p!["one<a>"], p!["two"]]);
 }
+
+#[gpui::test]
+fn enter_in_a_toggle_writes_in_it_while_it_is_open(cx: &mut TestAppContext) {
+    let toggle = |items: Vec<lotype_core::test_support::Item>| {
+        lotype_core::test_support::block("toggle_list_item", items)
+    };
+    let mut ed = EditorTestContext::new(cx, blocks![toggle(vec!["title<a>".into()])]);
+    ed.keys("enter");
+    ed.assert(blocks![toggle(vec!["title".into(), p!["<a>"].into()])]);
+
+    // Closed, it starts another toggle, and keeps what it hides.
+    let mut ed = EditorTestContext::new(
+        ed.cx,
+        blocks![toggle(vec!["title<a>".into(), p!["child"].into()])],
+    );
+    let first = ed.editor(|editor| editor.document().blocks()[0]);
+    let arrow = ed.view.update(ed.cx, |view, _| {
+        let text = view.text_bounds(first).unwrap();
+        gpui::point(text.left() - gpui::px(12.), text.top() + gpui::px(11.))
+    });
+    ed.cx.simulate_click(arrow, gpui::Modifiers::none());
+    ed.keys("end enter");
+    ed.assert(blocks![
+        toggle(vec!["title".into(), p!["child"].into()]),
+        toggle(vec!["<a>".into()])
+    ]);
+}
