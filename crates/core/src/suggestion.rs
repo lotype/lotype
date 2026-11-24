@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::editor::BLOCK_COLORS;
+use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
 use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
 
@@ -214,8 +214,8 @@ impl Editor {
             }
             let target = if empty {
                 let spec = doc.schema().block_spec(&item.block_type);
-                let colored = spec.is_some_and(|spec| spec.takes_colors());
-                let kept = |key: &String| colored && BLOCK_COLORS.contains(&key.as_str());
+                let styled = spec.is_some_and(|spec| spec.takes_style());
+                let kept = |key: &String| styled && BLOCK_STYLE.contains(&key.as_str());
                 let keys = doc.attrs(block)?.into_keys();
                 for key in keys.filter(|key| !kept(key)) {
                     doc.remove_attr(block, &key)?;

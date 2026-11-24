@@ -1,8 +1,9 @@
 use super::{Editor, text_selection};
 use crate::{Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Selection, Span, Value};
 
-/// A block's own colors, which go with it whatever its type becomes.
-pub(crate) const BLOCK_COLORS: [&str; 2] = ["text_color", "background_color"];
+/// A block's own style, which goes with it whatever its type becomes, where
+/// that type takes a style.
+pub(crate) const BLOCK_STYLE: [&str; 3] = ["text_color", "background_color", "text_alignment"];
 
 impl Editor {
     /// Turns the blocks of the selection into `block_type`, with these
@@ -13,11 +14,11 @@ impl Editor {
     pub fn set_block(&mut self, block_type: &str, attrs: &[(String, Value)]) -> Result<()> {
         let blocks = self.selected_blocks()?;
         self.apply(|doc, selection| {
-            let (holds_text, nests, colored) = {
+            let (holds_text, nests, styled) = {
                 let spec = doc.schema().block_spec(block_type);
                 let spec = spec.ok_or_else(|| Error::UnknownBlockType(block_type.to_owned()))?;
                 let content = spec.content() == Content::Inline;
-                (content, spec.allows_children(), spec.takes_colors())
+                (content, spec.allows_children(), spec.takes_style())
             };
             for block in blocks {
                 let fits = doc.spec(block).is_ok()
@@ -28,11 +29,13 @@ impl Editor {
                     continue;
                 }
                 // Only what changes, so that asking for what a block already
-                // is makes no undo step. Its colors stay, as BlockNote keeps
-                // them, where the type takes colors.
-                for key in doc.attrs(block)?.into_keys() {
-                    let color = colored && BLOCK_COLORS.contains(&key.as_str());
-                    if !attrs.iter().any(|(kept, _)| *kept == key) && !color {
+                // is makes no undo step. Its style stays, as BlockNote keeps
+                // it, where the type takes one; and a block of that type
+                // already keeps all its attributes, as a checked item does.
+                let same = doc.block_type(block)? == block_type;
+                for key in doc.attrs(block)?.into_keys().filter(|_| !same) {
+                    let style = styled && BLOCK_STYLE.contains(&key.as_str());
+                    if !attrs.iter().any(|(kept, _)| *kept == key) && !style {
                         doc.remove_attr(block, &key)?;
                     }
                 }
@@ -192,6 +195,27 @@ impl Editor {
                 false => Pos::new(tail, 0),
             };
             Ok(Some(Selection::caret(caret)))
+        })
+    }
+
+    /// Gives the selected blocks the attribute `key`, or takes it off them
+    /// for `None`, as one undo step, as a toolbar sets their alignment. A
+    /// block whose type takes no style gets none of `text_color`,
+    /// `background_color` or `text_alignment`.
+    pub fn set_block_attr(&mut self, key: &str, value: Option<Value>) -> Result<()> {
+        let blocks = self.selected_blocks()?;
+        self.apply(|doc, selection| {
+            for block in blocks {
+                let styled = doc.spec(block).is_ok_and(|spec| spec.takes_style());
+                if doc.is_table_part(block) || BLOCK_STYLE.contains(&key) && !styled {
+                    continue;
+                }
+                match &value {
+                    Some(value) => doc.set_attr(block, key, value.clone())?,
+                    None => doc.remove_attr(block, key)?,
+                }
+            }
+            Ok(selection.cloned())
         })
     }
 

@@ -125,6 +125,44 @@ fn set_block_changes_the_type_and_replaces_the_attributes() {
     // A code block takes no colors.
     ed.set_block("code_block", &[]).unwrap();
     assert_eq!(shown(&ed), "code_block \"a<a>\"\n");
+
+    // A block of the type already keeps its attributes, a checked item its check.
+    let done = block_node("check_list_item", vec!["d<b>".into()]).attr("checked", true);
+    let mut ed = editor(blocks![p!["c<a>"], done]);
+    ed.set_block("check_list_item", &[]).unwrap();
+    assert_eq!(
+        shown(&ed),
+        "check_list_item \"c<a>\"\ncheck_list_item checked=true \"d<b>\"\n"
+    );
+}
+
+#[test]
+fn set_block_attr_aligns_the_selected_blocks_that_take_a_style() {
+    let code = block_node("code_block", vec!["c".into()]);
+    let mut ed = editor(blocks![p!["a<a>"], code, p!["b<b>"]]);
+    ed.set_block_attr("text_alignment", Some("center".into()))
+        .unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph text_alignment=center \"a<a>\"\ncode_block \"c\"\nparagraph text_alignment=center \"b<b>\"\n"
+    );
+    // The type changes, the alignment stays; and it comes off in one step.
+    ed.set_block("heading", &[("level".to_owned(), 2.into())])
+        .unwrap();
+    ed.set_block_attr("text_alignment", None).unwrap();
+    assert!(!shown(&ed).contains("text_alignment"));
+    ed.undo().unwrap();
+    assert!(shown(&ed).contains("heading level=2 text_alignment=center"));
+
+    // A table and its rows take none either.
+    let mut doc = Document::new(Schema::builtin());
+    let table = doc.insert_table(None, 0, 1, 1).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.set_selection(Some(Selection::Blocks(vec![table])))
+        .unwrap();
+    ed.set_block_attr("text_alignment", Some("center".into()))
+        .unwrap();
+    assert!(!shown(&ed).contains("text_alignment"));
 }
 
 #[test]
