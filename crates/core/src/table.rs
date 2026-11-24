@@ -282,7 +282,7 @@ impl Document {
     /// The cells between two cells of one table, both included: every cell
     /// in their rows and the rows between that is in their columns or the
     /// columns between.
-    pub(crate) fn cells_between(&self, a: BlockId, b: BlockId) -> Result<Vec<BlockId>> {
+    pub fn cells_between(&self, a: BlockId, b: BlockId) -> Result<Vec<BlockId>> {
         let (Some(first), Some(second)) = (a.1, b.1) else {
             return Err(Error::NotATable);
         };

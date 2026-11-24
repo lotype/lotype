@@ -26,7 +26,7 @@ fn make_paragraph(doc: &mut Document, block: BlockId) -> Result<()> {
 }
 
 /// The first block after `block` in document order that holds text.
-fn next_text_block(doc: &Document, block: BlockId) -> Result<Option<BlockId>> {
+pub(super) fn next_text_block(doc: &Document, block: BlockId) -> Result<Option<BlockId>> {
     let mut at = doc.next_block(block)?;
     while let Some(next) = at {
         if doc.text_len(next).is_ok() {

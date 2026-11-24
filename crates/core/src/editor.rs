@@ -14,6 +14,7 @@ mod changes;
 mod history;
 mod input;
 mod remote;
+mod table;
 mod transaction;
 mod typing;
 
