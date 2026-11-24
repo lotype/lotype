@@ -201,3 +201,41 @@ fn an_empty_document_is_where_writing_starts(cx: &mut TestAppContext) {
     ed.assert(blocks![p!["<a>"]]);
     assert!(shows(&mut ed, "placeholder").is_some());
 }
+
+#[gpui::test]
+fn the_caret_blinks_once_it_rests_and_only_at_a_caret(cx: &mut TestAppContext) {
+    use std::time::Duration;
+    let lit = |ed: &mut EditorTestContext| ed.view.update(ed.cx, |view, _| view.caret_lit());
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"]]);
+    ed.cx.update(|window, _| window.activate_window());
+    ed.type_text("x");
+    assert!(lit(&mut ed));
+    ed.cx.executor().advance_clock(Duration::from_millis(510));
+    assert!(!lit(&mut ed), "dark once the caret rests");
+    ed.cx.executor().advance_clock(Duration::from_millis(540));
+    assert!(lit(&mut ed), "lit again");
+    // Typing lights it, and it waits before it blinks again.
+    ed.cx.executor().advance_clock(Duration::from_millis(540));
+    ed.type_text("y");
+    assert!(lit(&mut ed));
+    ed.cx.executor().advance_clock(Duration::from_millis(300));
+    assert!(lit(&mut ed));
+    // A range does not blink.
+    ed.keys("shift-left");
+    ed.cx.executor().advance_clock(Duration::from_millis(2000));
+    assert!(lit(&mut ed));
+}
+
+#[gpui::test]
+fn the_caret_stays_lit_where_frames_are_dear(cx: &mut TestAppContext) {
+    // Hundreds of blocks laid out each frame cost far more than the budget.
+    let mut many: Vec<_> = (0..500).map(|_| p!["a line of text"]).collect();
+    many[0] = p!["one<a>"];
+    let mut ed = EditorTestContext::new(cx, many);
+    ed.cx.update(|window, _| window.activate_window());
+    ed.type_text("x");
+    ed.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(510));
+    assert!(ed.view.update(ed.cx, |view, _| view.caret_lit()));
+}

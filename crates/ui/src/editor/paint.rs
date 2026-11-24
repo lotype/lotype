@@ -139,7 +139,10 @@ pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
     };
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
         let view = view.read(cx);
-        if !view.focus.is_focused(window) {
+        if let Some(started) = view.blink.started.take() {
+            view.blink.cost.set(started.elapsed());
+        }
+        if !view.focus.is_focused(window) || view.blink.dark {
             return;
         }
         let color = window.text_style().color;

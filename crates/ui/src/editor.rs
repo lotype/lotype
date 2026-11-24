@@ -1,3 +1,4 @@
+mod blink;
 mod block_menu;
 mod canvas;
 mod clipboard;
@@ -65,6 +66,7 @@ pub struct EditorView {
     toolbar: toolbar::Toolbar,
     links: link::Links,
     side_menu: side_menu::SideMenu,
+    blink: blink::Blink,
     /// Redraws when the focus leaves, which closes the menus.
     blur: Option<Subscription>,
 }
@@ -96,6 +98,7 @@ impl EditorView {
             toolbar: toolbar::Toolbar::default(),
             links: link::Links::default(),
             side_menu: side_menu::SideMenu::default(),
+            blink: blink::Blink::default(),
             blur: None,
         }
     }
@@ -202,6 +205,8 @@ impl Render for EditorView {
             let blur = cx.on_blur(&self.focus, window, |_, _, cx| cx.notify());
             self.blur = Some(blur);
         }
+        // The frame's cost, up to the caret's paint, decides the blinking.
+        self.blink.started.set(Some(std::time::Instant::now()));
         self.place_slash_menu();
         self.place_toolbar();
         self.place_side_menu();

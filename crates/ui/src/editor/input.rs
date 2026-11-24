@@ -146,6 +146,7 @@ impl EditorView {
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reveal.set(true);
+        self.restart_blink(window, cx);
         window.notify_text_input_changed(&self.focus);
         cx.notify();
     }
