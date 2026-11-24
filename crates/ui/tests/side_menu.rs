@@ -269,3 +269,25 @@ fn the_side_menu_stays_a_moment_after_the_mouse_leaves(cx: &mut TestAppContext) 
         .advance_clock(std::time::Duration::from_millis(500));
     assert!(find(&mut ed, "side-handle").is_none());
 }
+
+#[gpui::test]
+fn a_heading_has_no_place_among_nested_blocks(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one", p!["child"]], h1!["title<a>"]]);
+    hover(&mut ed, 2);
+    let handle = find(&mut ed, "side-handle").unwrap();
+    ed.cx
+        .simulate_mouse_down(handle, MouseButton::Left, Modifiers::none());
+    let over_child = over(&mut ed, 1, false);
+    ed.cx
+        .simulate_mouse_move(over_child, Some(MouseButton::Left), Modifiers::none());
+    assert!(find(&mut ed, "drop-line").is_none());
+    // Above a block at the top level, it has.
+    let over_one = over(&mut ed, 0, false);
+    ed.cx
+        .simulate_mouse_move(over_one, Some(MouseButton::Left), Modifiers::none());
+    assert!(find(&mut ed, "drop-line").is_some());
+    ed.cx
+        .simulate_mouse_up(over_one, MouseButton::Left, Modifiers::none());
+    ed.settle();
+    ed.assert(blocks![h1!["title<a>"], p!["one", p!["child"]]]);
+}

@@ -108,6 +108,15 @@ impl EditorView {
             let Some(dragged) = &mut self.side_menu.dragged else {
                 return false;
             };
+            // A heading goes in no block, so it has no place among nested ones.
+            let doc = self.editor.document();
+            let top_level = doc
+                .block_type(dragged.block)
+                .ok()
+                .and_then(|kind| doc.schema().block_spec(&kind))
+                .is_some_and(|spec| spec.is_top_level());
+            let target =
+                target.filter(|(at, _)| !top_level || doc.parent(*at).is_ok_and(|p| p.is_none()));
             dragged.moved |= (position - dragged.from).magnitude() > f64::from(DRAG_START);
             if !dragged.moved {
                 return false;
