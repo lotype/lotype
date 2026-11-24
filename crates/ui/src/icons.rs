@@ -41,6 +41,8 @@ icons! {
     TABLE = "table",
     IMAGE = "image",
     FILE = "file",
+    PLUS = "plus",
+    GRIP = "grip-vertical",
 }
 
 /// An icon drawn from one of the SVGs above, in the text's color.

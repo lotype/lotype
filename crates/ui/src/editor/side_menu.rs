@@ -11,6 +11,7 @@ use gpui_component::{Sizable, h_flex};
 use lotype_core::{BlockId, Pos, Selection};
 
 use super::EditorView;
+use crate::icons::{self, icon};
 
 /// The room left of the blocks that the side menu of a top-level block takes.
 pub(crate) const GUTTER: f32 = 48.;
@@ -209,7 +210,8 @@ impl EditorView {
             .ghost()
             .xsmall()
             .tab_stop(false)
-            .label("+")
+            .icon(icon(icons::PLUS))
+            .tooltip("Add a block below")
             .on_click(add);
         let handle = div()
             .px_1()
@@ -217,7 +219,7 @@ impl EditorView {
             .cursor(CursorStyle::OpenHand)
             .debug_selector(|| "side-handle".to_owned())
             .on_mouse_down(MouseButton::Left, hold)
-            .child("⠿")
+            .child(icon(icons::GRIP).size_4())
             .children(self.block_menu(block, cx));
         let menu = h_flex()
             .absolute()
