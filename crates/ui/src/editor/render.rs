@@ -4,12 +4,15 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, Div, FontWeight, IntoElement, ParentElement, Styled, TextStyle,
-    UnderlineStyle, Window, div, px, rems, rgb,
+    AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
+    TextStyle, UnderlineStyle, Window, div, px, rems, rgb,
 };
-use lotype_core::{Atom, BlockId, Content, Span, Value};
+use lotype_core::{Atom, BlockId, Content, Selection, Span, Value};
 
 use super::EditorView;
+
+/// What an empty paragraph says while the caret is in it.
+const PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
 use super::input::Shown;
 use crate::marks::{CODE_FONT, text_runs};
 use crate::text_el::TextElement;
@@ -78,7 +81,37 @@ impl EditorView {
         let element = TextElement::new(text.into(), runs, atoms);
         self.layouts.insert(block, element.layout().clone());
         self.order.push(block);
-        Some(line.child(element))
+        let line = line.relative().child(element);
+        Some(match self.placeholder(block, &block_type, window) {
+            Some(placeholder) => line.child(placeholder),
+            None => line,
+        })
+    }
+
+    /// What an empty paragraph says while the caret is in it.
+    fn placeholder(&self, block: BlockId, block_type: &str, window: &Window) -> Option<Div> {
+        let caret = match self.editor.selection() {
+            Some(Selection::Text { anchor, head }) => anchor == head && head.block == block,
+            _ => false,
+        };
+        let shown = caret
+            && block_type == "paragraph"
+            && self
+                .editor
+                .document()
+                .text_len(block)
+                .is_ok_and(|len| len == 0)
+            && self.composition.is_none()
+            && self.focus.is_focused(window);
+        let placeholder = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .whitespace_nowrap()
+            .text_color(rgb(0x8a8f98))
+            .debug_selector(|| "placeholder".to_owned())
+            .child(PLACEHOLDER);
+        shown.then_some(placeholder)
     }
 
     /// The spans of a block with text being composed in it, which has the

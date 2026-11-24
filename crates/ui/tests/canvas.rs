@@ -157,3 +157,23 @@ fn a_selection_is_scrolled_after_its_head(cx: &mut TestAppContext) {
     });
     assert!(head.bottom() <= height, "{head:?} is below {height:?}");
 }
+
+#[gpui::test]
+fn an_empty_paragraph_with_the_caret_shows_the_placeholder(cx: &mut TestAppContext) {
+    let shows = |ed: &mut EditorTestContext| {
+        ed.settle();
+        ed.cx.debug_bounds("placeholder").is_some()
+    };
+    let mut ed = EditorTestContext::new(cx, blocks![p!["text"], p!["<a>"]]);
+    assert!(shows(&mut ed));
+    ed.type_text("a");
+    assert!(!shows(&mut ed));
+    ed.keys("backspace");
+    assert!(shows(&mut ed));
+    // Not where the caret is not, nor in an empty block of another type.
+    ed.keys("up");
+    assert!(!shows(&mut ed));
+    let heading = block("heading", vec!["<a>".into()]).attr("level", 1);
+    let mut ed = EditorTestContext::new(cx, blocks![heading]);
+    assert!(!shows(&mut ed));
+}
