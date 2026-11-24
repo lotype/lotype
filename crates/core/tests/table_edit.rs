@@ -109,3 +109,30 @@ fn selected_cells_are_copied_as_a_table_of_them() {
         "table\n  table_row | \"r1c1\" | \"r1c2\"\n  table_row | \"r2c1\" | \"r2c2\"\n"
     );
 }
+
+#[test]
+fn backspace_and_delete_after_a_table_take_an_empty_block_away() {
+    for backward in [true, false] {
+        let mut doc = Document::new(lotype_core::Schema::builtin());
+        doc.insert_table(None, 0, 1, 2).unwrap();
+        let after = doc.insert_block(None, 1, "paragraph").unwrap();
+        let mut ed = Editor::new(doc);
+        ed.set_selection(Some(Selection::caret(Pos::new(after, 0))))
+            .unwrap();
+        match backward {
+            true => ed.delete_backward().unwrap(),
+            false => ed.delete_forward().unwrap(),
+        }
+        assert_eq!(shown(&ed), "table\n  table_row | \"\" | \"<a>\"\n");
+    }
+    // A block with text stays, and Backspace goes into the last cell.
+    let (mut ed, _) = with_table(1, 2);
+    let after = ed.document().blocks()[3];
+    ed.set_selection(Some(Selection::caret(Pos::new(after, 0))))
+        .unwrap();
+    ed.delete_backward().unwrap();
+    assert_eq!(
+        shown(&ed),
+        "paragraph \"before\"\ntable\n  table_row | \"r0c0\" | \"r0c1<a>\"\nparagraph \"after\"\n"
+    );
+}

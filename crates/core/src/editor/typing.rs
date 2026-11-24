@@ -127,6 +127,16 @@ impl Editor {
         }
         match kind {
             Kind::DeleteBackward if head.offset == 0 => self.join_or_drop(head),
+            // An empty last block, with nothing to join on, goes as
+            // Backspace takes it, so that one after a table can go too.
+            Kind::DeleteForward
+                if len == 0
+                    && self.doc.next_block(head.block)?.is_none()
+                    && self.doc.children(Some(head.block))?.is_empty()
+                    && self.doc.prev_block(head.block)?.is_some() =>
+            {
+                self.join_or_drop(head)
+            }
             Kind::DeleteForward if head.offset == len => {
                 self.apply(|doc, _| Ok(Some(Selection::caret(join_forward(doc, head)?))))
             }
@@ -190,6 +200,18 @@ impl Editor {
         })
     }
 
+    /// The last cell of the table `block` is, or is the last row of.
+    fn last_cell(&self, block: BlockId) -> Option<BlockId> {
+        let doc = &self.doc;
+        let table = match doc.block_type(block).ok()?.as_str() {
+            "table" => block,
+            "table_row" => doc.parent(block).ok()??,
+            _ => return None,
+        };
+        let row = *doc.children(Some(table)).ok()?.last()?;
+        doc.cell(row, *doc.columns(table).ok()?.last()?).ok()
+    }
+
     /// Whether `block` is no paragraph and can become one where it is: a
     /// cell cannot, nor a block in a schema without paragraphs.
     fn becomes_paragraph(&self, block: BlockId) -> Result<bool> {
@@ -217,11 +239,23 @@ impl Editor {
                 Ok(selection.cloned())
             });
         }
+        let empty =
+            self.doc.text_len(head.block)? == 0 && self.doc.children(Some(head.block))?.is_empty();
+        // A table takes no text from the block after it: the caret goes to
+        // the end of its last cell, and an empty block there goes.
+        if let Some(cell) = prev.and_then(|prev| self.last_cell(prev)) {
+            let caret = Selection::caret(Pos::new(cell, self.doc.text_len(cell)?));
+            if !empty {
+                return self.set_selection(Some(caret));
+            }
+            return self.apply(|doc, _| {
+                doc.remove_block(head.block)?;
+                Ok(Some(caret))
+            });
+        }
         if prev.is_some() {
             return self.join_backward();
         }
-        let empty =
-            self.doc.text_len(head.block)? == 0 && self.doc.children(Some(head.block))?.is_empty();
         let next = next_text_block(&self.doc, head.block)?;
         let Some(next) = next.filter(|_| empty) else {
             return Ok(());

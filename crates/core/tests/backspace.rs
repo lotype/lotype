@@ -49,6 +49,9 @@ fn delete_in_an_empty_last_block_makes_it_a_paragraph() {
     let mut ed = editor(blocks![p!["a"], h1!["<a>"]]);
     ed.delete_forward().unwrap();
     assert_editor(&ed, blocks![p!["a"], p!["<a>"]]);
+    // Then it goes, as Backspace takes it.
+    ed.delete_forward().unwrap();
+    assert_editor(&ed, blocks![p!["a<a>"]]);
     // With a block after it, Delete joins that one on, as before.
     let mut ed = editor(blocks![h1!["<a>"], p!["b"]]);
     ed.delete_forward().unwrap();
