@@ -268,4 +268,21 @@ impl Document {
         segments.retain(|(_, range)| !range.is_empty());
         Ok(segments)
     }
+
+    /// Moves `block` right before `target`, or right after it, among
+    /// `target`'s siblings, as dropping it there does.
+    pub fn move_block_next_to(
+        &mut self,
+        block: BlockId,
+        target: BlockId,
+        after: bool,
+    ) -> Result<()> {
+        let parent = self.parent(target)?;
+        let mut index = self.index_of(target)? + usize::from(after);
+        // The index is where it ends up, once it has left its place.
+        if self.parent(block)? == parent && self.index_of(block)? < index {
+            index -= 1;
+        }
+        self.move_block(block, parent, index)
+    }
 }

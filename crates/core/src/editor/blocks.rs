@@ -48,6 +48,60 @@ impl Editor {
         })
     }
 
+    /// Moves the selected blocks one step up or down the page, in the order
+    /// blocks are read, as one undo step: past the sibling before or after
+    /// them, into the end or start of that sibling's children where it has
+    /// some, or out before or after their parent where they are at its edge.
+    /// Blocks that cannot go there stay.
+    pub fn move_blocks(&mut self, up: bool) -> Result<()> {
+        let blocks = self.selected_blocks()?;
+        self.apply(|doc, selection| {
+            let outermost = doc.outermost(&blocks)?;
+            let edge = if up {
+                outermost.first()
+            } else {
+                outermost.last()
+            };
+            let Some(&edge) = edge else {
+                return Ok(selection.cloned());
+            };
+            let parent = doc.parent(edge)?;
+            let siblings = doc.children(parent)?;
+            let at = doc.index_of(edge)?;
+            let beside = if up { at.checked_sub(1) } else { Some(at + 1) };
+            let beside = beside.and_then(|at| siblings.get(at).copied());
+            // The block to go next to, and whether after it.
+            let (target, after) = match beside {
+                Some(sibling) => {
+                    // A table's rows are its own.
+                    let children = if doc.is_table_part(sibling) {
+                        Vec::new()
+                    } else {
+                        doc.children(Some(sibling))?
+                    };
+                    match (up, children.first(), children.last()) {
+                        (true, _, Some(&last)) => (last, true),
+                        (false, Some(&first), _) => (first, false),
+                        _ => (sibling, !up),
+                    }
+                }
+                None => match parent {
+                    Some(parent) => (parent, !up),
+                    None => return Ok(selection.cloned()),
+                },
+            };
+            // In order, each after the one before when they go after.
+            let mut target = target;
+            for block in outermost {
+                doc.move_block_next_to(block, target, after)?;
+                if after {
+                    target = block;
+                }
+            }
+            Ok(selection.cloned())
+        })
+    }
+
     /// Nests the selected blocks under the block before them, as Tab does.
     /// Blocks that cannot go there stay.
     pub fn indent(&mut self) -> Result<()> {
