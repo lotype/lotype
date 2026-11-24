@@ -10,12 +10,12 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::list::ListItem;
-use gpui_component::{Sizable, ThemeStyled, h_flex, v_flex};
+use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex, v_flex};
 use lotype_core::{BlockId, MAX_HEADING_LEVEL, Value};
 
 use super::EditorView;
 use super::block_menu::swatch_row;
-use super::toolbar::{Dropdown, tagged};
+use super::toolbar::{Dropdown, measure, tagged};
 use crate::icons::{self, icon};
 
 /// The types the select offers: a block type, a heading's level, an icon
@@ -87,6 +87,7 @@ impl EditorView {
             .label(title)
             // gpui-component's own caret is an asset the application may lack.
             .child(icon(icons::CHEVRON_DOWN).size_3())
+            .selected(self.toolbar.menu == Some(Dropdown::BlockType))
             .on_click(toggle);
         let items: Vec<_> = BLOCK_TYPES
             .iter()
@@ -157,6 +158,7 @@ impl EditorView {
             .icon(icon(icons::COLOR))
             .child(icon(icons::CHEVRON_DOWN).size_3())
             .tooltip("Colors")
+            .selected(self.toolbar.menu == Some(Dropdown::Color))
             .on_click(toggle);
         let current = |name: &str| match active.get(name) {
             Some(Value::Str(color)) => Some(color.clone()),
@@ -209,7 +211,12 @@ impl EditorView {
                 .children(rows)
                 .into_any_element()
         };
-        let trigger = div().on_mouse_down(MouseButton::Left, stop).child(trigger);
+        // Its dropdown hangs from it: where it is, the bar learns from this.
+        let trigger = div()
+            .relative()
+            .on_mouse_down(MouseButton::Left, stop)
+            .child(trigger)
+            .child(measure(self.toolbar.color_button.clone()));
         let menu = self.dropdown(Dropdown::Color, menu);
         Some((tagged("color", trigger).into_any_element(), menu))
     }

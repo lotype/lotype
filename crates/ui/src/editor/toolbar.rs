@@ -44,13 +44,15 @@ pub(crate) struct Toolbar {
     /// the dropdown opens over the bar where there is more room there.
     bar: Rc<Cell<Option<Bounds<Pixels>>>>,
     dropdown_height: Rc<Cell<Option<Pixels>>>,
+    /// Where the color button was, which its dropdown hangs from.
+    pub(super) color_button: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
 /// A dropdown's height before it is laid out: most of a dozen entries.
 const DROPDOWN_GUESS: Pixels = px(360.);
 
 /// Notes `bounds` of the element it is put in, as laid out, in `into`.
-fn measure(into: Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
+pub(super) fn measure(into: Rc<Cell<Option<Bounds<Pixels>>>>) -> impl IntoElement {
     let prepaint =
         move |bounds: Bounds<Pixels>, _: &mut Window, _: &mut gpui::App| into.set(Some(bounds));
     canvas(prepaint, |_, _, _, _| {})
@@ -218,11 +220,19 @@ impl EditorView {
             } else {
                 hanging.top_full()
             };
-            let hanging = if right {
-                hanging.right_0()
-            } else {
-                hanging.left_0()
+            // The color dropdown hangs from the color button, so that it is
+            // plainly that button's; the select's from the bar's start, where
+            // the select is.
+            let from_button = match (self.toolbar.bar.get(), self.toolbar.color_button.get()) {
+                (Some(bar), Some(button)) if right => Some(button.left() - bar.left()),
+                _ => None,
             };
+            let hanging = match from_button {
+                Some(left) => hanging.left(left),
+                None if right => hanging.right_0(),
+                None => hanging.left_0(),
+            };
+            let right = right && from_button.is_none();
             let anchor = match (up, right) {
                 (false, false) => Anchor::TopLeft,
                 (false, true) => Anchor::TopRight,

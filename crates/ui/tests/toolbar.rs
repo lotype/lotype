@@ -176,3 +176,18 @@ fn near_the_bottom_a_dropdown_opens_over_the_bar(cx: &mut TestAppContext) {
     );
     assert!(marked.iter().all(|span| !span.marks.contains_key("bold")));
 }
+
+#[gpui::test]
+fn the_color_dropdown_hangs_from_its_button(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one <a>two<b>"], p!["three"]]);
+    press(&mut ed, "toolbar-color");
+    let button = ed.cx.debug_bounds("toolbar-color").unwrap();
+    // The first swatch, the default, is at the dropdown's left.
+    let first = ed.cx.debug_bounds("mark-text_color-default").unwrap();
+    assert!(first.left() >= button.left(), "{first:?} under {button:?}");
+    assert!(
+        first.left() - button.left() < gpui::px(16.),
+        "{first:?} under {button:?}"
+    );
+    assert!(first.top() > button.bottom());
+}
