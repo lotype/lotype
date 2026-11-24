@@ -176,6 +176,47 @@ impl Editor {
         Ok(true)
     }
 
+    /// Shift-Enter in a quote or an alert, or in a block in one, leaves the
+    /// nearest of them: the text after the caret goes into a paragraph right
+    /// after it, or an empty block there goes out itself, as a paragraph,
+    /// taking an alert it leaves empty away. Returns whether it did.
+    pub(super) fn leave_quote(&mut self) -> Result<bool> {
+        let Some(Selection::Text { anchor, head }) = self.selection else {
+            return Ok(false);
+        };
+        if head.block.column().is_some() || anchor.block.column().is_some() {
+            return Ok(false);
+        }
+        let mut at = Some(head.block);
+        let container = loop {
+            let Some(block) = at else {
+                return Ok(false);
+            };
+            if matches!(self.doc.block_type(block)?.as_str(), "quote" | "alert") {
+                break block;
+            }
+            at = self.doc.parent(block)?;
+        };
+        self.apply(|doc, _| {
+            let caret = doc.delete_range(anchor, head)?;
+            let block = caret.block;
+            let (parent, index) = (doc.parent(container)?, doc.index_of(container)? + 1);
+            let len = doc.text_len(block)?;
+            let empty = block != container && len == 0 && doc.children(Some(block))?.is_empty();
+            if empty && doc.parent(block)? == Some(container) {
+                doc.move_block(block, parent, index)?;
+                make_paragraph(doc, block)?;
+                doc.remove_if_emptied(Some(container))?;
+                return Ok(Some(Selection::caret(Pos::new(block, 0))));
+            }
+            let paragraph = doc.create_block(parent, index, PARAGRAPH)?;
+            doc.copy_text(block, caret.offset..len, paragraph, 0)?;
+            doc.delete_text(block, caret.offset..len)?;
+            Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
+        })?;
+        Ok(true)
+    }
+
     /// Enter in `cell`: the caret goes to the end of the cell below it, or
     /// from the last row into a new paragraph after the table, as Enter at
     /// the end of a block starts the next one.

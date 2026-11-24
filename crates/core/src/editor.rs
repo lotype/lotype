@@ -302,8 +302,12 @@ impl Editor {
     }
 
     /// Replaces the selected text with a line break in the block, as
-    /// Shift-Enter does, as an undo step of its own.
+    /// Shift-Enter does, as an undo step of its own. In a quote or an alert,
+    /// or in what is in one, it leaves that for a paragraph after it.
     pub fn insert_line_break(&mut self) -> Result<()> {
+        if self.leave_quote()? {
+            return Ok(());
+        }
         self.finish_edit_group();
         let typed = self.insert_text("\n");
         self.finish_edit_group();
