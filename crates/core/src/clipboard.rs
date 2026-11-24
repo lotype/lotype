@@ -140,6 +140,26 @@ impl Document {
 
     /// Copies a table with the text of its cells. Its rows and columns are
     /// all copied, whatever their attributes.
+    /// Copies the cells between two cells of one table into a document of
+    /// its own, as a table of just those cells.
+    pub fn slice_cells(&self, a: BlockId, b: BlockId) -> Result<Document> {
+        let cells = self.cells_between(a, b)?;
+        // In reading order, row by row: the first row's cells are as many
+        // as the columns.
+        let columns = cells.iter().filter(|cell| cell.0 == cells[0].0).count();
+        let rows = cells.len() / columns;
+        let mut slice = Document::new(self.schema().clone());
+        let table = slice.insert_table(None, 0, rows, columns)?;
+        let copied = (slice.children(Some(table))?, slice.columns(table)?);
+        for (at, cell) in cells.into_iter().enumerate() {
+            let mut spans = self.spans(cell)?;
+            slice.fit_marks(&mut spans);
+            let row = copied.0[at / columns];
+            slice.insert_spans(slice.cell(row, copied.1[at % columns])?, 0, &spans)?;
+        }
+        Ok(slice)
+    }
+
     fn copy_table(
         &mut self,
         other: &Document,

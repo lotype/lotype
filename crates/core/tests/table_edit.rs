@@ -87,3 +87,25 @@ fn the_last_row_or_column_takes_the_table_with_it() {
         "table\n  table_row | \"\"\n  table_row | \"\"\n"
     );
 }
+
+#[test]
+fn a_table_without_columns_takes_a_row_without_a_caret() {
+    let mut doc = Document::new(lotype_core::Schema::builtin());
+    let table = doc.insert_table(None, 0, 1, 0).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.add_row(table, 1).unwrap();
+    assert_eq!(ed.document().children(Some(table)).unwrap().len(), 2);
+}
+
+#[test]
+fn selected_cells_are_copied_as_a_table_of_them() {
+    let (ed, table) = with_table(3, 3);
+    let doc = ed.document();
+    let slice = doc
+        .slice_cells(cell(doc, table, 2, 2), cell(doc, table, 1, 1))
+        .unwrap();
+    assert_eq!(
+        outline(&slice, None),
+        "table\n  table_row | \"r1c1\" | \"r1c2\"\n  table_row | \"r2c1\" | \"r2c2\"\n"
+    );
+}

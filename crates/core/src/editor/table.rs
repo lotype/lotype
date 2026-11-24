@@ -15,12 +15,21 @@ fn place(doc: &Document, cell: BlockId) -> Result<(BlockId, usize, usize)> {
     Ok((table, at_row, at_column.ok_or(Error::BlockNotFound)?))
 }
 
-/// The caret at the end of the cell of `table` at `row` and `column`.
-fn caret_in(doc: &Document, table: BlockId, row: usize, column: usize) -> Result<Selection> {
+/// The caret at the end of the cell of `table` at `row` and `column`, or
+/// none where a table two peers emptied has no such cell.
+fn caret_in(
+    doc: &Document,
+    table: BlockId,
+    row: usize,
+    column: usize,
+) -> Result<Option<Selection>> {
     let rows = doc.children(Some(table))?;
     let columns = doc.columns(table)?;
-    let cell = doc.cell(rows[row], columns[column])?;
-    Ok(Selection::caret(Pos::new(cell, doc.text_len(cell)?)))
+    let (Some(row), Some(column)) = (rows.get(row), columns.get(column)) else {
+        return Ok(None);
+    };
+    let cell = doc.cell(*row, *column)?;
+    Ok(Some(Selection::caret(Pos::new(cell, doc.text_len(cell)?))))
 }
 
 /// Removes `table`, and gives the caret the text after it, or before it, or
@@ -58,7 +67,7 @@ impl Editor {
     pub fn add_row(&mut self, table: BlockId, index: usize) -> Result<()> {
         self.apply(|doc, _| {
             doc.insert_row(table, index)?;
-            caret_in(doc, table, index, 0).map(Some)
+            caret_in(doc, table, index, 0)
         })
     }
 
@@ -72,7 +81,7 @@ impl Editor {
                 _ => 0,
             };
             doc.insert_column(table, index)?;
-            caret_in(doc, table, row, index).map(Some)
+            caret_in(doc, table, row, index)
         })
     }
 
@@ -87,7 +96,7 @@ impl Editor {
                 return remove_table(doc, table);
             }
             doc.remove_block(rows[row])?;
-            caret_in(doc, table, row.min(rows.len() - 2), column).map(Some)
+            caret_in(doc, table, row.min(rows.len() - 2), column)
         })
     }
 
@@ -102,7 +111,7 @@ impl Editor {
                 return remove_table(doc, table);
             }
             doc.remove_column(table, columns[column])?;
-            caret_in(doc, table, row, column.min(columns.len() - 2)).map(Some)
+            caret_in(doc, table, row, column.min(columns.len() - 2))
         })
     }
 }
