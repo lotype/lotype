@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, FontWeight, Hsla, MouseButton, Pixels, SharedString,
-    TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FontStyle, FontWeight, Hsla, MouseButton, Pixels,
+    SharedString, TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
 use lotype_core::{BlockId, Document, Pos, Selection, Value};
 
@@ -38,6 +38,18 @@ pub(crate) struct Row {
     pub bars: Vec<Bar>,
     /// The block or one around it is selected whole.
     pub selected: bool,
+    /// The block is a quote or in one, so its text is italic.
+    pub quoted: bool,
+}
+
+/// A block around the next one in document order.
+struct Around {
+    block: BlockId,
+    /// It, or one around it, hides what is in it.
+    hides: bool,
+    selected: bool,
+    quoted: bool,
+    bar: Option<Bar>,
 }
 
 /// The rows of the blocks shown, in document order: every block but those
@@ -48,14 +60,16 @@ pub(crate) fn rows(
     selected: &HashSet<BlockId>,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    // The blocks around the next one, outermost first: whether each hides
-    // what is in it, whether it is selected, and its bar.
-    let mut around: Vec<(BlockId, bool, bool, Option<Bar>)> = Vec::new();
+    // The blocks around the next one, outermost first.
+    let mut around: Vec<Around> = Vec::new();
     // The number of the last sibling at each depth, while siblings are numbered.
     let mut numbers: Vec<Option<i64>> = Vec::new();
     for block in doc.blocks() {
         let parent = doc.parent(block).ok().flatten();
-        while around.last().is_some_and(|(at, ..)| Some(*at) != parent) {
+        while around
+            .last()
+            .is_some_and(|outer| Some(outer.block) != parent)
+        {
             around.pop();
         }
         let depth = around.len();
@@ -74,10 +88,12 @@ pub(crate) fn rows(
             "alert" => Some((depth, alert_style(&text_attr(doc, block, "kind")).1)),
             _ => None,
         };
-        let hidden = around.last().is_some_and(|(_, hides, ..)| *hides);
-        let chosen = selected.contains(&block) || around.last().is_some_and(|around| around.2);
+        let outer = around.last();
+        let hidden = outer.is_some_and(|outer| outer.hides);
+        let chosen = selected.contains(&block) || outer.is_some_and(|outer| outer.selected);
+        let quoted = block_type == "quote" || outer.is_some_and(|outer| outer.quoted);
         if !hidden {
-            let outer = around.iter().filter_map(|(.., bar)| *bar);
+            let outer = around.iter().filter_map(|outer| outer.bar);
             rows.push(Row {
                 block,
                 block_type: block_type.clone(),
@@ -85,11 +101,18 @@ pub(crate) fn rows(
                 number,
                 bars: outer.chain(bar).collect(),
                 selected: chosen,
+                quoted,
             });
         }
         let hides =
             block_type == "table" || block_type == "toggle_list_item" && closed.contains(&block);
-        around.push((block, hidden || hides, chosen, bar));
+        around.push(Around {
+            block,
+            hides: hidden || hides,
+            selected: chosen,
+            quoted,
+            bar,
+        });
     }
     rows
 }
@@ -149,6 +172,10 @@ impl EditorView {
         let mut colored = base.clone();
         if let Some(ink) = ink {
             colored.color = ink;
+        }
+        // What a quote says, its own text and what is in it, is italic.
+        if row.quoted {
+            colored.font_style = FontStyle::Italic;
         }
         let base = &colored;
         let content = match row.block_type.as_str() {
@@ -408,6 +435,13 @@ mod tests {
                 (two, 0, None, 0),
             ]
         );
+        // A quote's text and what is in it are italic, and nothing after it.
+        let quoted: Vec<_> = rows(&doc, &HashSet::new(), &HashSet::new())
+            .iter()
+            .filter(|row| row.quoted)
+            .map(|row| row.block)
+            .collect();
+        assert_eq!(quoted, [quote, first, second]);
         let closed = HashSet::from([toggle]);
         assert!(!shown(&closed).iter().any(|row| row.0 == inside));
     }
