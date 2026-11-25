@@ -66,7 +66,8 @@ impl Document {
         Ok(to_spans(delta))
     }
 
-    /// Inserts `content` into `block`'s text at `offset`, with no marks.
+    /// Inserts `content` into `block`'s text at `offset`. It gets the marks that grow over
+    /// text typed there, as each mark's [`Expand`](crate::Expand) says.
     pub fn insert_text(&mut self, block: BlockId, offset: usize, content: &str) -> Result<()> {
         let text = self.editable(block)?;
         let index = unicode_offset(&text, offset)?;

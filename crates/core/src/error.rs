@@ -70,7 +70,8 @@ pub enum Error {
     ExportDuringEdit,
     /// Starting an editor edit on a document that is already a draft.
     NestedEdit,
-    /// Loro failed in a way the document cannot recover from; the edit was rolled back.
+    /// An error from Loro that is none of the others. A command on a document can stop
+    /// halfway on it; an editor's edit is rolled back.
     Internal(Box<dyn std::error::Error + Send + Sync>),
 }
 

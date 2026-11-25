@@ -48,7 +48,7 @@ impl Document {
     }
 
     /// The block after `block` in reading order: its first child, its next sibling, or the next
-    /// sibling of a block around it.
+    /// sibling of a block around it. A cell has none.
     pub fn next_block(&self, block: BlockId) -> Result<Option<BlockId>> {
         // A cell stands on its own: no block comes before or after it.
         if block.1.is_some() {
@@ -74,7 +74,7 @@ impl Document {
     }
 
     /// The block before `block` in reading order: the last block inside the sibling before it,
-    /// or its parent.
+    /// or its parent. A cell has none.
     pub fn prev_block(&self, block: BlockId) -> Result<Option<BlockId>> {
         if block.1.is_some() {
             return self.depth(block).map(|_| None);

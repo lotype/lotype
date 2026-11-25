@@ -352,3 +352,17 @@ fn a_pasted_address_takes_the_marks_typing_would_and_replaces_an_empty_range() {
         "paragraph \"a[link=https://x.dev|https://x.dev]<a>b\"\n"
     );
 }
+
+#[test]
+fn the_check_list_key_leaves_a_checked_item_checked() {
+    let keymap = default_keymap();
+    let binding = keymap.iter().find(|binding| binding.key == "Mod-Shift-9");
+    let command = binding.unwrap().command.clone();
+    let checked = block_node("check_list_item", vec!["done<a>".into()]).attr("checked", true);
+    let mut ed = editor(blocks![checked, p!["new<b>"]]);
+    ed.run(&command).unwrap();
+    assert_eq!(
+        shown(&ed),
+        "check_list_item checked=true \"done<a>\"\ncheck_list_item \"new<b>\"\n"
+    );
+}

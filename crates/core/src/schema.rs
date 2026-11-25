@@ -54,8 +54,8 @@ pub struct BlockSpec {
 }
 
 impl BlockSpec {
-    /// A type named `name` holding `content`, with no children, a style of its own and the role
-    /// of text.
+    /// A type named `name` holding `content`, that takes no children, takes colors and
+    /// alignment, and has the role of text.
     pub fn new(name: impl Into<String>, content: Content) -> Self {
         Self {
             name: name.into(),

@@ -139,7 +139,8 @@ impl Document {
         }
     }
 
-    /// Whether `block` is in the document, removed by no one.
+    /// Whether `block` is in the document: not removed, and not nested deeper than
+    /// [`MAX_DEPTH`], where a merge can leave one.
     pub fn contains(&self, block: BlockId) -> bool {
         self.depth(block).is_ok()
     }

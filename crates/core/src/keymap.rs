@@ -1,4 +1,4 @@
-use crate::{BlockKind, Editor, Result, Value};
+use crate::{BlockKind, Editor, Result, Value, block};
 
 /// Something a key, a menu or a toolbar asks an editor to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,10 +86,8 @@ pub fn default_keymap() -> Vec<KeyBinding> {
             "Mod-Shift-6",
             Command::turn_into(&BlockKind::ToggleListItem),
         ),
-        (
-            "Mod-Shift-9",
-            Command::turn_into(&BlockKind::CheckListItem { checked: false }),
-        ),
+        // By name, so that an item that is one already stays checked.
+        ("Mod-Shift-9", Command::set_block(block::CHECK_LIST_ITEM)),
         (
             "Mod-Alt-c",
             Command::turn_into(&BlockKind::CodeBlock { language: None }),

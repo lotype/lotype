@@ -6,7 +6,12 @@ use crate::schema::MAX_HEADING_LEVEL;
 use crate::{BlockId, Command, Document, Editor, Result, Value};
 
 /// A built-in block type, with what makes a block of it what it is.
+///
+/// Two kinds are equal when they are written the same: `Alert("TIP")` and
+/// `Alert("tip")` name the same alert and are not equal. [`BlockKind::of`]
+/// gives a kind as the document reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BlockKind {
     /// Text, where typing starts.
     Paragraph,
@@ -15,7 +20,8 @@ pub enum BlockKind {
     Heading(i64),
     /// A quote, its own text and the blocks in it.
     Quote,
-    /// One of GitHub's alerts, of a kind in [`alert::KINDS`].
+    /// One of GitHub's alerts, of a kind in [`alert::KINDS`]; for a kind
+    /// read at run time, `alert::style(kind).kind` gives the one it names.
     Alert(&'static str),
     /// An item of a bulleted list.
     BulletListItem,
@@ -108,6 +114,11 @@ impl BlockKind {
     /// What `block` is, where it is of a built-in type with text or no
     /// blocks of its own to make it from; `None` for a table, a cell or a
     /// type the built-in schema lacks.
+    ///
+    /// The kind is as the document reads it: a heading's level within its
+    /// range, an alert's kind as one of [`alert::KINDS`], no language for
+    /// an empty one. What is no part of a kind is left out, as the number a
+    /// numbered list starts at, so a block made of it starts without.
     pub fn of(doc: &Document, block: BlockId) -> Option<Self> {
         let text = |key| doc.text_of(block, key);
         Some(match doc.block_type(block).ok()?.as_str() {
@@ -154,7 +165,12 @@ impl Command {
 
 impl Editor {
     /// Turns the selected blocks into `kind`, as one undo step, as
-    /// [`Editor::set_block`] does with its name and attributes.
+    /// [`Editor::set_block`] does with its name and attributes, and with
+    /// its limits: a block stays as it is where one of the two types holds
+    /// text and the other does not, so text becomes no divider, image, file
+    /// or alert; and a block already of the type keeps the attributes the
+    /// kind leaves out, so `CodeBlock { language: None }` leaves a code
+    /// block its language.
     pub fn turn_into(&mut self, kind: &BlockKind) -> Result<()> {
         self.set_block(kind.name(), &kind.attrs())
     }
