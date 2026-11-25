@@ -80,6 +80,13 @@ impl EditorView {
         !self.blink.dark
     }
 
+    /// How many rows in sight any frame laid out where no one sees them,
+    /// for tests: none should be.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rows_measured_in_sight(&self) -> usize {
+        self.heights.unseen_count()
+    }
+
     /// How many rows the last frame laid out, for tests of a frame's cost.
     #[cfg(any(test, feature = "test-support"))]
     pub fn rows_laid_out(&self) -> usize {

@@ -322,7 +322,9 @@ impl Render for EditorView {
                     self.measuring = false;
                     match element {
                         Some(element) => {
-                            let apart = div().absolute().top_0().left_0().right_0().invisible();
+                            // As wide as the column, which starts after the gutter.
+                            let gutter = gpui::px(side_menu::GUTTER);
+                            let apart = div().absolute().top_0().left(gutter).right_0().invisible();
                             self.measuring(row.block, rows.len());
                             rows.push(apart.child(element).into_any_element());
                         }

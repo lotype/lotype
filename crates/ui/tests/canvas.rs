@@ -366,3 +366,104 @@ fn scrolling_up_moves_the_text_by_as_much_as_the_wheel(cx: &mut TestAppContext) 
         );
     }
 }
+
+/// Paragraphs of many lengths, so that some wrap to another count of lines
+/// at a width a little off the column's.
+fn varied(count: usize) -> Vec<lotype_core::test_support::BlockNode> {
+    (0..count)
+        .map(|at| p!["word ".repeat(60 + at % 50).as_str()])
+        .collect()
+}
+
+fn caret_in_sight(ed: &mut EditorTestContext, block: lotype_core::BlockId, offset: usize) {
+    let height = ed.cx.update(|window, _| window.viewport_size().height);
+    let caret = ed.view.update(ed.cx, |view, _| {
+        view.caret_bounds(Pos::new(block, offset))
+            .expect("the caret's block is laid out")
+    });
+    assert!(
+        caret.top() >= px(0.) && caret.bottom() <= height,
+        "{caret:?} in {height:?}"
+    );
+}
+
+#[gpui::test]
+fn rows_measured_out_of_sight_are_as_tall_as_in_the_column(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, varied(600));
+    let (first, last) = (block_at(&mut ed, 0), block_at(&mut ed, 599));
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let caret = lotype_core::Selection::caret(Pos::new(first, 0));
+            editor.set_selection(Some(caret)).unwrap();
+        });
+    });
+    ed.keys("cmd-down");
+    ed.settle();
+    let end = ed.editor(|editor| editor.document().text_len(last).unwrap());
+    caret_in_sight(&mut ed, last, end);
+    for _ in 0..25 {
+        let (block, before) = ed.view.update(ed.cx, |view, _| {
+            let blocks = view.editor().document().blocks();
+            let shown = blocks.iter().rev().find_map(|block| {
+                let top = view.text_bounds(*block)?.top();
+                (top > px(100.) && top < px(700.)).then_some((*block, top))
+            });
+            shown.expect("a block in sight")
+        });
+        scroll(&mut ed, -100.);
+        let after = ed
+            .view
+            .update(ed.cx, |view, _| view.text_bounds(block).unwrap().top());
+        let moved = after - before;
+        assert!(
+            (moved - px(100.)).abs() <= px(1.),
+            "the text moved by {moved:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn the_caret_is_found_after_the_window_changed_width(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, varied(600));
+    let first = block_at(&mut ed, 0);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let caret = lotype_core::Selection::caret(Pos::new(first, 0));
+            editor.set_selection(Some(caret)).unwrap();
+        });
+    });
+    ed.keys("cmd-down");
+    ed.settle();
+    // Another width forgets every height.
+    let size = ed.cx.update(|window, _| window.viewport_size());
+    ed.cx
+        .simulate_resize(gpui::size(size.width - px(200.), size.height));
+    ed.settle();
+    ed.keys("cmd-up");
+    ed.settle();
+    caret_in_sight(&mut ed, first, 0);
+}
+
+#[gpui::test]
+fn no_frame_measures_a_row_in_sight_out_of_the_column(cx: &mut TestAppContext) {
+    let mut ed = EditorTestContext::new(cx, varied(600));
+    let last = block_at(&mut ed, 599);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let caret = lotype_core::Selection::caret(Pos::new(last, 0));
+            editor.set_selection(Some(caret)).unwrap();
+        });
+    });
+    ed.settle();
+    // Far jumps, into rows no frame has laid out: each frame on the way
+    // draws what is in sight.
+    scroll(&mut ed, -6000.);
+    ed.keys("cmd-up");
+    ed.settle();
+    ed.keys("cmd-down");
+    ed.settle();
+    let unseen = ed
+        .view
+        .update(ed.cx, |view, _| view.rows_measured_in_sight());
+    assert_eq!(unseen, 0);
+}

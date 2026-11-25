@@ -28,6 +28,12 @@ pub(crate) struct Heights {
     /// Rows above it the last frame laid out apart, out of the column, only
     /// to measure them, and where each was among the scroll's children.
     measured: Vec<(BlockId, usize)>,
+    /// How many more frames bring the caret into sight again, after one
+    /// that did while rows near it were first measured, which moves it.
+    follow: u8,
+    /// How many rows in sight frames laid out apart, where no one sees
+    /// them, for tests: none should be.
+    unseen: usize,
 }
 
 /// What a frame does with a row.
@@ -37,8 +43,8 @@ pub(crate) enum Plan {
     /// Leaves room as tall as it is, or as it is thought to be.
     Space(Pixels),
     /// Leaves room as tall as it is thought to be, and lays it out apart to
-    /// measure it: it is above the first row in sight, which a row of
-    /// another height there would move.
+    /// measure it: it is above the view, where a row of another height
+    /// would move the rows in sight.
     Measure(Pixels),
 }
 
@@ -46,6 +52,11 @@ impl Heights {
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn laid_out_count(&self) -> usize {
         self.laid_out.len()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn unseen_count(&self) -> usize {
+        self.unseen
     }
 }
 
@@ -214,12 +225,27 @@ impl EditorView {
                 continue;
             }
             unknown |= heights[at].is_none();
-            if at < first && heights[at].is_none() {
+            // Apart only where no one looks: rows in sight are drawn, and
+            // the selection's are where the caret is brought into sight.
+            let apart = at < first && heights[at].is_none() && y <= top && !wanted.contains(&at);
+            if apart {
+                self.heights.unseen += usize::from(y > top && y - tall < top + view);
                 plan.push(Plan::Measure(tall));
             } else {
                 self.heights.laid_out.insert(*block);
                 plan.push(Plan::Lay);
             }
+        }
+        // Rows first measured near a caret just brought into sight move it:
+        // it is brought there again, for a frame or two, not for as long as
+        // rows are measured, which a scroll away from it goes on doing.
+        if self.reveal.get() {
+            self.heights.follow = 2;
+        } else if unknown && self.heights.follow > 0 {
+            self.heights.follow -= 1;
+            self.reveal.set(true);
+        } else {
+            self.heights.follow = 0;
         }
         if unknown {
             window.request_animation_frame();
