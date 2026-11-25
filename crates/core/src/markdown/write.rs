@@ -178,16 +178,18 @@ impl Document {
                 }
                 format!("{} {title}", "#".repeat(level))
             }
-            _ if let Some(fence) = self.fence(block) => fence,
-            _ => {
-                // A block of a type unknown here still has its text.
-                let lines = match self.plain_spans(block) {
-                    Ok(spans) => inline(&spans),
-                    Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
-                };
-                let lines: Vec<_> = lines.split('\n').map(line_start).collect();
-                lines.join("\n")
-            }
+            _ => match self.fence(block) {
+                Some(fence) => fence,
+                None => {
+                    // A block of a type unknown here still has its text.
+                    let lines = match self.plain_spans(block) {
+                        Ok(spans) => inline(&spans),
+                        Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
+                    };
+                    let lines: Vec<_> = lines.split('\n').map(line_start).collect();
+                    lines.join("\n")
+                }
+            },
         })
     }
 }
