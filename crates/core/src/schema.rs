@@ -313,7 +313,7 @@ impl Document {
     }
 
     /// The schema's block for text, to make one of.
-    pub(crate) fn text_block(&self) -> Result<String> {
+    pub fn text_block(&self) -> Result<String> {
         let name = self.schema().text_block().ok_or(Error::NoTextBlock)?;
         Ok(name.to_owned())
     }
