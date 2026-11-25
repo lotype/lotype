@@ -30,7 +30,8 @@ pub mod attr {
     pub const TEXT_ALIGNMENT: &str = "text_alignment";
 }
 
-/// The kinds of an alert, as GitHub has them.
+/// The kinds of an alert, and how GitHub draws them, as GitHub Flavored
+/// Markdown's stylesheet has them.
 pub mod alert {
     pub const NOTE: &str = "note";
     pub const TIP: &str = "tip";
@@ -39,6 +40,72 @@ pub mod alert {
     pub const CAUTION: &str = "caution";
     /// All of them, the note first, which a kind no one knows is read as.
     pub const KINDS: [&str; 5] = [NOTE, TIP, IMPORTANT, WARNING, CAUTION];
+
+    /// A color GitHub draws alerts in: a Primer token, with its value in
+    /// the light and in the dark color scheme, as hex.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Color {
+        pub token: &'static str,
+        pub light: &'static str,
+        pub dark: &'static str,
+    }
+
+    /// How GitHub draws an alert of a kind: its title, the color of the
+    /// bar on its left, and that of its title and icon.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Style {
+        pub kind: &'static str,
+        pub title: &'static str,
+        pub border: Color,
+        pub color: Color,
+    }
+
+    const fn color(token: &'static str, light: &'static str, dark: &'static str) -> Color {
+        Color { token, light, dark }
+    }
+
+    /// GitHub's styles of the kinds, in the order of [`KINDS`], from
+    /// `github-markdown-css`.
+    pub const STYLES: [Style; 5] = [
+        Style {
+            kind: NOTE,
+            title: "Note",
+            border: color("--borderColor-accent-emphasis", "#0969da", "#1f6feb"),
+            color: color("--fgColor-accent", "#0969da", "#4493f8"),
+        },
+        Style {
+            kind: TIP,
+            title: "Tip",
+            border: color("--borderColor-success-emphasis", "#1a7f37", "#238636"),
+            color: color("--fgColor-success", "#1a7f37", "#3fb950"),
+        },
+        Style {
+            kind: IMPORTANT,
+            title: "Important",
+            border: color("--borderColor-done-emphasis", "#8250df", "#8957e5"),
+            color: color("--fgColor-done", "#8250df", "#ab7df8"),
+        },
+        Style {
+            kind: WARNING,
+            title: "Warning",
+            border: color("--borderColor-attention-emphasis", "#9a6700", "#9e6a03"),
+            color: color("--fgColor-attention", "#9a6700", "#d29922"),
+        },
+        Style {
+            kind: CAUTION,
+            title: "Caution",
+            border: color("--borderColor-danger-emphasis", "#cf222e", "#da3633"),
+            color: color("--fgColor-danger", "#d1242f", "#f85149"),
+        },
+    ];
+
+    /// The style of an alert of `kind`, a note's for a kind no one knows.
+    pub fn style(kind: &str) -> &'static Style {
+        let known = STYLES
+            .iter()
+            .find(|style| style.kind.eq_ignore_ascii_case(kind));
+        known.unwrap_or(&STYLES[0])
+    }
 }
 
 /// The named colors of a block and of text, BlockNote's, so that documents
@@ -152,10 +219,7 @@ impl Document {
     /// An alert's kind, a note for a kind no one knows.
     pub fn alert_kind(&self, block: BlockId) -> &'static str {
         let kind = self.text_attr(block, attr::KIND).unwrap_or_default();
-        let known = alert::KINDS
-            .into_iter()
-            .find(|known| known.eq_ignore_ascii_case(&kind));
-        known.unwrap_or(alert::NOTE)
+        alert::style(&kind).kind
     }
 
     /// An attribute that is text, as an image's address or a file's name,

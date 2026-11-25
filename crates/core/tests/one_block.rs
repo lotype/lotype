@@ -160,3 +160,23 @@ fn the_block_types_a_toolbar_offers_describe_the_blocks_of_them() {
     .unwrap();
     assert!(describes(&ed, heading, "heading_5"));
 }
+
+#[test]
+fn every_alert_kind_has_githubs_style_and_an_unknown_one_a_notes() {
+    use lotype_core::alert;
+    let kinds: Vec<_> = alert::STYLES.iter().map(|style| style.kind).collect();
+    assert_eq!(kinds, alert::KINDS);
+    assert_eq!(alert::style("rumour").kind, alert::NOTE);
+    assert_eq!(alert::style("TIP").title, "Tip");
+    let hex = |value: &str| {
+        value.len() == 7
+            && value.starts_with('#')
+            && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    };
+    for style in alert::STYLES {
+        for color in [style.border, style.color] {
+            assert!(color.token.starts_with("--"), "{color:?}");
+            assert!(hex(color.light) && hex(color.dark), "{color:?}");
+        }
+    }
+}
