@@ -3966,6 +3966,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lotype-ai"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "futures-core",
+ "lotype-ai",
+ "lotype-core",
+ "lotype-storage",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "lotype-core"
 version = "0.1.0-alpha.0"
 dependencies = [

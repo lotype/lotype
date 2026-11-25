@@ -1,0 +1,27 @@
+[package]
+name = "lotype-ai"
+description = "AI for lotype documents: a model edits a private copy, and its edits are reviewed and accepted as one step."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+futures-core = { version = "0.3.34", default-features = false, features = ["alloc"] }
+lotype-core.workspace = true
+lotype-storage.workspace = true
+serde_json = "1.0.154"
+
+[features]
+# `MockProvider`, a scripted model for tests of code that uses this crate.
+test-support = []
+
+[dev-dependencies]
+lotype-ai = { path = ".", features = ["test-support"] }
+lotype-core = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
