@@ -96,9 +96,54 @@ fn the_model_s_edits_show_for_review_and_are_the_document_s_once_accepted(cx: &m
         (None, ("ONE".to_owned(), None))
     );
     assert!(!shows(&mut ed, "ai-bar"));
+    assert!(!shows(&mut ed, "ai-cursor"));
     // The editor has the keys again, and one step back takes the edit.
     ed.keys("cmd-z");
     assert_eq!(first(&mut ed).0, "one");
+}
+
+#[gpui::test]
+fn the_ai_cursor_labels_the_last_edited_row_not_the_last_row_in_the_document(
+    cx: &mut TestAppContext,
+) {
+    let (mut ed, _) = with_model(
+        cx,
+        blocks![p!["one<a>"], p!["two"], p!["three"]],
+        |blocks| {
+            let args = format!(r#"{{"id": "{}", "block": "THREE"}}"#, blocks[2]);
+            let mut answer = tool_call("first", "update", &args, 5);
+            answer.extend(update(blocks[0], "ONE"));
+            vec![answer]
+        },
+    );
+    ask(&mut ed, "Rewrite the bottom and then the top");
+    assert_eq!(state(&mut ed), Some(AiState::Reviewing));
+    let cursor = ed
+        .cx
+        .debug_bounds("ai-cursor")
+        .expect("the labelled cursor");
+    let (first, last) = ed.view.update(ed.cx, |view, _| {
+        let blocks = view.ai_document().unwrap().blocks();
+        (
+            view.text_bounds(blocks[0]).unwrap(),
+            view.text_bounds(blocks[2]).unwrap(),
+        )
+    });
+    assert!(cursor.top() <= first.top() && cursor.bottom() > first.top());
+    assert!(cursor.right() <= first.left() && cursor.bottom() <= last.top());
+    click(&mut ed, "ai-reject");
+    assert!(!shows(&mut ed, "ai-cursor"));
+}
+
+#[gpui::test]
+fn the_ai_cursor_marks_a_preview_emptied_by_the_model(cx: &mut TestAppContext) {
+    let (mut ed, _) = with_model(cx, blocks![p!["one<a>"]], |blocks| {
+        let args = format!(r#"{{"id": "{}"}}"#, blocks[0]);
+        vec![tool_call("1", "delete", &args, 5)]
+    });
+    ask(&mut ed, "Remove everything");
+    assert_eq!(state(&mut ed), Some(AiState::Reviewing));
+    assert!(shows(&mut ed, "empty-document") && shows(&mut ed, "ai-cursor"));
 }
 
 #[gpui::test]

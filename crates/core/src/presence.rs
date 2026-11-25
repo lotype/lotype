@@ -32,6 +32,8 @@ pub struct Collaborator {
     pub color: u32,
     /// What the peer has selected, where that is in this document now.
     pub selection: Option<Selection>,
+    /// The shared block where this peer's AI is working, if visible here.
+    pub ai_block: Option<BlockId>,
 }
 
 /// The other peers in a document and their selections, which are no part
@@ -47,6 +49,7 @@ struct State {
     name: String,
     color: u32,
     selection: Option<Published>,
+    ai_block: Option<BlockId>,
 }
 
 /// A selection as other peers can find it in their documents.
@@ -82,16 +85,34 @@ impl Presence {
         color: u32,
         selection: Option<&Selection>,
     ) -> Vec<u8> {
+        Self::publish_with_ai(doc, name, color, selection, None)
+    }
+
+    /// Publishes the human's selection and an optional AI cursor in one presence.
+    /// The AI block must exist in the shared document; no draft text is sent.
+    pub fn publish_with_ai(
+        doc: &Document,
+        name: &str,
+        color: u32,
+        selection: Option<&Selection>,
+        ai_block: Option<BlockId>,
+    ) -> Vec<u8> {
         let mut state = doc.doc.peer_id().to_le_bytes().to_vec();
         state.extend(color.to_le_bytes());
         let name: String = name.chars().take(NAME_CHARS).collect();
         put(&mut state, name.as_bytes());
-        let none = [state.as_slice(), &[0]].concat();
-        let published = selection.and_then(|selection| {
-            write_selection(&mut state, doc, selection)?;
-            Some(state).filter(|state| state.len() <= MAX_PRESENCE_BYTES)
-        });
-        published.unwrap_or(none)
+        let mut ai = Vec::new();
+        if let Some(block) = ai_block.filter(|block| doc.contains(*block)) {
+            put(&mut ai, block.to_string().as_bytes());
+        }
+        let start = state.len();
+        let wrote = selection.and_then(|selection| write_selection(&mut state, doc, selection));
+        if wrote.is_none() || state.len() + ai.len() > MAX_PRESENCE_BYTES {
+            state.truncate(start);
+            state.push(0);
+        }
+        state.extend(ai);
+        state
     }
 
     /// This peer of `doc` leaving, as bytes to send to the others.
@@ -138,6 +159,7 @@ impl Presence {
                 name: state.name.clone(),
                 color: state.color,
                 selection: state.selection.as_ref().and_then(|s| doc.shown(s)),
+                ai_block: state.ai_block.filter(|block| doc.contains(*block)),
             })
             .collect();
         all.sort_by_key(|collaborator| collaborator.peer);
@@ -255,10 +277,16 @@ impl<'a> Reader<'a> {
             [3] => Some(Published::Cells(self.block()?, self.block()?)),
             _ => return None,
         };
+        let ai_block = if self.0.is_empty() {
+            None
+        } else {
+            Some(self.block()?)
+        };
         let state = State {
             name,
             color,
             selection,
+            ai_block,
         };
         self.0.is_empty().then_some(state)
     }

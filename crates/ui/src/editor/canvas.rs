@@ -131,6 +131,7 @@ impl EditorView {
     pub(super) fn row_element(
         &mut self,
         row: &Row,
+        ai_cursor: bool,
         base: &TextStyle,
         shown: Option<&Shown>,
         window: &mut Window,
@@ -293,7 +294,8 @@ impl EditorView {
                     .when_some(fill, |content, fill| content.bg(fill))
                     .child(content),
             )
-            .children(selected);
+            .children(selected)
+            .children(ai_cursor.then(|| super::ai_bar::cursor(cx)));
         Some(row_element.into_any_element())
     }
 

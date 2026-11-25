@@ -20,6 +20,7 @@ mod store;
 pub mod test_support;
 mod tools;
 
+pub use apply::EditLocation;
 pub use context::DocumentState;
 pub use provider::{
     LlmError, LlmEvent, LlmProvider, LlmRequest, LlmStream, Message, Role, ToolSpec,

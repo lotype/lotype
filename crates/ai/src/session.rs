@@ -5,7 +5,7 @@ use std::fmt;
 
 use lotype_core::{BlockId, Document, Editor, Selection};
 
-use crate::apply::{self, Effect};
+use crate::apply::{self, EditLocation, Effect};
 use crate::context::{self, DocumentState};
 use crate::{AiTranscript, LlmEvent, LlmProvider, LlmRequest, Message, Op, Role, partial, tools};
 
@@ -139,6 +139,40 @@ impl AiSession {
     /// The copy, with the model's edits so far.
     pub fn document(&self) -> &Document {
         self.copy.document()
+    }
+
+    /// Where the model is editing, or where it last edited in the review.
+    pub fn edit_location(&self) -> Option<EditLocation> {
+        match self.state {
+            AiState::Writing => self.writing_effect(),
+            AiState::Reviewing => self.done.last().map(|done| &done.effect),
+            _ => None,
+        }
+        .map(|effect| effect.location)
+    }
+
+    /// The shared block to mark while the model writes, following draft-only
+    /// blocks back to the tool target that introduced them.
+    pub fn active_anchor(&self) -> Option<BlockId> {
+        let mut target = self.writing_effect()?.target;
+        for done in self.done.iter().rev() {
+            if done.effect.made.contains(&target) {
+                target = done.effect.target;
+            }
+        }
+        Some(target)
+    }
+
+    /// The latest edit of the current turn while it is streaming.
+    fn writing_effect(&self) -> Option<&Effect> {
+        if self.state != AiState::Writing {
+            return None;
+        }
+        self.call
+            .as_ref()
+            .and_then(|call| call.made.as_ref())
+            .map(|(_, effect)| effect)
+            .or_else(|| self.done[self.turn.1..].last().map(|done| &done.effect))
     }
 
     /// What was said so far.

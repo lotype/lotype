@@ -33,6 +33,7 @@ use gpui::{
     FocusHandle, Focusable, IntoElement, MouseButton, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Render, ScrollHandle, Subscription, Window, canvas, div, prelude::*,
 };
+use lotype_ai::EditLocation;
 use lotype_core::{
     Atom, BlockId, Document, Editor, KeyBinding, Pos, SlashItem, default_keymap,
     default_slash_items,
@@ -113,6 +114,7 @@ pub struct EditorView {
     watches: Vec<Subscription>,
     /// The other peers in the document, to draw their carets and selections.
     presence: Option<lotype_core::Presence>,
+    presence_publisher: Option<collab::PresencePublisher>,
     ai: ai::Ai,
 }
 
@@ -157,6 +159,7 @@ impl EditorView {
             measuring: false,
             watches: Vec::new(),
             presence: None,
+            presence_publisher: None,
             ai: ai::Ai::default(),
         }
     }
@@ -309,6 +312,19 @@ impl Render for EditorView {
         // what a row draws by the rows around it, as where a block lands.
         let all = self.shape(selected);
         let candidates: Vec<BlockId> = all.iter().map(|row| row.block).collect();
+        let ai_cursor = self.ai_cursor_row(&candidates);
+        let peers = self
+            .presence
+            .as_ref()
+            .map(|presence| presence.collaborators(self.editor.document()))
+            .unwrap_or_default();
+        let mut ai_cursor_blocks: HashSet<_> = peers
+            .iter()
+            .filter_map(|peer| self.visible_cursor_row(peer.ai_block?, &candidates))
+            .collect();
+        if let Some(EditLocation::Block(block) | EditLocation::Removal(Some(block))) = ai_cursor {
+            ai_cursor_blocks.insert(block);
+        }
         // Rows far from the view lay out nothing: those next to each other
         // are one space as tall as they are.
         let plan = self.plan_rows(&candidates, window);
@@ -331,7 +347,7 @@ impl Render for EditorView {
                     blocks.push(row.block);
                     items.push(None);
                     self.measuring = true;
-                    let element = self.row_element(row, &base, shown.as_ref(), window, cx);
+                    let element = self.row_element(row, false, &base, shown.as_ref(), window, cx);
                     self.measuring = false;
                     match element {
                         Some(element) => {
@@ -346,7 +362,9 @@ impl Render for EditorView {
                     continue;
                 }
             }
-            let Some(element) = self.row_element(row, &base, shown.as_ref(), window, cx) else {
+            let marked = ai_cursor_blocks.contains(&row.block);
+            let Some(element) = self.row_element(row, marked, &base, shown.as_ref(), window, cx)
+            else {
                 self.undrawn(row.block);
                 continue;
             };
@@ -368,7 +386,16 @@ impl Render for EditorView {
             .children(None)
             .is_ok_and(|blocks| blocks.is_empty())
         {
-            rows.push(render::empty_document(cx));
+            let empty = render::empty_document(cx);
+            rows.push(if ai_cursor == Some(EditLocation::Removal(None)) {
+                div()
+                    .relative()
+                    .child(empty)
+                    .child(ai_bar::cursor(cx))
+                    .into_any_element()
+            } else {
+                empty
+            });
         }
         // A block's menu goes with it, deleted or hidden.
         if self
@@ -406,7 +433,7 @@ impl Render for EditorView {
             // Over the rows, whose colors would hide it, and see-through.
             .child(paint::selection(cx.entity()))
             // The peers under the caret, which stays in sight where one is.
-            .child(collab::cursors(cx.entity()))
+            .child(collab::cursors(cx.entity(), peers))
             .child(ai_bar::marks(cx.entity()))
             .child(paint::caret(cx.entity()))
             // A session's copy is the model's to write in, and no one else's.

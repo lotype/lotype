@@ -4015,6 +4015,7 @@ dependencies = [
 name = "lotype-ui"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "futures-util",
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",

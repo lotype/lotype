@@ -7,6 +7,15 @@ use lotype_core::{BlockId, Document, Result, Span, Value, block};
 
 use crate::Op;
 
+/// Where the model last made an edit in the preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditLocation {
+    /// A block the model added or updated.
+    Block(BlockId),
+    /// A removal, marked on a nearby surviving block or on the empty document.
+    Removal(Option<BlockId>),
+}
+
 /// What a block is by itself, to tell whether someone changed it.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Content {
@@ -33,12 +42,14 @@ fn content(doc: &Document, block: BlockId) -> Result<Content> {
 }
 
 /// What an edit did.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Effect {
     /// The blocks it made, with those in them, in reading order.
     pub(crate) made: Vec<BlockId>,
     /// What the block it changed or removed was.
     pub(crate) before: Option<Content>,
+    pub(crate) location: EditLocation,
+    pub(crate) target: BlockId,
 }
 
 /// `block` and the blocks in it, in reading order.
@@ -78,7 +89,7 @@ pub(crate) fn run(
     if expect.is_some_and(|expect| Some(expect) != before.as_ref()) {
         return Ok(None);
     }
-    let made = match op {
+    let (made, location) = match op {
         Op::Add { before, blocks, .. } => {
             let parent = doc.parent(target)?;
             let mut index = doc.index_of(target)? + usize::from(!before);
@@ -90,21 +101,43 @@ pub(crate) fn run(
                     made.extend(with_inside(doc, block)?);
                 }
             }
-            made
+            let location = EditLocation::Block(made.last().copied().unwrap_or(target));
+            (made, location)
         }
         Op::Update { markdown, .. } => update(doc, target, markdown)?,
         Op::Delete { .. } => {
+            let (parent, index) = (doc.parent(target)?, doc.index_of(target)?);
             doc.remove_block(target)?;
-            Vec::new()
+            (Vec::new(), removal_at(doc, parent, index)?)
         }
     };
-    Ok(Some(Effect { made, before }))
+    Ok(Some(Effect {
+        made,
+        before,
+        location,
+        target,
+    }))
+}
+
+/// Locates a removed row at its next sibling, previous sibling, or parent.
+fn removal_at(doc: &Document, parent: Option<BlockId>, index: usize) -> Result<EditLocation> {
+    let siblings = doc.children(parent)?;
+    let nearby = siblings
+        .get(index)
+        .or_else(|| siblings.last())
+        .copied()
+        .or(parent);
+    Ok(EditLocation::Removal(nearby))
 }
 
 /// Makes `block` what `markdown` says. Text for a block with text stays in
 /// the block, which keeps its id and what is in it; anything else takes
-/// the block's place. Returns the blocks made then.
-fn update(doc: &mut Document, block: BlockId, markdown: &str) -> Result<Vec<BlockId>> {
+/// the block's place. Returns the blocks made then and the edit's location.
+fn update(
+    doc: &mut Document,
+    block: BlockId,
+    markdown: &str,
+) -> Result<(Vec<BlockId>, EditLocation)> {
     let mut new = Document::new(doc.schema().clone());
     let top = new.insert_markdown(None, 0, markdown)?;
     let had_text = doc.spans(block).ok();
@@ -137,12 +170,12 @@ fn update(doc: &mut Document, block: BlockId, markdown: &str) -> Result<Vec<Bloc
                 doc.delete_text(block, 0..doc.text_len(block)?)?;
                 doc.insert_spans(block, 0, &spans)?;
             }
-            Ok(Vec::new())
+            Ok((Vec::new(), EditLocation::Block(block)))
         }
         // No text to keep: an empty block of the type it was.
         (Some(_), None, _) if top.is_empty() => {
             doc.delete_text(block, 0..doc.text_len(block)?)?;
-            Ok(Vec::new())
+            Ok((Vec::new(), EditLocation::Block(block)))
         }
         // shortcut: what was in the block goes with it. A model shown a
         // block alone gives one block for it, save for tables and the like.
@@ -154,7 +187,11 @@ fn update(doc: &mut Document, block: BlockId, markdown: &str) -> Result<Vec<Bloc
             for block in top {
                 made.extend(with_inside(doc, block)?);
             }
-            Ok(made)
+            let location = match made.last() {
+                Some(block) => EditLocation::Block(*block),
+                None => removal_at(doc, parent, index)?,
+            };
+            Ok((made, location))
         }
     }
 }

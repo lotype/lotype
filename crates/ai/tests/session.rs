@@ -1,5 +1,7 @@
 use lotype_ai::test_support::{MockProvider, tool_call};
-use lotype_ai::{Accepted, AiError, AiSession, AiState, Change, LlmError, LlmEvent, Op, Role};
+use lotype_ai::{
+    Accepted, AiError, AiSession, AiState, Change, EditLocation, LlmError, LlmEvent, Op, Role,
+};
 use lotype_core::test_support::{editor, outline};
 use lotype_core::{BlockId, Document, Editor, Pos, Selection, blocks, p};
 use serde_json::json;
@@ -136,7 +138,11 @@ fn an_edit_shows_in_the_copy_while_it_is_still_being_written() {
     let mut seen = Vec::new();
     for part in tool_call("1", "update", &update_text(one, "Hello **there**"), 3) {
         session.feed(part.unwrap()).unwrap();
-        seen.push(text(&session, one));
+        let preview = text(&session, one);
+        if preview != "one" {
+            assert_eq!(session.edit_location(), Some(EditLocation::Block(one)));
+        }
+        seen.push(preview);
     }
     // From what it was, a little more each time, and never anything else.
     assert_eq!(seen.first().map(String::as_str), Some("one"));
@@ -167,11 +173,86 @@ fn an_edit_shows_in_the_copy_while_it_is_still_being_written() {
     assert!(counts.contains(&4) && counts.last() == Some(&5));
     assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
     session.feed(LlmEvent::Done).unwrap();
+    let last_added = block(session.document(), "second");
+    assert_eq!(
+        session.edit_location(),
+        Some(EditLocation::Block(last_added))
+    );
     assert_eq!(session.ops().count(), 2);
     assert_eq!(
         shown(session.document()),
         "paragraph \"Hello [bold|there]\"\nparagraph \"first\"\nparagraph \"second\"\nparagraph \"two\"\nparagraph \"three\"\n"
     );
+}
+
+#[test]
+fn the_location_follows_tool_order_and_survives_review() {
+    let (main, [one, _, three]) = three();
+    let mut session = AiSession::new(&main).unwrap();
+    session.prompt("Rewrite from bottom to top").unwrap();
+    assert_eq!(session.edit_location(), None);
+    call(&mut session, "1", "update", update(three, "THREE"));
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(three)));
+    call(&mut session, "2", "update", update(one, "ONE"));
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(one)));
+    session.feed(LlmEvent::Done).unwrap();
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(one)));
+
+    session.prompt("Describe those edits").unwrap();
+    session
+        .feed(LlmEvent::TextDelta("Two changes.".into()))
+        .unwrap();
+    assert_eq!(session.edit_location(), None);
+    session.feed(LlmEvent::Done).unwrap();
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(one)));
+}
+
+#[test]
+fn a_draft_only_block_keeps_the_shared_anchor_that_introduced_it() {
+    let (main, [one, _, three]) = three();
+    let mut session = AiSession::new(&main).unwrap();
+    session.prompt("Add, revise and remove").unwrap();
+    call(&mut session, "1", "add", add(one, "after", &["draft"]));
+    let draft = block(session.document(), "draft");
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(draft)));
+    assert_eq!(session.active_anchor(), Some(one));
+    call(&mut session, "2", "update", update(draft, "rewritten"));
+    assert_eq!(session.active_anchor(), Some(one));
+    call(
+        &mut session,
+        "3",
+        "delete",
+        json!({"id": three.to_string()}),
+    );
+    assert_eq!(session.active_anchor(), Some(three));
+    session.feed(LlmEvent::Done).unwrap();
+    assert_eq!(session.active_anchor(), None);
+}
+
+#[test]
+fn a_removal_marks_the_nearby_row_or_the_empty_document() {
+    let (main, [one, two, three]) = three();
+    let mut session = AiSession::new(&main).unwrap();
+    session.prompt("Remove everything").unwrap();
+    call(&mut session, "1", "delete", json!({"id": two.to_string()}));
+    assert_eq!(
+        session.edit_location(),
+        Some(EditLocation::Removal(Some(three)))
+    );
+    call(
+        &mut session,
+        "2",
+        "delete",
+        json!({"id": three.to_string()}),
+    );
+    assert_eq!(
+        session.edit_location(),
+        Some(EditLocation::Removal(Some(one)))
+    );
+    call(&mut session, "3", "delete", json!({"id": one.to_string()}));
+    assert_eq!(session.edit_location(), Some(EditLocation::Removal(None)));
+    session.feed(LlmEvent::Done).unwrap();
+    assert_eq!(session.edit_location(), Some(EditLocation::Removal(None)));
 }
 
 #[test]
@@ -192,12 +273,14 @@ fn a_request_that_failed_is_tried_again_from_where_the_user_asked() {
     assert_eq!(session.document().plain_text(three).unwrap(), "THREE");
     session.fail(&LlmError("the line dropped".into())).unwrap();
     assert_eq!(session.state(), &AiState::Error("the line dropped".into()));
+    assert_eq!(session.edit_location(), None);
     // The call that did not end is taken back; the one that did is there.
     assert_eq!(session.document().plain_text(three).unwrap(), "three");
     assert_eq!(session.ops().count(), 2);
     assert!(matches!(session.prompt("Third"), Err(AiError::State)));
 
     let again = session.retry().unwrap();
+    assert_eq!(session.edit_location(), None);
     assert_eq!(shown(session.document()), first);
     assert_eq!(session.ops().count(), 1);
     assert!(again.messages.last().unwrap().text.ends_with("Second"));
@@ -222,8 +305,10 @@ fn stopping_an_answer_keeps_the_edits_that_were_whole() {
         session.feed(part.unwrap()).unwrap();
     }
     assert_eq!(session.document().plain_text(two).unwrap(), "TW");
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(two)));
     session.abort().unwrap();
     assert_eq!(session.state(), &AiState::Reviewing);
+    assert_eq!(session.edit_location(), Some(EditLocation::Block(one)));
     assert_eq!(session.document().plain_text(two).unwrap(), "two");
     assert_eq!(session.ops().collect::<Vec<_>>().len(), 1);
     assert!(matches!(session.ops().next(), Some(Op::Update { block, .. }) if *block == one));

@@ -118,6 +118,29 @@ fn a_relay_says_whose_a_presence_is() {
 }
 
 #[test]
+fn an_ai_block_moves_and_clears_without_replacing_the_human_selection() {
+    let (doc, _) = build(blocks![p!["one"], divider![], p!["three"]]);
+    let copy = peer(&doc);
+    let blocks = doc.blocks();
+    let caret = Selection::caret(Pos::new(blocks[0], 1));
+    let presence = Presence::new();
+    for anchor in [Some(blocks[1]), Some(blocks[2]), None] {
+        let sent = Presence::publish_with_ai(&doc, "Andi", 0xf0_8020, Some(&caret), anchor);
+        presence.apply(&relayed(sent, 7)).unwrap();
+        let seen = presence.collaborators(&copy);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].peer, 7);
+        assert_eq!(seen[0].selection.as_ref(), Some(&caret));
+        assert_eq!(seen[0].ai_block, anchor);
+    }
+
+    let mut draft = peer(&doc);
+    let private = draft.insert_block(None, 0, "paragraph").unwrap();
+    let sent = Presence::publish_with_ai(&doc, "Andi", 0, None, Some(private));
+    assert_eq!(sent, Presence::publish(&doc, "Andi", 0, None));
+}
+
+#[test]
 fn a_selection_follows_its_text_through_changes_it_was_not_sent_after() {
     let a = editor(blocks![p!["one <a>two<b>"]]);
     let mut b = peer(a.document());
@@ -188,6 +211,14 @@ fn a_presence_is_never_more_than_a_relay_passes_on() {
     // The selection did not fit, so the peer is there without one.
     let seen = presence.collaborators(&doc);
     assert_eq!((seen[0].name.len(), seen[0].selection.clone()), (64, None));
+
+    let block = doc.blocks()[0];
+    let sent = Presence::publish_with_ai(&doc, &name, 0, Some(&all), Some(block));
+    assert!(sent.len() <= MAX_PRESENCE_BYTES);
+    presence.apply(&sent).unwrap();
+    let seen = presence.collaborators(&doc);
+    assert_eq!(seen[0].selection, None);
+    assert_eq!(seen[0].ai_block, Some(block));
 }
 
 #[test]

@@ -2,13 +2,15 @@
 //! edits, the marks on the blocks they changed, and where the model writes.
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, ClickEvent, Context, Entity, Hsla, IntoElement, KeyDownEvent,
-    MouseButton, Pixels, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
+    Anchor, AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, Hsla, IntoElement,
+    KeyDownEvent, MouseButton, Pixels, Window, anchored, canvas, deferred, div, fill, point,
+    prelude::*, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_ai::{AiState, Change, Role};
+use lotype_ai::{AiState, Change, EditLocation, Role};
+use lotype_core::BlockId;
 
 use super::EditorView;
 use crate::text_el::Affinity;
@@ -73,6 +75,34 @@ impl Act {
 }
 
 impl EditorView {
+    /// Finds the visible row for the cursor, using an ancestor when the target is hidden.
+    pub(super) fn ai_cursor_row(&self, rows: &[BlockId]) -> Option<EditLocation> {
+        let location = self.ai.session.as_ref()?.edit_location()?;
+        let (block, removal) = match location {
+            EditLocation::Block(block) => (block, false),
+            EditLocation::Removal(Some(block)) => (block, true),
+            EditLocation::Removal(None) => return Some(location),
+        };
+        let block = self.visible_cursor_row(block, rows)?;
+        Some(if removal {
+            EditLocation::Removal(Some(block))
+        } else {
+            EditLocation::Block(block)
+        })
+    }
+
+    /// Finds the closest row in the view, including a collapsed block's ancestor.
+    pub(super) fn visible_cursor_row(
+        &self,
+        mut block: BlockId,
+        rows: &[BlockId],
+    ) -> Option<BlockId> {
+        while !rows.contains(&block) {
+            block = self.editor.document().parent(block).ok().flatten()?;
+        }
+        Some(block)
+    }
+
     /// Does `act` with the session.
     pub(crate) fn ai_act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
@@ -163,6 +193,22 @@ impl EditorView {
     }
 }
 
+/// Labels the AI cursor in the editor gutter, alongside its row.
+pub(super) fn cursor(cx: &App) -> Div {
+    div()
+        .absolute()
+        .left(px(-super::side_menu::GUTTER))
+        .top_0()
+        .ml_2()
+        .px_1()
+        .rounded_sm()
+        .bg(cx.theme().primary)
+        .text_color(cx.theme().primary_foreground)
+        .text_xs()
+        .debug_selector(|| "ai-cursor".to_owned())
+        .child("AI")
+}
+
 /// Marks the blocks a session changed, and shows where the model is
 /// writing: over the rows, as the selection is.
 pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
@@ -173,7 +219,6 @@ pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
         }
         let (added, updated) = (cx.theme().green, cx.theme().blue);
         let tint = |color: Hsla| color.opacity(0.12);
-        let mut last = None;
         // shortcut: only blocks with text are marked, and removed blocks
         // are counted in the bar; draw both when reviews ask for more.
         for change in &editor.ai.changes {
@@ -184,17 +229,20 @@ pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
             };
             if let Some(bounds) = editor.text_bounds(block) {
                 window.paint_quad(fill(bounds, tint(color)));
-                last = Some(block);
             }
         }
-        // Where the model is writing: the end of the last block it changed.
-        let writing = editor.ai_state() == Some(&AiState::Writing);
-        let caret = last.filter(|_| writing).and_then(|block| {
+        let caret = editor.ai.session.as_ref().and_then(|session| {
+            let EditLocation::Block(block) = session.edit_location()? else {
+                return None;
+            };
+            if session.state() != &AiState::Writing {
+                return None;
+            }
             let end = editor.editor.document().text_len(block).ok()?;
             editor.layouts.get(&block)?.caret(end, Affinity::default())
         });
         if let Some(caret) = caret {
-            window.paint_quad(fill(caret, added));
+            window.paint_quad(fill(caret, cx.theme().primary));
         }
     };
     canvas(|_, _, _| (), paint).absolute().size_full()

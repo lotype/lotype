@@ -24,6 +24,7 @@ unicode-segmentation.workspace = true
 test-support = ["gpui/test-support", "lotype-core/test-support"]
 
 [dev-dependencies]
+futures-util = { version = "0.3.34", default-features = false }
 lotype-ai = { workspace = true, features = ["test-support"] }
 lotype-ui = { path = ".", features = ["test-support"] }
 # Compiles Metal shaders at run time, so the example needs no full Xcode.

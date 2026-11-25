@@ -4,7 +4,7 @@ mod support;
 
 use futures_util::SinkExt;
 use lotype_core::test_support::build;
-use lotype_core::{Presence, SyncMessage, blocks, p};
+use lotype_core::{Pos, Presence, Selection, SyncMessage, blocks, p};
 use support::{POLICY, Peer, UNSUPPORTED, empty, relay, request, store, stored};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{Error, Message};
@@ -107,6 +107,34 @@ async fn presence_reaches_those_there_and_those_who_come() {
     ben.until(|ben| names(ben) == ["Late"]).await;
     drop(late);
     ben.until(|ben| names(ben).is_empty()).await;
+}
+
+#[tokio::test]
+async fn an_ai_cursor_reaches_other_clients_without_changing_the_document() {
+    let store = store();
+    let address = relay(store.clone()).await;
+    let (doc, _) = build(blocks![p!["first"], p!["second"]]);
+    let first = doc.blocks()[0];
+    let second = doc.blocks()[1];
+    let selection = Selection::caret(Pos::new(first, 2));
+    let mut andi = Peer::connect(address, "writer", doc).await;
+    andi.settle().await;
+    let mut rara = Peer::connect(address, "reader", empty()).await;
+    let original = andi.text();
+    rara.until(|peer| peer.text() == original).await;
+    for anchor in [Some(first), Some(second), None] {
+        let state = Presence::publish_with_ai(&andi.doc, "Andi", 0, Some(&selection), anchor);
+        andi.send(SyncMessage::Presence(state)).await;
+        rara.until(|peer| {
+            let seen = peer.presence.collaborators(&peer.doc);
+            seen.first().is_some_and(|andi| andi.ai_block == anchor)
+        })
+        .await;
+        let seen = rara.presence.collaborators(&rara.doc);
+        assert_eq!(seen[0].selection.as_ref(), Some(&selection));
+        assert_eq!(rara.text(), original);
+    }
+    assert_eq!(stored(&store).await, original);
 }
 
 #[tokio::test]

@@ -34,6 +34,7 @@ pub(crate) struct Ai {
     /// was: text is revealed a frame's worth at a time.
     arrived: Vec<Result<LlmEvent, LlmError>>,
     taken: Option<Instant>,
+    flush: Option<Task<()>>,
     /// Reads the answer. Dropping it cancels the request.
     reading: Option<Task<()>>,
     /// The field to ask in, while the bar is open.
@@ -144,11 +145,21 @@ impl EditorView {
                 let last = !matches!(&event, Ok(event) if *event != LlmEvent::Done);
                 let told = view.update(cx, |view, cx| {
                     view.ai.arrived.push(event);
-                    let due = view.ai.taken.is_none_or(|taken| taken.elapsed() >= FRAME);
-                    if last || due {
+                    let wait = view.ai.taken.map_or(Duration::ZERO, |taken| {
+                        FRAME.saturating_sub(taken.elapsed())
+                    });
+                    if last || wait.is_zero() {
                         view.ai_take();
+                        cx.notify();
+                    } else if view.ai.flush.is_none() {
+                        view.ai.flush = Some(cx.spawn(async move |view, cx| {
+                            cx.background_executor().timer(wait).await;
+                            let _ = view.update(cx, |view, cx| {
+                                view.ai_take();
+                                cx.notify();
+                            });
+                        }));
                     }
-                    cx.notify();
                 });
                 if last || told.is_err() {
                     return;
@@ -159,6 +170,7 @@ impl EditorView {
 
     /// Takes what came of the answer since the last time, in one go.
     fn ai_take(&mut self) {
+        self.ai.flush = None;
         self.ai.taken = Some(Instant::now());
         let arrived = std::mem::take(&mut self.ai.arrived);
         let Some(session) = &mut self.ai.session else {
@@ -213,6 +225,7 @@ impl EditorView {
     /// Shows the document again, and keeps what was said.
     fn ai_close(&mut self) {
         self.ai.reading = None;
+        self.ai.flush = None;
         self.ai.arrived.clear();
         self.ai.changes.clear();
         if let Some(session) = self.ai.session.take() {
@@ -227,6 +240,7 @@ impl EditorView {
     /// be reviewed.
     pub fn ai_stop(&mut self, cx: &mut Context<Self>) {
         self.ai.reading = None;
+        self.ai.flush = None;
         self.ai.arrived.clear();
         if let Some(session) = &mut self.ai.session {
             session.abort().ok();
