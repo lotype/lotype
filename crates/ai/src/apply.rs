@@ -156,6 +156,7 @@ pub(crate) fn run(
         reference: block, ..
     }
     | Op::Update { block, .. }
+    | Op::ReplaceSelectedText { block, .. }
     | Op::Delete { block }) = op;
     let target = made.get(block).copied().unwrap_or(*block);
     if !doc.contains(target)
@@ -227,6 +228,12 @@ pub(crate) fn run(
             let index = doc.index_of(target)?;
             doc.remove_block(target)?;
             (Vec::new(), removal_at(doc, parent, index)?)
+        }
+        Op::ReplaceSelectedText { range, text, .. } => {
+            if !crate::selected::replace(doc, target, range.clone(), text)? {
+                return Ok(None);
+            }
+            (Vec::new(), EditLocation::Block(target))
         }
     };
     Ok(Some(Effect {

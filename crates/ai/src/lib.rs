@@ -14,6 +14,7 @@ mod apply;
 mod context;
 mod partial;
 mod provider;
+mod selected;
 mod session;
 mod store;
 #[cfg(any(test, feature = "test-support"))]

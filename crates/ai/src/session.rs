@@ -6,8 +6,10 @@ use std::fmt;
 use lotype_core::{BlockId, Document, Editor, Selection};
 
 use crate::apply::{self, EditLocation, Effect};
-use crate::context::{self, DocumentState};
+use crate::selected::TextSelection;
 use crate::{AiTranscript, LlmEvent, LlmProvider, LlmRequest, Message, Op, Role, partial, tools};
+
+mod request;
 
 /// Where a session is.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +99,7 @@ struct Call {
 pub struct AiSession {
     copy: Editor,
     selection: Option<Selection>,
+    selected: Option<TextSelection>,
     state: AiState,
     transcript: AiTranscript,
     done: Vec<Done>,
@@ -111,10 +114,18 @@ impl AiSession {
     /// A session on the document of `editor` as it is now, with its
     /// selection as what the user means.
     pub fn new(editor: &Editor) -> Result<Self, AiError> {
-        let snapshot = editor.document().export_snapshot()?;
+        let mut session = Self::for_document(editor.document())?;
+        session.selection = editor.selection().cloned();
+        Ok(session)
+    }
+
+    /// Opens a session on the entire document without a caret or selection.
+    pub fn for_document(document: &Document) -> Result<Self, AiError> {
+        let snapshot = document.export_snapshot()?;
         Ok(Self {
-            copy: copy_of(editor.document(), &snapshot)?,
-            selection: editor.selection().cloned(),
+            copy: copy_of(document, &snapshot)?,
+            selection: None,
+            selected: None,
             state: AiState::UserInput,
             transcript: AiTranscript::default(),
             done: Vec::new(),
@@ -180,6 +191,11 @@ impl AiSession {
         &self.transcript
     }
 
+    /// The answer in progress, before it is added to the transcript.
+    pub fn streaming_reply(&self) -> Option<&str> {
+        (self.state == AiState::Writing && !self.reply.is_empty()).then_some(self.reply.as_str())
+    }
+
     /// The edits made in the copy, in order.
     pub fn ops(&self) -> impl Iterator<Item = &Op> {
         self.done.iter().map(|done| &done.op)
@@ -201,25 +217,6 @@ impl AiSession {
         let (role, text) = (Role::User, text.to_owned());
         self.transcript.messages.push(Message { role, text });
         Ok(self.request())
-    }
-
-    fn request(&mut self) -> LlmRequest {
-        self.state = AiState::Thinking;
-        self.reply.clear();
-        let doc = self.copy.document();
-        let selection = self.selection.as_ref();
-        let selection = selection.filter(|selection| doc.check_selection(selection).is_ok());
-        let state = DocumentState::of(doc, selection);
-        // The document goes with the last thing asked, as it is now.
-        let mut messages = self.transcript.messages.clone();
-        if let Some(asked) = messages.last_mut() {
-            asked.text = context::user(&state, &asked.text);
-        }
-        LlmRequest {
-            system: context::system(doc.schema()),
-            messages,
-            tools: tools::specs(),
-        }
     }
 
     /// Takes a part of the model's answer. An edit is made in the copy as
@@ -271,7 +268,7 @@ impl AiSession {
                     || (args.whole
                         && serde_json::from_str::<serde_json::Value>(&call.args).is_ok()) =>
             {
-                tools::read(&call.name, &args).ok()
+                tools::read(&call.name, &args, self.selected.as_ref()).ok()
             }
             _ => None,
         };
@@ -319,7 +316,12 @@ impl AiSession {
     fn end_call(&mut self) -> Result<(), AiError> {
         self.write(true)?;
         match self.call.take().map(|call| call.made) {
-            Some(Some((op, effect))) => self.done.push(Done { op, effect }),
+            Some(Some((op, effect))) => {
+                if let Some(selected) = &mut self.selected {
+                    selected.track(&op, true);
+                }
+                self.done.push(Done { op, effect });
+            }
             Some(None) => self.refused += 1,
             None => {}
         }
@@ -373,6 +375,11 @@ impl AiSession {
             return Err(AiError::State);
         }
         self.copy = copy_of(self.copy.document(), &self.turn.0)?;
+        if let Some(selected) = &mut self.selected {
+            for done in self.done[self.turn.1..].iter().rev() {
+                selected.track(&done.op, false);
+            }
+        }
         self.done.truncate(self.turn.1);
         Ok(self.request())
     }
@@ -410,10 +417,14 @@ impl AiSession {
         for Done { op, effect } in &self.done {
             added.extend(effect.made.iter().copied());
             match op {
-                Op::Update { block, .. } if effect.made.is_empty() => {
-                    updated.insert(*block);
+                Op::Update { block, .. } | Op::ReplaceSelectedText { block, .. } => {
+                    if effect.made.is_empty() {
+                        updated.insert(*block);
+                    } else {
+                        removed.push(*block);
+                    }
                 }
-                Op::Update { block, .. } | Op::Delete { block } => removed.push(*block),
+                Op::Delete { block } => removed.push(*block),
                 Op::Add { .. } => {}
             }
         }

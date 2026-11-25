@@ -1,10 +1,15 @@
 //! What a model may do to a document, and how it says so.
 
+use std::ops::Range;
+
 use lotype_core::BlockId;
 use serde_json::{Value, json};
 
 use crate::ToolSpec;
 use crate::partial::{Partial, Seg};
+use crate::selected::TextSelection;
+
+const REPLACE_SELECTED: &str = "replace_selected_text";
 
 /// An edit a model made.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +34,15 @@ pub enum Op {
     Delete {
         /// The block.
         block: BlockId,
+    },
+    /// Replaces text inside a range bound by the session, not the model.
+    ReplaceSelectedText {
+        /// The block containing the selection.
+        block: BlockId,
+        /// The selected bytes as they were just before this edit.
+        range: Range<usize>,
+        /// The new plain text.
+        text: String,
     },
 }
 
@@ -71,6 +85,23 @@ pub(crate) fn specs() -> Vec<ToolSpec> {
     ]
 }
 
+/// The only edit tool advertised by a selection-only session.
+pub(crate) fn selection_spec() -> ToolSpec {
+    ToolSpec {
+        name: REPLACE_SELECTED,
+        description: "Replaces only the selected fragment of one block. Send the entire revised fragment as plain text.",
+        schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "A block ID from editableText."},
+                "text": {"type": "string", "description": "Replacement for the selected fragment only."}
+            },
+            "required": ["id", "text"],
+            "additionalProperties": false
+        }),
+    }
+}
+
 /// The call is none the tools take.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Invalid;
@@ -79,7 +110,11 @@ pub(crate) struct Invalid;
 /// they do not say which block yet: an id is only read once it is whole,
 /// as half of one is another block's. Markdown that is still being written
 /// is taken as it is.
-pub(crate) fn read(name: &str, args: &Partial) -> Result<Option<Op>, Invalid> {
+pub(crate) fn read(
+    name: &str,
+    args: &Partial,
+    selection: Option<&TextSelection>,
+) -> Result<Option<Op>, Invalid> {
     let Value::Object(fields) = &args.value else {
         return Err(Invalid);
     };
@@ -96,6 +131,24 @@ pub(crate) fn read(name: &str, args: &Partial) -> Result<Option<Op>, Invalid> {
         let id = text(key)?.map(|id| id.parse().map_err(|_| Invalid));
         id.transpose()
     };
+    if let Some(selection) = selection {
+        if name != REPLACE_SELECTED || fields.keys().any(|key| key != "id" && key != "text") {
+            return Err(Invalid);
+        }
+        let Some(block) = block("id")? else {
+            return Ok(None);
+        };
+        let range = selection.range(block).ok_or(Invalid)?;
+        return match fields.get("text") {
+            Some(Value::String(text)) => Ok(Some(Op::ReplaceSelectedText {
+                block,
+                range,
+                text: text.clone(),
+            })),
+            None if !args.whole => Ok(None),
+            _ => Err(Invalid),
+        };
+    }
     Ok(match name {
         "add" => {
             let before = match text("position")? {
@@ -143,7 +196,7 @@ mod tests {
     use crate::partial;
 
     fn op(name: &str, args: &str) -> Result<Option<Op>, Invalid> {
-        read(name, &partial::read(args).unwrap().unwrap())
+        read(name, &partial::read(args).unwrap().unwrap(), None)
     }
 
     #[test]

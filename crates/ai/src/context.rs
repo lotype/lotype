@@ -107,6 +107,6 @@ pub(crate) fn system(schema: &Schema) -> String {
 }
 
 /// The request of a turn: the document as it is now, then what is asked.
-pub(crate) fn user(state: &DocumentState, prompt: &str) -> String {
-    format!("<document>\n{}\n</document>\n\n{prompt}", state.to_json())
+pub(crate) fn user(state: &Value, prompt: &str) -> String {
+    format!("<document>\n{state}\n</document>\n\n{prompt}")
 }
