@@ -433,8 +433,8 @@ impl AiSession {
 
     /// Makes the edits in the document of `editor`, as one undo step, and
     /// closes the session. The document may have changed since the session
-    /// started: each edit is made again in it as it is now, so what others
-    /// did stays, and an edit whose block is gone or changed is left out.
+    /// started: edits whose target, affected descendants, or insertion context
+    /// no longer match the preview are left out.
     pub fn accept(&mut self, editor: &mut Editor) -> Result<Accepted, AiError> {
         if !matches!(self.state, AiState::Reviewing | AiState::UserInput) {
             return Err(AiError::State);
@@ -445,7 +445,7 @@ impl AiSession {
             // The blocks made here, by what they are in the copy.
             let mut made = HashMap::new();
             for Done { op, effect } in done {
-                match apply::run(doc, op, &made, effect.before.as_ref())? {
+                match apply::run(doc, op, &made, Some(&effect.before))? {
                     Some(here) => {
                         made.extend(effect.made.iter().copied().zip(here.made));
                         applied += 1;
