@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{AppContext, Focusable, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px,
+};
 use lotype_ai::test_support::{MockProvider, tool_call};
 use lotype_ai::{AiState, LlmError, LlmEvent, Role};
 use lotype_core::test_support::{BlockNode, editor};
@@ -61,6 +63,60 @@ fn ask(ed: &mut EditorTestContext, text: &str) {
 
 fn state(ed: &mut EditorTestContext) -> Option<AiState> {
     ed.view.update(ed.cx, |view, _| view.ai_state().cloned())
+}
+
+#[gpui::test]
+fn entering_ai_review_dismisses_editing_menus_from_the_live_editor(cx: &mut TestAppContext) {
+    let (mut ed, _) = with_model(cx, blocks![p!["one<a>"], p!["two"]], |blocks| {
+        vec![update(blocks[0], "ONE")]
+    });
+    let under_mouse = ed.view.update(ed.cx, |view, _| {
+        let block = view.editor().document().blocks()[1];
+        view.text_bounds(block).unwrap().center()
+    });
+    ed.cx
+        .simulate_mouse_move(under_mouse, None, Modifiers::none());
+    click(&mut ed, "side-handle");
+    let deletion = ed.cx.debug_bounds("block-menu-delete").unwrap().center();
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Rewrite", cx));
+    assert!(shows(&mut ed, "ai-cursor"));
+    assert!(!shows(&mut ed, "block-menu-delete") && !shows(&mut ed, "side-add"));
+    ed.cx.simulate_click(deletion, Modifiers::none());
+    let preview = ed
+        .view
+        .update(ed.cx, |view, _| view.ai_document().unwrap().to_plain_text());
+    assert!(preview.contains("ONE") && preview.contains("two"));
+    ed.assert(blocks![p!["one<a>"], p!["two"]]);
+}
+
+#[gpui::test]
+fn starting_an_ai_session_cancels_a_block_drag(cx: &mut TestAppContext) {
+    let (mut ed, _) = with_model(cx, blocks![p!["one<a>"], p!["two"]], |blocks| {
+        vec![update(blocks[0], "ONE")]
+    });
+    let (first_row, second_row) = ed.view.update(ed.cx, |view, _| {
+        let blocks = view.editor().document().blocks();
+        (
+            view.text_bounds(blocks[0]).unwrap(),
+            view.text_bounds(blocks[1]).unwrap(),
+        )
+    });
+    ed.cx
+        .simulate_mouse_move(first_row.center(), None, Modifiers::none());
+    assert!(shows(&mut ed, "side-handle"));
+    let handle = ed.cx.debug_bounds("side-handle").unwrap().center();
+    ed.cx
+        .simulate_mouse_down(handle, MouseButton::Left, Modifiers::none());
+    let destination = point(second_row.left() + px(4.), second_row.bottom() - px(2.));
+    ed.cx
+        .simulate_mouse_move(destination, Some(MouseButton::Left), Modifiers::none());
+    assert!(shows(&mut ed, "drop-line"));
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Rewrite", cx));
+    assert!(shows(&mut ed, "ai-cursor"));
+    ed.cx
+        .simulate_mouse_up(destination, MouseButton::Left, Modifiers::none());
+    assert!(!shows(&mut ed, "drop-line"));
+    assert_eq!(first(&mut ed), ("one".into(), Some("ONE".into())));
 }
 
 /// The text of the first block, in the document and as the view shows it.

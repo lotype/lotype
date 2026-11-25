@@ -78,6 +78,9 @@ impl EditorView {
     }
 
     fn accept_slash(&mut self, item: &SlashItem) {
+        if self.ai.session.is_some() {
+            return;
+        }
         match item.key.as_str() {
             "ai" => self.ai_from_slash(),
             _ => drop(self.editor.accept_slash_item(item)),

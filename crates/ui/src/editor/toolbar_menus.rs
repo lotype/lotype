@@ -79,6 +79,9 @@ impl EditorView {
                 let svg = icons::entry(&item.key).unwrap_or(icons::PARAGRAPH);
                 let title = item.title.clone();
                 let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                    if view.ai.session.is_some() {
+                        return;
+                    }
                     view.toolbar.menu = None;
                     view.editor.set_block(&item.block_type, &item.attrs).ok();
                     view.selection_changed(window, cx);

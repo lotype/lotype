@@ -146,6 +146,9 @@ impl EditorView {
         let marks: Vec<_> = marks
             .map(|(name, svg, tip)| {
                 let click = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                    if view.ai.session.is_some() {
+                        return;
+                    }
                     view.editor.toggle_mark(name).ok();
                     view.selection_changed(window, cx);
                 });
@@ -157,6 +160,9 @@ impl EditorView {
         let alignment = doc.alignment(first);
         let alignments = ALIGNMENTS.into_iter().map(|(align, name, svg, tip)| {
             let click = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                if view.ai.session.is_some() {
+                    return;
+                }
                 view.editor.set_alignment(align).ok();
                 view.selection_changed(window, cx);
             });
@@ -169,10 +175,16 @@ impl EditorView {
             Vec::new()
         };
         let nest = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             view.editor.indent().ok();
             view.selection_changed(window, cx);
         });
         let unnest = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             view.editor.outdent().ok();
             view.selection_changed(window, cx);
         });

@@ -442,10 +442,13 @@ impl Render for EditorView {
                 cover.block_mouse_except_scroll()
             }))
             .children(self.ai_bar(window, cx))
-            .children(self.slash_menu(window, cx))
-            .children(self.toolbar(window, cx))
-            .children(self.link_field(window, cx))
-            .children(self.link_toolbar(window, cx))
+            .when(self.ai.session.is_none(), |editor| {
+                editor
+                    .children(self.slash_menu(window, cx))
+                    .children(self.toolbar(window, cx))
+                    .children(self.link_field(window, cx))
+                    .children(self.link_toolbar(window, cx))
+            })
             .child(window_handlers(cx.entity(), self.focus.clone()))
     }
 }

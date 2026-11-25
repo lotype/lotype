@@ -118,6 +118,7 @@ impl EditorView {
             let Some(copy) = copy_of(session.document()) else {
                 return;
             };
+            self.dismiss_edit_controls();
             let transcript = std::mem::take(&mut self.ai.transcript);
             self.ai.session = Some(session.with_transcript(transcript));
             self.ai.main = Some(std::mem::replace(&mut self.editor, copy));
@@ -127,6 +128,20 @@ impl EditorView {
             self.ai_send(request, cx);
         }
         cx.notify();
+    }
+
+    /// Drops editing popups, delayed callbacks and gestures before showing the draft.
+    fn dismiss_edit_controls(&mut self) {
+        self.side_menu = Default::default();
+        self.slash = Default::default();
+        self.toolbar = Default::default();
+        self.links = Default::default();
+        self.alert_menu = None;
+        self.table_menu = None;
+        self.table_hover = None;
+        self.block_range = None;
+        self.drag_anchor = None;
+        self.dragging = false;
     }
 
     /// Sends a request and reads its answer, an event at a time.

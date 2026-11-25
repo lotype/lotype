@@ -208,6 +208,9 @@ impl EditorView {
         let Some(dragged) = self.side_menu.dragged.take() else {
             return false;
         };
+        if self.ai.session.is_some() {
+            return false;
+        }
         let block = dragged.block;
         match dragged.target {
             Some((target, after)) if target != block => self.drop_block(block, target, after),
@@ -239,6 +242,9 @@ impl EditorView {
     /// Adds an empty paragraph below `block`, or takes `block` where it is
     /// one, and opens the slash menu in it.
     fn add_below(&mut self, block: BlockId) {
+        if self.ai.session.is_some() {
+            return;
+        }
         let placed = self.editor.add_text_block_after(block);
         if placed.is_ok() {
             self.editor.insert_text("/").ok();
@@ -256,7 +262,8 @@ impl EditorView {
         // The block held, or whose menu is open, keeps its side menu.
         let held = self.side_menu.dragged.as_ref().map(|dragged| dragged.block);
         let kept = held.or(self.side_menu.menu);
-        if self.dragging
+        if self.ai.session.is_some()
+            || self.dragging
             || kept.unwrap_or(block) != block
             || self.side_menu.hovered != Some(block) && kept.is_none()
         {
@@ -268,6 +275,9 @@ impl EditorView {
             view.selection_changed(window, cx);
         });
         let hold = cx.listener(move |view: &mut Self, event: &MouseDownEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             cx.stop_propagation();
             view.press(window, cx);
             let menu = &mut view.side_menu;

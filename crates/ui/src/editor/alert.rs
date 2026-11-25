@@ -144,6 +144,9 @@ impl EditorView {
             let (title, svg) = (look.title, icon_of(kind));
             let color = look.color.of(dark);
             let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
+                if view.ai.session.is_some() {
+                    return;
+                }
                 view.alert_menu = None;
                 view.editor.set_alert_kind(block, kind).ok();
                 cx.notify();

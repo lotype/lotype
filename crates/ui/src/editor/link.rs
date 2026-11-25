@@ -68,6 +68,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai.session.is_some() {
+            return;
+        }
         let input = cx.new(|cx| {
             let input = InputState::new(window, cx).placeholder("https://");
             input.default_value(url.to_owned())
@@ -193,6 +196,9 @@ impl EditorView {
             }
         });
         let remove = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             let Some((from, to, _)) = view.link_at_caret() else {
                 return;
             };

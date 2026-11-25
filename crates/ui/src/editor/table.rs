@@ -124,14 +124,20 @@ impl EditorView {
             }
             grid = grid.child(tr);
         }
-        let hovered = self.table_hover == Some(table);
+        let hovered = self.ai.session.is_none() && self.table_hover == Some(table);
         let add_row = cx.listener(move |view: &mut Self, _: &MouseDownEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             cx.stop_propagation();
             view.press(window, cx);
             view.editor.add_row(table, row_count).ok();
             view.selection_changed(window, cx);
         });
         let add_column = cx.listener(move |view: &mut Self, _: &MouseDownEvent, window, cx| {
+            if view.ai.session.is_some() {
+                return;
+            }
             cx.stop_propagation();
             view.press(window, cx);
             view.editor.add_column(table, column_count).ok();
@@ -193,6 +199,9 @@ impl EditorView {
         let menu = (self.table_menu == Some(cell)).then(|| {
             let items = EDITS.iter().enumerate().map(|(at, &(edit, name, title))| {
                 let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                    if view.ai.session.is_some() {
+                        return;
+                    }
                     view.table_menu = None;
                     view.press(window, cx);
                     view.edit_table(cell, edit);

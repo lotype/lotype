@@ -17,6 +17,9 @@ impl EditorView {
     /// Deletes the selected blocks where `block` is one of them, or else
     /// `block` alone, as BlockNote does.
     fn delete_from_menu(&mut self, block: BlockId) {
+        if self.ai.session.is_some() {
+            return;
+        }
         let selected = matches!(
             self.editor.selection(),
             Some(Selection::Blocks(blocks)) if blocks.contains(&block)
@@ -121,6 +124,9 @@ pub(super) fn swatch_row(
         let pick = pick.clone();
         let click = cx.listener(
             move |view: &mut EditorView, _: &MouseDownEvent, window, cx| {
+                if view.ai.session.is_some() {
+                    return;
+                }
                 cx.stop_propagation();
                 pick(view, name);
                 view.selection_changed(window, cx);

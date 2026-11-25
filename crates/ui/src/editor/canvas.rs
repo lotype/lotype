@@ -344,8 +344,10 @@ impl EditorView {
                 }
                 let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    view.editor.set_checked(block, !checked).ok();
-                    cx.notify();
+                    if view.ai.session.is_none() {
+                        view.editor.set_checked(block, !checked).ok();
+                        cx.notify();
+                    }
                 });
                 slot.child(check.on_mouse_down(MouseButton::Left, click))
             }
