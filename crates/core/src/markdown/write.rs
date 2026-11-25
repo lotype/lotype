@@ -198,6 +198,11 @@ fn inline(spans: &[Span]) -> String {
     // that starts emphasis right there must be the other one, or the two
     // would read as one run.
     let mut closed = None;
+    // The sign that ended emphasis inside emphasis still open. One that
+    // starts emphasis again in there must be the other one too: with text
+    // between, a lone sign there can both open and close, and Markdown
+    // pairs it with the wrong one.
+    let mut inner = None;
     // Where in `out` emphasis signs start, and where the text after them does.
     let mut started: Vec<(usize, usize)> = Vec::new();
     for span in spans {
@@ -229,10 +234,16 @@ fn inline(spans: &[Span]) -> String {
                 let inside = out.chars().next_back();
                 guard = sign == Some('_') || inside.is_none_or(|c| !c.is_alphanumeric());
                 closed = sign.filter(|sign| *sign != '~');
+                if open.iter().any(|outer| outer.close.starts_with(['*', '_'])) {
+                    inner = inner.or(closed);
+                }
             } else {
                 (guard, closed) = (false, None);
             }
             out.push_str(&mark.close);
+        }
+        if open.is_empty() {
+            inner = None;
         }
 
         space.push_str(&span.text[..lead]);
@@ -247,7 +258,7 @@ fn inline(spans: &[Span]) -> String {
         }
 
         let text = if on("code") { code(core) } else { escape(core) };
-        let underscores = closed == Some('*');
+        let underscores = closed == Some('*') || inner == Some('*');
         let new = &wanted[kept..];
         let emphasis = new.first().is_some_and(|first| !first.starts_with("link "));
         if emphasis {

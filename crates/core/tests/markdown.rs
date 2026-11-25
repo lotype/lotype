@@ -519,3 +519,21 @@ fn a_line_break_in_code_is_written_between_two_spans() {
     let back = read(&doc.to_markdown());
     assert_eq!(back.text(back.blocks()[0]).unwrap(), "a\nb");
 }
+
+#[test]
+fn emphasis_closed_and_opened_again_inside_bold_reads_back() {
+    let doc = rich(
+        "paragraph",
+        &[
+            ("_", &["bold", "italic"]),
+            ("é", &["bold"]),
+            (".", &["bold", "italic"]),
+        ],
+    );
+    assert_eq!(
+        marked(&read(&doc.to_markdown())),
+        marked(&doc),
+        "{:?}",
+        doc.to_markdown()
+    );
+}
