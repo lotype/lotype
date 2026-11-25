@@ -1,15 +1,12 @@
 //! The built-in block types with the attributes that make each what it is,
 //! to turn blocks into and to make them without spelling a name or a key.
 
-use crate::attrs::{alert, attr, block};
+use crate::attrs::{attr, block};
 use crate::schema::MAX_HEADING_LEVEL;
-use crate::{BlockId, Command, Document, Editor, Result, Value};
+use crate::{AlertKind, BlockId, Command, Document, Editor, Result, Value};
 
 /// A built-in block type, with what makes a block of it what it is.
-///
-/// Two kinds are equal when they are written the same: `Alert("TIP")` and
-/// `Alert("tip")` name the same alert and are not equal. [`BlockKind::of`]
-/// gives a kind as the document reads it.
+/// [`BlockKind::of`] gives a block's kind as the document reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BlockKind {
@@ -20,9 +17,8 @@ pub enum BlockKind {
     Heading(i64),
     /// A quote, its own text and the blocks in it.
     Quote,
-    /// One of GitHub's alerts, of a kind in [`alert::KINDS`]; for a kind
-    /// read at run time, `alert::style(kind).kind` gives the one it names.
-    Alert(&'static str),
+    /// One of GitHub's alerts, of a kind.
+    Alert(AlertKind),
     /// An item of a bulleted list.
     BulletListItem,
     /// An item of a numbered list, counted along its siblings.
@@ -93,7 +89,7 @@ impl BlockKind {
                     (*level).clamp(1, MAX_HEADING_LEVEL).into(),
                 )]
             }
-            Self::Alert(kind) => vec![(attr::KIND.to_owned(), alert::style(kind).kind.into())],
+            Self::Alert(kind) => vec![(attr::KIND.to_owned(), kind.name().into())],
             Self::CheckListItem { checked } => vec![(attr::CHECKED.to_owned(), (*checked).into())],
             Self::CodeBlock { language } => language
                 .iter()
@@ -116,7 +112,7 @@ impl BlockKind {
     /// type the built-in schema lacks.
     ///
     /// The kind is as the document reads it: a heading's level within its
-    /// range, an alert's kind as one of [`alert::KINDS`], no language for
+    /// range, an alert's kind a note where no one knows it, no language for
     /// an empty one. What is no part of a kind is left out, as the number a
     /// numbered list starts at, so a block made of it starts without.
     pub fn of(doc: &Document, block: BlockId) -> Option<Self> {

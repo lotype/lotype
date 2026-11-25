@@ -4,7 +4,7 @@ use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag,
 
 use super::PAGE_BREAK;
 use crate::{
-    BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, alert, attr, block,
+    AlertKind, BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, attr, block,
 };
 
 /// A block to make.
@@ -290,13 +290,13 @@ impl Reader {
             }
             Container::Quote(Some(kind)) => {
                 let kind = match kind {
-                    BlockQuoteKind::Note => alert::NOTE,
-                    BlockQuoteKind::Tip => alert::TIP,
-                    BlockQuoteKind::Important => alert::IMPORTANT,
-                    BlockQuoteKind::Warning => alert::WARNING,
-                    BlockQuoteKind::Caution => alert::CAUTION,
+                    BlockQuoteKind::Note => AlertKind::Note,
+                    BlockQuoteKind::Tip => AlertKind::Tip,
+                    BlockQuoteKind::Important => AlertKind::Important,
+                    BlockQuoteKind::Warning => AlertKind::Warning,
+                    BlockQuoteKind::Caution => AlertKind::Caution,
                 };
-                let mut node = Node::new(block::ALERT).with(attr::KIND, kind);
+                let mut node = Node::new(block::ALERT).with(attr::KIND, kind.name());
                 node.children = nodes;
                 self.push(node);
             }

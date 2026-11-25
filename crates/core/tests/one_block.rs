@@ -109,20 +109,61 @@ fn writing_starts_in_an_empty_document_only() {
 
 #[test]
 fn an_alert_kind_is_one_of_five_and_an_unknown_one_reads_as_a_note() {
-    use lotype_core::{Error, alert};
+    use lotype_core::{AlertKind, Error};
     let tip = block("alert", vec![p!["x"].into()]).attr(attr::KIND, "TIP");
     let other = block("alert", vec![p!["y"].into()]).attr(attr::KIND, "rumour");
     let mut ed = editor(blocks![tip, other]);
     let blocks = ed.document().blocks();
     let (tip, other) = (blocks[0], blocks[2]);
-    assert_eq!(ed.document().alert_kind(tip), alert::TIP);
-    assert_eq!(ed.document().alert_kind(other), alert::NOTE);
-    assert!(matches!(
-        ed.set_alert_kind(tip, "rumour"),
-        Err(Error::UnknownAlertKind(_))
-    ));
-    ed.set_alert_kind(tip, alert::CAUTION).unwrap();
+    assert_eq!(ed.document().alert_kind(tip), AlertKind::Tip);
+    assert_eq!(ed.document().alert_kind(other), AlertKind::Note);
+    ed.set_alert_kind(tip, AlertKind::Caution).unwrap();
     assert!(ed.document().to_markdown().starts_with("> [!CAUTION]"));
+    // Only an alert has a kind, and only a check list item a box.
+    let inside = blocks[1];
+    assert!(matches!(
+        ed.set_alert_kind(inside, AlertKind::Tip),
+        Err(Error::NotOfType("alert"))
+    ));
+    assert!(matches!(
+        ed.set_checked(inside, true),
+        Err(Error::NotOfType("check_list_item"))
+    ));
+    assert_eq!(outline(ed.document(), None).matches("kind=").count(), 2);
+}
+
+#[test]
+fn a_table_and_its_rows_take_no_color() {
+    use lotype_core::BlockKind;
+    let mut doc = Document::new(Schema::builtin());
+    let table = doc.insert_table(None, 0, 2, 2).unwrap();
+    let row = doc.children(Some(table)).unwrap()[0];
+    let mut ed = Editor::new(doc);
+    for block in [table, row] {
+        ed.set_block_color(block, BlockColor::Background, Some("red"))
+            .unwrap();
+        assert_eq!(
+            ed.document().attr(block, attr::BACKGROUND_COLOR).unwrap(),
+            None
+        );
+    }
+    assert_eq!(BlockKind::of(ed.document(), table), None);
+}
+
+#[test]
+fn numbered_items_count_on_from_where_their_list_starts() {
+    let mut doc = Document::new(Schema::builtin());
+    doc.insert_markdown(None, 0, "3. a\n4. b\n\n- c\n").unwrap();
+    let blocks = doc.blocks();
+    assert_eq!(doc.list_number(blocks[0], None), Some(3));
+    assert_eq!(doc.list_number(blocks[1], Some(3)), Some(4));
+    assert_eq!(
+        doc.list_number(blocks[1], Some(999_999_999)),
+        Some(999_999_999)
+    );
+    assert_eq!(doc.list_number(blocks[2], Some(4)), None);
+    doc.set_attr(blocks[0], attr::START, -5).unwrap();
+    assert_eq!(doc.list_number(blocks[0], None), Some(0));
 }
 
 #[test]
@@ -163,11 +204,15 @@ fn the_block_types_a_toolbar_offers_describe_the_blocks_of_them() {
 
 #[test]
 fn every_alert_kind_has_githubs_style_and_an_unknown_one_a_notes() {
-    use lotype_core::alert;
+    use lotype_core::{AlertKind, alert};
     let kinds: Vec<_> = alert::STYLES.iter().map(|style| style.kind).collect();
     assert_eq!(kinds, alert::KINDS);
-    assert_eq!(alert::style("rumour").kind, alert::NOTE);
-    assert_eq!(alert::style("TIP").title, "Tip");
+    for kind in alert::KINDS {
+        assert_eq!(kind.style().kind, kind);
+        assert_eq!(AlertKind::parse(&kind.name().to_uppercase()), Some(kind));
+    }
+    assert_eq!(AlertKind::parse("rumour"), None);
+    assert_eq!(AlertKind::Tip.style().title, "Tip");
     let hex = |value: &str| {
         value.len() == 7
             && value.starts_with('#')

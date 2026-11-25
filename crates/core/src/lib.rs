@@ -31,6 +31,7 @@ mod trash;
 mod value;
 
 pub use atom::{Atom, OBJECT};
+pub use attrs::alert::AlertKind;
 pub use attrs::{Align, BlockColor, COLOR_NAMES, alert, attr, block, mark};
 pub use block_kind::BlockKind;
 pub use collab::Version;

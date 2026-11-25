@@ -3,6 +3,7 @@
 
 use crate::schema::MAX_HEADING_LEVEL;
 use crate::{BlockId, Document, Value};
+use alert::AlertKind;
 
 /// The names of the built-in block types, as [`Schema::builtin`](crate::Schema::builtin)
 /// has them. [`BlockKind`](crate::BlockKind) names them with the attributes
@@ -51,7 +52,7 @@ pub mod attr {
     pub const CHECKED: &str = "checked";
     /// The number a numbered list starts at, on its first item.
     pub const START: &str = "start";
-    /// An alert's kind, one of [`alert::KINDS`](crate::alert::KINDS).
+    /// An alert's kind, the name of an [`AlertKind`](crate::AlertKind).
     pub const KIND: &str = "kind";
     /// A code block's language.
     pub const LANGUAGE: &str = "language";
@@ -72,18 +73,51 @@ pub mod attr {
 /// The kinds of an alert, and how GitHub draws them, as GitHub Flavored
 /// Markdown's stylesheet has them.
 pub mod alert {
-    /// Information the reader should notice.
-    pub const NOTE: &str = "note";
-    /// Advice to do something better or more easily.
-    pub const TIP: &str = "tip";
-    /// Information the reader needs to succeed.
-    pub const IMPORTANT: &str = "important";
-    /// Something that needs attention now, to avoid a problem.
-    pub const WARNING: &str = "warning";
-    /// A risk or a bad outcome of an action.
-    pub const CAUTION: &str = "caution";
-    /// All of them, the note first, which a kind no one knows is read as.
-    pub const KINDS: [&str; 5] = [NOTE, TIP, IMPORTANT, WARNING, CAUTION];
+    /// The kind of an alert, as GitHub Flavored Markdown has them.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    pub enum AlertKind {
+        /// Information the reader should notice. A kind no one knows reads
+        /// as this.
+        #[default]
+        Note,
+        /// Advice to do something better or more easily.
+        Tip,
+        /// Information the reader needs to succeed.
+        Important,
+        /// Something that needs attention now, to avoid a problem.
+        Warning,
+        /// A risk or a bad outcome of an action.
+        Caution,
+    }
+
+    /// All of them, the note first.
+    pub const KINDS: [AlertKind; 5] = [
+        AlertKind::Note,
+        AlertKind::Tip,
+        AlertKind::Important,
+        AlertKind::Warning,
+        AlertKind::Caution,
+    ];
+
+    impl AlertKind {
+        /// The name it is stored under, as `tip`.
+        pub fn name(self) -> &'static str {
+            self.style().name
+        }
+
+        /// The kind `name` names, in any case, as `TIP` or `tip`.
+        pub fn parse(name: &str) -> Option<Self> {
+            let style = STYLES
+                .iter()
+                .find(|style| style.name.eq_ignore_ascii_case(name));
+            style.map(|style| style.kind)
+        }
+
+        /// How GitHub draws an alert of the kind.
+        pub fn style(self) -> &'static Style {
+            &STYLES[self as usize]
+        }
+    }
 
     /// A color GitHub draws alerts in: a Primer token, with its value in
     /// the light and in the dark color scheme, as hex.
@@ -101,8 +135,10 @@ pub mod alert {
     /// bar on its left, and that of its title and icon.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Style {
-        /// The kind, one of [`KINDS`].
-        pub kind: &'static str,
+        /// The kind.
+        pub kind: AlertKind,
+        /// The name the kind is stored under.
+        pub name: &'static str,
         /// The title GitHub gives an alert of the kind.
         pub title: &'static str,
         /// The color of the bar on the alert's left.
@@ -119,45 +155,45 @@ pub mod alert {
     /// `github-markdown-css`.
     pub const STYLES: [Style; 5] = [
         Style {
-            kind: NOTE,
+            kind: AlertKind::Note,
+            name: "note",
             title: "Note",
             border: color("--borderColor-accent-emphasis", "#0969da", "#1f6feb"),
             color: color("--fgColor-accent", "#0969da", "#4493f8"),
         },
         Style {
-            kind: TIP,
+            kind: AlertKind::Tip,
+            name: "tip",
             title: "Tip",
             border: color("--borderColor-success-emphasis", "#1a7f37", "#238636"),
             color: color("--fgColor-success", "#1a7f37", "#3fb950"),
         },
         Style {
-            kind: IMPORTANT,
+            kind: AlertKind::Important,
+            name: "important",
             title: "Important",
             border: color("--borderColor-done-emphasis", "#8250df", "#8957e5"),
             color: color("--fgColor-done", "#8250df", "#ab7df8"),
         },
         Style {
-            kind: WARNING,
+            kind: AlertKind::Warning,
+            name: "warning",
             title: "Warning",
             border: color("--borderColor-attention-emphasis", "#9a6700", "#9e6a03"),
             color: color("--fgColor-attention", "#9a6700", "#d29922"),
         },
         Style {
-            kind: CAUTION,
+            kind: AlertKind::Caution,
+            name: "caution",
             title: "Caution",
             border: color("--borderColor-danger-emphasis", "#cf222e", "#da3633"),
             color: color("--fgColor-danger", "#d1242f", "#f85149"),
         },
     ];
-
-    /// The style of an alert of `kind`, a note's for a kind no one knows.
-    pub fn style(kind: &str) -> &'static Style {
-        let known = STYLES
-            .iter()
-            .find(|style| style.kind.eq_ignore_ascii_case(kind));
-        known.unwrap_or(&STYLES[0])
-    }
 }
+
+/// The largest number a numbered list item shows, CommonMark's.
+pub(crate) const LARGEST_LIST_NUMBER: i64 = 999_999_999;
 
 /// The named colors of a block and of text, BlockNote's, so that documents
 /// written with it look the same. A view picks how each looks.
@@ -277,9 +313,25 @@ impl Document {
     }
 
     /// An alert's kind, a note for a kind no one knows.
-    pub fn alert_kind(&self, block: BlockId) -> &'static str {
+    pub fn alert_kind(&self, block: BlockId) -> AlertKind {
         let kind = self.text_attr(block, attr::KIND).unwrap_or_default();
-        alert::style(&kind).kind
+        AlertKind::parse(&kind).unwrap_or_default()
+    }
+
+    /// The number a numbered list item shows, given `before`, that of the
+    /// sibling right before it where that is one too: one more than that,
+    /// or else the number its list starts at, [`attr::START`] or 1, within
+    /// 0 to CommonMark's largest. `None` for a block that is no numbered
+    /// list item.
+    pub fn list_number(&self, block: BlockId, before: Option<i64>) -> Option<i64> {
+        if self.block_type(block).ok()? != block::NUMBERED_LIST_ITEM {
+            return None;
+        }
+        Some(match (before, self.attr(block, attr::START)) {
+            (Some(before), _) => before.saturating_add(1).min(LARGEST_LIST_NUMBER),
+            (None, Ok(Some(Value::Int(start)))) => start.clamp(0, LARGEST_LIST_NUMBER),
+            (None, _) => 1,
+        })
     }
 
     /// An attribute that is text, as an image's address or a file's name,

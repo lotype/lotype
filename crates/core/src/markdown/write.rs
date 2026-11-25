@@ -5,9 +5,6 @@ use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value, attr, block};
 /// start with.
 type Item = (BlockId, String, String, String);
 
-/// The largest number CommonMark reads at the start of a list item.
-const LARGEST_NUMBER: i64 = 999_999_999;
-
 impl Document {
     /// The document as Markdown: CommonMark with GitHub's alerts, task lists
     /// and strikethrough.
@@ -70,12 +67,7 @@ impl Document {
         let children = self.children(parent).unwrap_or_default();
         let items = children.into_iter().map(|block| {
             let block_type = self.block_type(block).unwrap_or_default();
-            let numbered = block_type == block::NUMBERED_LIST_ITEM;
-            number = numbered.then(|| match (number, self.attr(block, attr::START)) {
-                (Some(before), _) => LARGEST_NUMBER.min(before + 1),
-                (None, Ok(Some(Value::Int(start)))) => start.clamp(0, LARGEST_NUMBER),
-                (None, _) => 1,
-            });
+            number = self.list_number(block, number);
             let marker = match block_type.as_str() {
                 block::BULLET_LIST_ITEM | block::TOGGLE_LIST_ITEM => "- ".to_owned(),
                 block::NUMBERED_LIST_ITEM => format!("{}. ", number.unwrap_or(1)),
@@ -111,7 +103,7 @@ impl Document {
         Some(match block_type.as_str() {
             block::DIVIDER => "---".to_owned(),
             block::PAGE_BREAK => PAGE_BREAK.to_owned(),
-            block::ALERT => format!("[!{}]", self.alert_kind(block).to_uppercase()),
+            block::ALERT => format!("[!{}]", self.alert_kind(block).name().to_uppercase()),
             block::IMAGE => format!(
                 "![{}]({})",
                 escape(&attr(attr::CAPTION)),

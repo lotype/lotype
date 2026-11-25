@@ -3,7 +3,8 @@ use std::ops::Range;
 use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
 use crate::{
-    BlockId, Document, Editor, Error, Pos, Result, Role, Selection, Value, alert, attr, block, mark,
+    AlertKind, BlockId, Document, Editor, Error, Pos, Result, Role, Selection, Value, attr, block,
+    mark,
 };
 
 /// An entry of the slash menu: a block to insert. A paragraph is none: it
@@ -147,7 +148,7 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             &["callout", "note", "tip", "important", "warning", "caution"],
             block::ALERT,
         )
-        .with(attr::KIND, alert::NOTE),
+        .with(attr::KIND, AlertKind::Note.name()),
         basic(
             "divider",
             "Divider",

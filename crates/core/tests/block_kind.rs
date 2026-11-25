@@ -1,5 +1,5 @@
 use lotype_core::test_support::{editor, outline};
-use lotype_core::{BlockKind, Document, Schema, alert, blocks, p};
+use lotype_core::{AlertKind, BlockKind, Document, Schema, blocks, p};
 
 #[test]
 fn a_block_turns_into_a_kind_and_reads_back_as_it() {
@@ -34,14 +34,11 @@ fn blocks_of_a_kind_are_made_with_their_attributes() {
         caption: String::new(),
     };
     let made = doc.insert_kind(None, 0, &image).unwrap();
-    doc.insert_kind(None, 1, &BlockKind::Alert(alert::WARNING))
+    doc.insert_kind(None, 1, &BlockKind::Alert(AlertKind::Warning))
         .unwrap();
     assert_eq!(
         outline(&doc, None),
         "image url=https://x.y/a.png\nalert kind=warning\n"
     );
     assert_eq!(BlockKind::of(&doc, made), Some(image));
-    // A kind no alert is of is a note.
-    let note = BlockKind::Alert("rumour").attrs();
-    assert_eq!(note[0].1, alert::NOTE.into());
 }

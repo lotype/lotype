@@ -25,8 +25,9 @@ pub enum Error {
     NoInlineContent,
     /// The schema names no block for text, as a paragraph, to make one of.
     NoTextBlock,
-    /// No alert is of the kind named here.
-    UnknownAlertKind(String),
+    /// The command is for blocks of the type named here, and the block is
+    /// of another.
+    NotOfType(&'static str),
     /// The block type named here cannot have child blocks.
     ChildrenNotAllowed(String),
     /// The block type named here goes only at the top level, in no block.
@@ -88,7 +89,7 @@ impl fmt::Display for Error {
             Self::InvalidBlockId(text) => write!(f, "`{text}` is not a block id"),
             Self::NoInlineContent => f.write_str("block has no inline content"),
             Self::NoTextBlock => f.write_str("the schema has no block for text"),
-            Self::UnknownAlertKind(kind) => write!(f, "no alert is of kind `{kind}`"),
+            Self::NotOfType(name) => write!(f, "the block is no `{name}`"),
             Self::ChildrenNotAllowed(name) => {
                 write!(f, "block type `{name}` cannot have children")
             }

@@ -3,12 +3,22 @@
 //! undo step, so that no view writes a block's attributes itself.
 
 use super::Editor;
-use crate::attrs::{Align, BlockColor, alert, attr};
-use crate::{BlockId, Error, Pos, Result, Selection};
+use crate::attrs::{Align, BlockColor, attr, block as types};
+use crate::{AlertKind, BlockId, Document, Error, Pos, Result, Selection};
+
+/// Fails unless `block` is of the type `name`.
+fn check_type(doc: &Document, block: BlockId, name: &'static str) -> Result<()> {
+    if doc.block_type(block)? == name {
+        Ok(())
+    } else {
+        Err(Error::NotOfType(name))
+    }
+}
 
 impl Editor {
-    /// Checks or unchecks a check list item.
+    /// Checks or unchecks a check list item; fails for another block.
     pub fn set_checked(&mut self, block: BlockId, checked: bool) -> Result<()> {
+        check_type(&self.doc, block, types::CHECK_LIST_ITEM)?;
         self.apply(|doc, selection| {
             doc.set_attr(block, attr::CHECKED, checked)?;
             Ok(selection.cloned())
@@ -16,7 +26,8 @@ impl Editor {
     }
 
     /// Gives a block one of its colors by name, or takes it off for `None`;
-    /// a type that takes no style gets none.
+    /// a type that takes no style gets none, nor does a table or a part of
+    /// one, as [`Editor::set_block_attr`] leaves them.
     pub fn set_block_color(
         &mut self,
         block: BlockId,
@@ -24,7 +35,7 @@ impl Editor {
         name: Option<&str>,
     ) -> Result<()> {
         self.apply(|doc, selection| {
-            if !doc.spec(block)?.takes_style() {
+            if !doc.spec(block)?.takes_style() || doc.is_table_part(block) {
                 return Ok(selection.cloned());
             }
             match name {
@@ -40,13 +51,11 @@ impl Editor {
         self.set_block_attr(attr::TEXT_ALIGNMENT, align.value())
     }
 
-    /// Sets an alert's kind, one of [`alert::KINDS`].
-    pub fn set_alert_kind(&mut self, block: BlockId, kind: &str) -> Result<()> {
-        if !alert::KINDS.contains(&kind) {
-            return Err(Error::UnknownAlertKind(kind.to_owned()));
-        }
+    /// Sets an alert's kind; fails for a block that is no alert.
+    pub fn set_alert_kind(&mut self, block: BlockId, kind: AlertKind) -> Result<()> {
+        check_type(&self.doc, block, types::ALERT)?;
         self.apply(|doc, selection| {
-            doc.set_attr(block, attr::KIND, kind)?;
+            doc.set_attr(block, attr::KIND, kind.name())?;
             Ok(selection.cloned())
         })
     }
