@@ -7,7 +7,7 @@ use gpui::{
 };
 use gpui_component::list::ListItem;
 use gpui_component::{Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, Document, attr};
+use lotype_core::{BlockId, Document, alert};
 
 use super::EditorView;
 use crate::icons::{self, icon};
@@ -15,19 +15,20 @@ use crate::icons::{self, icon};
 /// A kind of alert: its name in the document, its title, colour and icon.
 type Kind = (&'static str, &'static str, u32, &'static [u8]);
 
-/// GitHub's five, the first the one a kind it does not know is shown as.
-const KINDS: [Kind; 5] = [
-    ("note", "Note", 0x0969da, icons::ALERT),
-    ("tip", "Tip", 0x1a7f37, icons::TIP),
-    ("important", "Important", 0x8250df, icons::IMPORTANT),
-    ("warning", "Warning", 0x9a6700, icons::WARNING),
-    ("caution", "Caution", 0xd1242f, icons::CAUTION),
-];
+/// How an alert of a kind looks, as GitHub draws it.
+fn look(kind: &'static str) -> Kind {
+    let (title, color, svg) = match kind {
+        alert::TIP => ("Tip", 0x1a7f37, icons::TIP),
+        alert::IMPORTANT => ("Important", 0x8250df, icons::IMPORTANT),
+        alert::WARNING => ("Warning", 0x9a6700, icons::WARNING),
+        alert::CAUTION => ("Caution", 0xd1242f, icons::CAUTION),
+        _ => ("Note", 0x0969da, icons::ALERT),
+    };
+    (kind, title, color, svg)
+}
 
 fn kind(doc: &Document, block: BlockId) -> Kind {
-    let name = doc.text_of(block, attr::KIND);
-    let known = KINDS.iter().find(|kind| kind.0.eq_ignore_ascii_case(&name));
-    *known.unwrap_or(&KINDS[0])
+    look(doc.alert_kind(block))
 }
 
 /// The colour of the alert's bar and title.
@@ -63,24 +64,27 @@ impl EditorView {
     }
 
     fn alert_menu(&self, block: BlockId, current: &str, cx: &mut Context<Self>) -> AnyElement {
-        let items = KINDS.iter().map(|&(name, title, color, svg)| {
-            let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
-                view.alert_menu = None;
-                view.editor.set_alert_kind(block, name).ok();
-                cx.notify();
+        let items = alert::KINDS
+            .into_iter()
+            .map(look)
+            .map(|(name, title, color, svg)| {
+                let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
+                    view.alert_menu = None;
+                    view.editor.set_alert_kind(block, name).ok();
+                    cx.notify();
+                });
+                let row = h_flex()
+                    .w_full()
+                    .gap_2()
+                    .text_sm()
+                    .items_center()
+                    .child(icon(svg).text_color(rgb(color)))
+                    .child(div().flex_1().child(title))
+                    .children((name == current).then(|| icon(icons::CHECK)));
+                div()
+                    .debug_selector(move || format!("alert-kind-{name}"))
+                    .child(ListItem::new(name).child(row).on_click(choose))
             });
-            let row = h_flex()
-                .w_full()
-                .gap_2()
-                .text_sm()
-                .items_center()
-                .child(icon(svg).text_color(rgb(color)))
-                .child(div().flex_1().child(title))
-                .children((name == current).then(|| icon(icons::CHECK)));
-            div()
-                .debug_selector(move || format!("alert-kind-{name}"))
-                .child(ListItem::new(name).child(row).on_click(choose))
-        });
         let close = cx.listener(|view: &mut Self, _: &MouseDownEvent, _, cx| {
             if view.alert_menu.take().is_some() {
                 cx.notify();

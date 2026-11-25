@@ -8,19 +8,22 @@ use lotype_core::{Span, Value, mark};
 
 pub(crate) const CODE_FONT: &str = "Menlo";
 
-/// BlockNote's named colors, text then background, so that documents
-/// written with it look the same.
-pub(crate) const COLORS: [(&str, u32, u32); 9] = [
-    ("gray", 0x9b9a97, 0xebeced),
-    ("brown", 0x64473a, 0xe9e5e3),
-    ("red", 0xe03e3e, 0xfbe4e4),
-    ("orange", 0xd9730d, 0xf6e9d9),
-    ("yellow", 0xdfab01, 0xfbf3db),
-    ("green", 0x4d6461, 0xddedea),
-    ("blue", 0x0b6e99, 0xddebf1),
-    ("purple", 0x6940a5, 0xeae4f2),
-    ("pink", 0xad1a72, 0xf4dfeb),
-];
+/// How the core's named colors look, text then background, as BlockNote
+/// draws them, so that documents written with it look the same.
+fn named(name: &str) -> Option<(u32, u32)> {
+    Some(match name {
+        "gray" => (0x9b9a97, 0xebeced),
+        "brown" => (0x64473a, 0xe9e5e3),
+        "red" => (0xe03e3e, 0xfbe4e4),
+        "orange" => (0xd9730d, 0xf6e9d9),
+        "yellow" => (0xdfab01, 0xfbf3db),
+        "green" => (0x4d6461, 0xddedea),
+        "blue" => (0x0b6e99, 0xddebf1),
+        "purple" => (0x6940a5, 0xeae4f2),
+        "pink" => (0xad1a72, 0xf4dfeb),
+        _ => return None,
+    })
+}
 
 /// One run per span, styled by its marks on top of `base`.
 pub(crate) fn text_runs(spans: &[Span], base: &TextStyle) -> Vec<TextRun> {
@@ -73,8 +76,7 @@ pub(crate) fn color(value: &Value, background: bool) -> Option<Hsla> {
     if name.len() > 9 {
         return None;
     }
-    let named = COLORS.iter().find(|(known, ..)| known == name);
-    let named = named.map(|&(_, text, fill)| rgb(if background { fill } else { text }));
+    let named = named(name).map(|(text, fill)| rgb(if background { fill } else { text }));
     let hex = || Rgba::try_from(name.as_str()).ok();
     named.or_else(hex).map(Hsla::from)
 }
@@ -90,6 +92,13 @@ mod tests {
             .iter()
             .map(|(name, value)| (name.to_string(), value.clone()));
         Span::new(text, marks.collect::<BTreeMap<_, _>>())
+    }
+
+    #[test]
+    fn every_named_color_of_the_core_looks_like_something() {
+        for name in lotype_core::COLOR_NAMES {
+            assert!(named(name).is_some(), "{name}");
+        }
     }
 
     #[test]

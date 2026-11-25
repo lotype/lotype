@@ -143,7 +143,7 @@ impl EditorView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .children(slash_icon(&item.key).map(icon));
+                .children(icons::entry(&item.key).map(icon));
             let words = div()
                 .flex_1()
                 .min_w_0()
@@ -201,28 +201,4 @@ impl EditorView {
         })?;
         Some(shortcut_label(&binding.key))
     }
-}
-
-/// The icon of a built-in entry, by its key.
-fn slash_icon(key: &str) -> Option<&'static [u8]> {
-    Some(match key {
-        "heading_1" => icons::HEADING_1,
-        "heading_2" => icons::HEADING_2,
-        "heading_3" => icons::HEADING_3,
-        "heading_4" => icons::HEADING_4,
-        "heading_5" => icons::HEADING_5,
-        "quote" => icons::QUOTE,
-        "toggle_list" => icons::TOGGLE,
-        "bullet_list" => icons::BULLET,
-        "numbered_list" => icons::NUMBERED,
-        "check_list" => icons::CHECK_LIST,
-        "code_block" => icons::CODE,
-        "alert" => icons::ALERT,
-        "divider" => icons::DIVIDER,
-        "page_break" => icons::PAGE_BREAK,
-        "table" => icons::TABLE,
-        "image" => icons::IMAGE,
-        "file" => icons::FILE,
-        _ => return None,
-    })
 }

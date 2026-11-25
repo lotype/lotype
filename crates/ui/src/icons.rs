@@ -53,3 +53,28 @@ icons! {
 pub(crate) fn icon(svg: &[u8]) -> Icon {
     Icon::default().data(svg)
 }
+
+/// The icon of a built-in slash menu or block type entry, by its key.
+pub(crate) fn entry(key: &str) -> Option<&'static [u8]> {
+    Some(match key {
+        "paragraph" => PARAGRAPH,
+        "heading_1" => HEADING_1,
+        "heading_2" => HEADING_2,
+        "heading_3" => HEADING_3,
+        "heading_4" => HEADING_4,
+        "heading_5" => HEADING_5,
+        "quote" => QUOTE,
+        "toggle_list" => TOGGLE,
+        "bullet_list" => BULLET,
+        "numbered_list" => NUMBERED,
+        "check_list" => CHECK_LIST,
+        "code_block" => CODE,
+        "alert" => ALERT,
+        "divider" => DIVIDER,
+        "page_break" => PAGE_BREAK,
+        "table" => TABLE,
+        "image" => IMAGE,
+        "file" => FILE,
+        _ => return None,
+    })
+}

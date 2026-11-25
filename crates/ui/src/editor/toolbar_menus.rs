@@ -11,30 +11,12 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::list::ListItem;
 use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, Value, attr, mark};
+use lotype_core::{BlockId, Role, SlashItem, Value, default_block_types, mark};
 
 use super::EditorView;
 use super::block_menu::swatch_row;
 use super::toolbar::{Dropdown, measure, tagged};
 use crate::icons::{self, icon};
-
-/// The types the select offers: a block type, a heading's level, an icon
-/// and a title, as BlockNote's block type select has them.
-const BLOCK_TYPES: [(&str, Option<i64>, &[u8], &str); 12] = [
-    ("paragraph", None, icons::PARAGRAPH, "Paragraph"),
-    ("heading", Some(1), icons::HEADING_1, "Heading 1"),
-    ("heading", Some(2), icons::HEADING_2, "Heading 2"),
-    ("heading", Some(3), icons::HEADING_3, "Heading 3"),
-    ("heading", Some(4), icons::HEADING_4, "Heading 4"),
-    ("heading", Some(5), icons::HEADING_5, "Heading 5"),
-    ("quote", None, icons::QUOTE, "Quote"),
-    ("toggle_list_item", None, icons::TOGGLE, "Toggle List"),
-    ("bullet_list_item", None, icons::BULLET, "Bullet List"),
-    ("numbered_list_item", None, icons::NUMBERED, "Numbered List"),
-    ("check_list_item", None, icons::CHECK_LIST, "Check List"),
-    // Last, so that it is found only for a code block.
-    ("code_block", None, icons::CODE, "Code Block"),
-];
 
 fn stop(_: &MouseDownEvent, _: &mut gpui::Window, cx: &mut gpui::App) {
     cx.stop_propagation();
@@ -63,15 +45,13 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> Option<(AnyElement, Option<AnyElement>)> {
         let doc = self.editor.document();
-        let kind = doc.block_type(first).ok()?;
-        let level = Some(doc.heading_level(first));
-        let schema = doc.schema();
-        let offered =
-            |(name, ..): &(&str, Option<i64>, &[u8], &str)| schema.block_spec(name).is_some();
-        let current = BLOCK_TYPES
-            .iter()
-            .position(|(name, at, ..)| *name == kind && (at.is_none() || *at == level))?;
-        let (_, _, svg, title) = BLOCK_TYPES[current];
+        let types: Vec<_> = default_block_types()
+            .into_iter()
+            .filter(|item| doc.schema().block_spec(&item.block_type).is_some())
+            .collect();
+        let current = types.iter().position(|item| item.describes(doc, first))?;
+        let svg = icons::entry(&types[current].key).unwrap_or(icons::PARAGRAPH);
+        let title = types[current].title.clone();
         let toggle = cx.listener(|view: &mut Self, _: &ClickEvent, _, cx| {
             view.toggle_dropdown(Dropdown::BlockType);
             cx.notify();
@@ -86,18 +66,23 @@ impl EditorView {
             .child(icon(icons::CHEVRON_DOWN).size_3())
             .selected(self.toolbar.menu == Some(Dropdown::BlockType))
             .on_click(toggle);
-        let items: Vec<_> = BLOCK_TYPES
-            .iter()
+        // Code is no text to turn into another, nor text into code here.
+        let schema = doc.schema();
+        let code = |item: &SlashItem| {
+            schema
+                .block_spec(&item.block_type)
+                .is_some_and(|spec| spec.role() == Role::Code)
+        };
+        let items: Vec<_> = types
+            .into_iter()
             .enumerate()
-            .filter(|(_, item)| offered(item) && item.0 != "code_block")
-            .map(|(index, &(name, level, svg, title))| {
+            .filter(|(_, item)| !code(item))
+            .map(|(index, item)| {
+                let svg = icons::entry(&item.key).unwrap_or(icons::PARAGRAPH);
+                let title = item.title.clone();
                 let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
-                    let mut attrs = Vec::new();
-                    if let Some(level) = level {
-                        attrs.push((attr::LEVEL.to_owned(), Value::Int(level)));
-                    }
                     view.toolbar.menu = None;
-                    view.editor.set_block(name, &attrs).ok();
+                    view.editor.set_block(&item.block_type, &item.attrs).ok();
                     view.selection_changed(window, cx);
                 });
                 let chosen = index == current;

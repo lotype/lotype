@@ -8,10 +8,10 @@ use gpui::{
 };
 use gpui_component::list::ListItem;
 use gpui_component::{ThemeStyled, v_flex};
-use lotype_core::{BlockColor, BlockId, Selection, Value};
+use lotype_core::{BlockColor, BlockId, COLOR_NAMES, Selection, Value};
 
 use super::EditorView;
-use crate::marks::{COLORS, color};
+use crate::marks::color;
 
 impl EditorView {
     /// Deletes the selected blocks where `block` is one of them, or else
@@ -113,7 +113,7 @@ pub(super) fn swatch_row(
     pick: impl Fn(&mut EditorView, Option<&'static str>) + Clone + 'static,
     cx: &mut Context<EditorView>,
 ) -> Div {
-    let names = std::iter::once(None).chain(COLORS.iter().map(|(name, ..)| Some(*name)));
+    let names = std::iter::once(None).chain(COLOR_NAMES.map(Some));
     let swatches = names.map(|name| {
         let pick = pick.clone();
         let click = cx.listener(
