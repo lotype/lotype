@@ -88,7 +88,7 @@ pub struct EditorView {
     /// The alert whose menu of kinds is open.
     alert_menu: Option<BlockId>,
     /// How the application draws alerts of a kind, instead of as GitHub does.
-    alert_looks: HashMap<&'static str, alert::AlertLook>,
+    alert_looks: HashMap<lotype_core::AlertKind, alert::AlertLook>,
     /// The table the mouse is over, and the cell whose menu is open.
     table_hover: Option<BlockId>,
     table_menu: Option<BlockId>,

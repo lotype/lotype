@@ -8,7 +8,9 @@ use gpui::{
     TextStyle, Window, canvas, div, img, point, prelude::*, px, size,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr, block};
+use lotype_core::{
+    AlertKind, BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr, block,
+};
 
 use super::input::Shown;
 use super::{BlockContent, EditorView};
@@ -26,7 +28,7 @@ fn indent(depth: usize) -> f32 {
 
 /// A quote or an alert around a block: how deep it is, and for an alert
 /// its kind, which its colour is of.
-type Bar = (usize, Option<&'static str>);
+type Bar = (usize, Option<AlertKind>);
 
 /// A block as it is shown.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,13 +80,10 @@ pub(crate) fn rows(
         let depth = around.len();
         let block_type = doc.block_type(block).unwrap_or_default();
         numbers.resize(depth + 1, None);
-        let number = (block_type == block::NUMBERED_LIST_ITEM).then(|| match numbers[depth] {
-            Some(before) => before.saturating_add(1),
-            None => match doc.attr(block, attr::START) {
-                Ok(Some(Value::Int(start))) => start,
-                _ => 1,
-            },
-        });
+        let numbered = block_type == block::NUMBERED_LIST_ITEM;
+        let number = numbered
+            .then(|| doc.list_number(block, numbers[depth]))
+            .flatten();
         numbers[depth] = number;
         let bar = match block_type.as_str() {
             block::QUOTE => Some((depth, None)),
@@ -257,7 +256,7 @@ impl EditorView {
         };
         let bars = row.bars.iter().map(|(depth, kind)| {
             let color = match kind {
-                Some(kind) => self.alert_bar(kind, cx),
+                Some(kind) => self.alert_bar(*kind, cx),
                 None => cx.theme().border,
             };
             let left = px(indent(*depth) + 2.);

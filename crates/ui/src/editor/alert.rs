@@ -9,19 +9,19 @@ use gpui::{
 };
 use gpui_component::list::ListItem;
 use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, alert};
+use lotype_core::{AlertKind, BlockId, alert};
 
 use super::EditorView;
 use crate::icons::{self, icon};
 
 /// The icon of an alert of a kind, Lucide's for GitHub's octicon.
-fn icon_of(kind: &str) -> &'static [u8] {
+fn icon_of(kind: AlertKind) -> &'static [u8] {
     match kind {
-        alert::TIP => icons::TIP,
-        alert::IMPORTANT => icons::IMPORTANT,
-        alert::WARNING => icons::WARNING,
-        alert::CAUTION => icons::CAUTION,
-        _ => icons::ALERT,
+        AlertKind::Note => icons::ALERT,
+        AlertKind::Tip => icons::TIP,
+        AlertKind::Important => icons::IMPORTANT,
+        AlertKind::Warning => icons::WARNING,
+        AlertKind::Caution => icons::CAUTION,
     }
 }
 
@@ -71,9 +71,9 @@ pub struct AlertLook {
 }
 
 impl AlertLook {
-    /// How GitHub draws an alert of `kind`, a note for a kind no one knows.
-    pub fn github(kind: &str) -> Self {
-        let style = alert::style(kind);
+    /// How GitHub draws an alert of `kind`.
+    pub fn github(kind: AlertKind) -> Self {
+        let style = kind.style();
         Self {
             title: style.title.into(),
             bar: Shade::github(style.border),
@@ -83,29 +83,22 @@ impl AlertLook {
 }
 
 /// The look of an alert of `kind`: the application's, or GitHub's.
-fn look_of(looks: &HashMap<&'static str, AlertLook>, kind: &str) -> AlertLook {
-    let kind = alert::style(kind).kind;
+fn look_of(looks: &HashMap<AlertKind, AlertLook>, kind: AlertKind) -> AlertLook {
     looks
-        .get(kind)
+        .get(&kind)
         .cloned()
         .unwrap_or_else(|| AlertLook::github(kind))
 }
 
 impl EditorView {
-    /// Draws alerts of `kind`, one of [`alert::KINDS`], as `look` says
-    /// instead of as GitHub does. A kind no alert is of changes nothing.
-    pub fn with_alert_look(mut self, kind: &str, look: AlertLook) -> Self {
-        if let Some(kind) = alert::KINDS
-            .into_iter()
-            .find(|known| known.eq_ignore_ascii_case(kind))
-        {
-            self.alert_looks.insert(kind, look);
-        }
+    /// Draws alerts of `kind` as `look` says instead of as GitHub does.
+    pub fn with_alert_look(mut self, kind: AlertKind, look: AlertLook) -> Self {
+        self.alert_looks.insert(kind, look);
         self
     }
 
     /// The color of the bar on the left of an alert of `kind`.
-    pub(super) fn alert_bar(&self, kind: &str, cx: &App) -> Hsla {
+    pub(super) fn alert_bar(&self, kind: AlertKind, cx: &App) -> Hsla {
         look_of(&self.alert_looks, kind)
             .bar
             .of(cx.theme().mode.is_dark())
@@ -144,15 +137,15 @@ impl EditorView {
         v_flex().child(title).children(under).into_any_element()
     }
 
-    fn alert_menu(&self, block: BlockId, current: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn alert_menu(&self, block: BlockId, current: AlertKind, cx: &mut Context<Self>) -> AnyElement {
         let dark = cx.theme().mode.is_dark();
-        let items = alert::KINDS.into_iter().map(|name| {
-            let look = look_of(&self.alert_looks, name);
-            let (title, svg) = (look.title, icon_of(name));
+        let items = alert::KINDS.into_iter().map(|kind| {
+            let look = look_of(&self.alert_looks, kind);
+            let (title, svg) = (look.title, icon_of(kind));
             let color = look.color.of(dark);
             let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
                 view.alert_menu = None;
-                view.editor.set_alert_kind(block, name).ok();
+                view.editor.set_alert_kind(block, kind).ok();
                 cx.notify();
             });
             let row = h_flex()
@@ -162,7 +155,8 @@ impl EditorView {
                 .items_center()
                 .child(icon(svg).text_color(color))
                 .child(div().flex_1().child(title))
-                .children((name == current).then(|| icon(icons::CHECK)));
+                .children((kind == current).then(|| icon(icons::CHECK)));
+            let name = kind.name();
             div()
                 .debug_selector(move || format!("alert-kind-{name}"))
                 .child(ListItem::new(name).child(row).on_click(choose))
@@ -198,11 +192,11 @@ mod tests {
             bar: Shade::same(red),
             color: Shade::same(red),
         };
-        let looks = HashMap::from([(alert::TIP, hint.clone())]);
-        assert_eq!(look_of(&looks, "TIP"), hint);
-        assert_eq!(look_of(&looks, alert::NOTE), AlertLook::github(alert::NOTE));
+        let looks = HashMap::from([(AlertKind::Tip, hint.clone())]);
+        assert_eq!(look_of(&looks, AlertKind::Tip), hint);
+        let note = AlertLook::github(AlertKind::Note);
+        assert_eq!(look_of(&looks, AlertKind::Note), note);
         // GitHub's own, in each scheme.
-        let note = AlertLook::github("rumour");
         assert_eq!(note.title.as_ref(), "Note");
         let blue = |hex| Hsla::from(Rgba::try_from(hex).unwrap());
         assert_eq!(note.bar.of(false), blue("#0969da"));

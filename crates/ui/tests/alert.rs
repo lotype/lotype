@@ -42,7 +42,7 @@ fn an_application_draws_an_alert_kind_its_own_way(cx: &mut TestAppContext) {
     let tip = block("alert", vec![p!["inside"].into()]).attr("kind", "tip");
     let editor = lotype_core::test_support::editor(blocks![p!["<a>a"], tip]);
     let mut ed = EditorTestContext::with_view(cx, |cx| {
-        EditorView::new(editor, cx).with_alert_look("tip", hint)
+        EditorView::new(editor, cx).with_alert_look(lotype_core::AlertKind::Tip, hint)
     });
     ed.settle();
     // Its title still opens the menu of kinds, and a pick still sets one.
