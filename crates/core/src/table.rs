@@ -7,9 +7,9 @@ use loro::{ID, LoroMovableList, LoroText, TreeID, TreeParentId};
 
 use crate::{BlockId, Document, Error, MAX_DEPTH, Result};
 
-pub(crate) const TABLE: &str = "table";
-pub(crate) const ROW: &str = "table_row";
-pub(crate) const CELL: &str = "table_cell";
+pub(crate) const TABLE: &str = crate::block::TABLE;
+pub(crate) const ROW: &str = crate::block::TABLE_ROW;
+pub(crate) const CELL: &str = crate::block::TABLE_CELL;
 /// The key of a table's list of column ids.
 pub(crate) const COLUMNS: &str = "$cols";
 

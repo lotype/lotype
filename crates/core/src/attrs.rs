@@ -4,6 +4,43 @@
 use crate::schema::MAX_HEADING_LEVEL;
 use crate::{BlockId, Document, Value};
 
+/// The names of the built-in block types, as [`Schema::builtin`](crate::Schema::builtin)
+/// has them. [`BlockKind`](crate::BlockKind) names them with the attributes
+/// that make each what it is.
+pub mod block {
+    /// Text, where typing starts: the built-in schema's text block.
+    pub const PARAGRAPH: &str = "paragraph";
+    /// A heading, of a level in [`attr::LEVEL`](crate::attr::LEVEL).
+    pub const HEADING: &str = "heading";
+    /// A quote, its own text and the blocks in it.
+    pub const QUOTE: &str = "quote";
+    /// One of GitHub's alerts, of a kind in [`attr::KIND`](crate::attr::KIND).
+    pub const ALERT: &str = "alert";
+    pub const BULLET_LIST_ITEM: &str = "bullet_list_item";
+    /// An item of a numbered list, the first with a start in
+    /// [`attr::START`](crate::attr::START) where it is no 1.
+    pub const NUMBERED_LIST_ITEM: &str = "numbered_list_item";
+    /// An item of a check list, checked in [`attr::CHECKED`](crate::attr::CHECKED).
+    pub const CHECK_LIST_ITEM: &str = "check_list_item";
+    /// A list item whose blocks a view shows or hides.
+    pub const TOGGLE_LIST_ITEM: &str = "toggle_list_item";
+    /// Code, of a language in [`attr::LANGUAGE`](crate::attr::LANGUAGE).
+    pub const CODE_BLOCK: &str = "code_block";
+    pub const DIVIDER: &str = "divider";
+    /// Where printing and export start a new page.
+    pub const PAGE_BREAK: &str = "page_break";
+    /// An image at [`attr::URL`](crate::attr::URL), with a caption.
+    pub const IMAGE: &str = "image";
+    /// A file at [`attr::URL`](crate::attr::URL), with a name.
+    pub const FILE: &str = "file";
+    /// A table: its children are its rows, and it lists its columns.
+    pub const TABLE: &str = "table";
+    /// A row of a table.
+    pub const TABLE_ROW: &str = "table_row";
+    /// A cell of a table: a row and a column, no block of its own.
+    pub const TABLE_CELL: &str = "table_cell";
+}
+
 /// The names of block attributes the built-in blocks carry.
 pub mod attr {
     /// A heading's level, 1 to [`MAX_HEADING_LEVEL`](crate::MAX_HEADING_LEVEL).

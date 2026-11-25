@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::{MAX_HEADING_LEVEL, Value, mark};
+use crate::{MAX_HEADING_LEVEL, Value, block, mark};
 
 /// What a paragraph becomes.
 #[derive(Debug, PartialEq)]
@@ -25,35 +25,35 @@ fn block_with(block_type: &'static str, key: &'static str, value: impl Into<Valu
 /// The block that a paragraph starting with `typed`, up to the caret, turns into.
 pub(crate) fn block_rule(typed: &str) -> Option<BlockRule> {
     if typed == "---" {
-        return block("divider");
+        return block(block::DIVIDER);
     }
     let marker = typed.strip_suffix(' ')?;
     match marker {
-        "-" | "+" | "*" => return block("bullet_list_item"),
-        ">" => return block("quote"),
-        "[]" | "[ ]" => return Some(block_with("check_list_item", "checked", false)),
-        "[x]" | "[X]" => return Some(block_with("check_list_item", "checked", true)),
+        "-" | "+" | "*" => return block(block::BULLET_LIST_ITEM),
+        ">" => return block(block::QUOTE),
+        "[]" | "[ ]" => return Some(block_with(block::CHECK_LIST_ITEM, "checked", false)),
+        "[x]" | "[X]" => return Some(block_with(block::CHECK_LIST_ITEM, "checked", true)),
         _ => {}
     }
     let level = marker.len() as i64;
     if (1..=MAX_HEADING_LEVEL).contains(&level) && marker.bytes().all(|b| b == b'#') {
-        return Some(block_with("heading", "level", level));
+        return Some(block_with(block::HEADING, "level", level));
     }
     if let Some(language) = marker.strip_prefix("```") {
         let plain = !language.contains(|c: char| c == '`' || c.is_whitespace());
         return plain.then(|| match language {
             "" => BlockRule {
-                block_type: "code_block",
+                block_type: block::CODE_BLOCK,
                 attrs: Vec::new(),
             },
-            _ => block_with("code_block", "language", language),
+            _ => block_with(block::CODE_BLOCK, "language", language),
         });
     }
     let number = marker.strip_suffix('.')?;
     // More digits than a list has items would not fit the attribute either.
     if (1..=9).contains(&number.len()) && number.bytes().all(|b| b.is_ascii_digit()) {
         let start: i64 = number.parse().ok()?;
-        let mut rule = block("numbered_list_item")?;
+        let mut rule = block(block::NUMBERED_LIST_ITEM)?;
         if start != 1 {
             rule.attrs.push(("start", start.into()));
         }
@@ -109,36 +109,39 @@ mod tests {
 
     #[test]
     fn block_rules_match_markdown_prefixes() {
-        assert_eq!(attrs("# "), Some(("heading", vec![("level", 1.into())])));
+        assert_eq!(
+            attrs("# "),
+            Some((block::HEADING, vec![("level", 1.into())]))
+        );
         assert_eq!(
             attrs("##### "),
-            Some(("heading", vec![("level", 5.into())]))
+            Some((block::HEADING, vec![("level", 5.into())]))
         );
         assert_eq!(attrs("###### "), None);
         for bullet in ["- ", "+ ", "* "] {
-            assert_eq!(attrs(bullet), Some(("bullet_list_item", vec![])));
+            assert_eq!(attrs(bullet), Some((block::BULLET_LIST_ITEM, vec![])));
         }
-        assert_eq!(attrs("1. "), Some(("numbered_list_item", vec![])));
+        assert_eq!(attrs("1. "), Some((block::NUMBERED_LIST_ITEM, vec![])));
         assert_eq!(
             attrs("12. "),
-            Some(("numbered_list_item", vec![("start", 12.into())]))
+            Some((block::NUMBERED_LIST_ITEM, vec![("start", 12.into())]))
         );
         assert_eq!(attrs("1234567890. "), None);
         assert_eq!(
             attrs("[] "),
-            Some(("check_list_item", vec![("checked", false.into())]))
+            Some((block::CHECK_LIST_ITEM, vec![("checked", false.into())]))
         );
         assert_eq!(
             attrs("[x] "),
-            Some(("check_list_item", vec![("checked", true.into())]))
+            Some((block::CHECK_LIST_ITEM, vec![("checked", true.into())]))
         );
-        assert_eq!(attrs("> "), Some(("quote", vec![])));
-        assert_eq!(attrs("``` "), Some(("code_block", vec![])));
+        assert_eq!(attrs("> "), Some((block::QUOTE, vec![])));
+        assert_eq!(attrs("``` "), Some((block::CODE_BLOCK, vec![])));
         assert_eq!(
             attrs("```rust "),
-            Some(("code_block", vec![("language", "rust".into())]))
+            Some((block::CODE_BLOCK, vec![("language", "rust".into())]))
         );
-        assert_eq!(attrs("---"), Some(("divider", vec![])));
+        assert_eq!(attrs("---"), Some((block::DIVIDER, vec![])));
         for plain in ["#", "#x ", "a - ", "-", "1 ", ". ", "--- ", "```a b "] {
             assert_eq!(attrs(plain), None, "{plain:?}");
         }

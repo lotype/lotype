@@ -18,7 +18,7 @@ impl Editor {
         if let Some(rule) = rules::block_rule(typed)
             && self.takes(block, &rule, text.len() == typed.len())?
         {
-            self.turn_into(block, typed.len(), rule)?;
+            self.apply_block_rule(block, typed.len(), rule)?;
             self.note_rule();
             return Ok(());
         }
@@ -62,7 +62,7 @@ impl Editor {
         )
     }
 
-    fn turn_into(&mut self, block: BlockId, typed: usize, rule: BlockRule) -> Result<()> {
+    fn apply_block_rule(&mut self, block: BlockId, typed: usize, rule: BlockRule) -> Result<()> {
         self.apply(|doc, _| {
             doc.delete_text(block, 0..typed)?;
             doc.set_block_type(block, rule.block_type)?;

@@ -2,7 +2,9 @@ use std::ops::Range;
 
 use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
-use crate::{BlockId, Document, Editor, Error, Pos, Result, Role, Selection, Value, attr, mark};
+use crate::{
+    BlockId, Document, Editor, Error, Pos, Result, Role, Selection, Value, alert, attr, block, mark,
+};
 
 /// An entry of the slash menu: a block to insert. A paragraph is none: it
 /// is what typing in an empty block makes already.
@@ -72,7 +74,15 @@ pub fn default_slash_items() -> Vec<SlashItem> {
         } else {
             "Subheadings"
         };
-        item(&key, &title, subtext, group, &[&alias, "title"], "heading").with("level", level)
+        item(
+            &key,
+            &title,
+            subtext,
+            group,
+            &[&alias, "title"],
+            block::HEADING,
+        )
+        .with(attr::LEVEL, level)
     };
     let basic = |key, title, subtext, aliases, block_type| {
         item(key, title, subtext, "Basic blocks", aliases, block_type)
@@ -88,65 +98,65 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "Quote",
             "Quote or excerpt",
             &["blockquote", "citation"],
-            "quote",
+            block::QUOTE,
         ),
         basic(
             "toggle_list",
             "Toggle List",
             "List with hideable sub-items",
             &["collapsible", "list"],
-            "toggle_list_item",
+            block::TOGGLE_LIST_ITEM,
         ),
         basic(
             "bullet_list",
             "Bullet List",
             "List with unordered items",
             &["ul", "unordered", "list"],
-            "bullet_list_item",
+            block::BULLET_LIST_ITEM,
         ),
         basic(
             "numbered_list",
             "Numbered List",
             "List with ordered items",
             &["ol", "ordered", "list"],
-            "numbered_list_item",
+            block::NUMBERED_LIST_ITEM,
         ),
         basic(
             "check_list",
             "Check List",
             "List with checkboxes",
             &["todo", "task", "checkbox", "list"],
-            "check_list_item",
+            block::CHECK_LIST_ITEM,
         )
-        .with("checked", false),
+        .with(attr::CHECKED, false),
         basic(
             "code_block",
             "Code Block",
             "Code in a block of its own",
             &["pre", "code"],
-            "code_block",
+            block::CODE_BLOCK,
         ),
         basic(
             "alert",
             "Alert",
             "Note, tip, important, warning or caution",
             &["callout", "note", "tip", "important", "warning", "caution"],
-            "alert",
+            block::ALERT,
         )
-        .with("kind", "note"),
+        .with(attr::KIND, alert::NOTE),
         basic(
             "divider",
             "Divider",
             "Visually divide blocks",
             &["hr", "rule", "line", "separator"],
-            "divider",
+            block::DIVIDER,
         ),
         basic(
             "page_break",
             "Page Break",
             "Start a new page when printed",
             &["page"],
-            "page_break",
+            block::PAGE_BREAK,
         ),
         item(
             "table",
@@ -154,7 +164,7 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "Table with editable cells",
             "Advanced",
             &["grid", "rows", "columns"],
-            "table",
+            block::TABLE,
         ),
         item(
             "image",
@@ -162,7 +172,7 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "Image with a caption",
             "Media",
             &["picture", "photo", "media"],
-            "image",
+            block::IMAGE,
         ),
         item(
             "file",
@@ -170,7 +180,7 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "Embedded file",
             "Media",
             &["attachment", "upload", "media"],
-            "file",
+            block::FILE,
         ),
     ]
 }
@@ -202,7 +212,7 @@ pub fn default_block_types() -> Vec<SlashItem> {
         "Plain text",
         "Basic blocks",
         &["p"],
-        "paragraph",
+        block::PARAGRAPH,
     );
     let types = std::iter::once(paragraph).chain(found.cloned());
     types

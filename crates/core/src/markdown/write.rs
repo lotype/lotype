@@ -1,5 +1,5 @@
 use super::PAGE_BREAK;
-use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value};
+use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value, attr, block};
 
 /// A block with what the line before it, its first line and its later lines
 /// start with.
@@ -70,20 +70,20 @@ impl Document {
         let children = self.children(parent).unwrap_or_default();
         let items = children.into_iter().map(|block| {
             let block_type = self.block_type(block).unwrap_or_default();
-            let numbered = block_type == "numbered_list_item";
-            number = numbered.then(|| match (number, self.attr(block, "start")) {
+            let numbered = block_type == block::NUMBERED_LIST_ITEM;
+            number = numbered.then(|| match (number, self.attr(block, attr::START)) {
                 (Some(before), _) => LARGEST_NUMBER.min(before + 1),
                 (None, Ok(Some(Value::Int(start)))) => start.clamp(0, LARGEST_NUMBER),
                 (None, _) => 1,
             });
             let marker = match block_type.as_str() {
-                "bullet_list_item" | "toggle_list_item" => "- ".to_owned(),
-                "numbered_list_item" => format!("{}. ", number.unwrap_or(1)),
-                "check_list_item" => match self.attr(block, "checked") {
+                block::BULLET_LIST_ITEM | block::TOGGLE_LIST_ITEM => "- ".to_owned(),
+                block::NUMBERED_LIST_ITEM => format!("{}. ", number.unwrap_or(1)),
+                block::CHECK_LIST_ITEM => match self.attr(block, attr::CHECKED) {
                     Ok(Some(Value::Bool(true))) => "- [x] ".to_owned(),
                     _ => "- [ ] ".to_owned(),
                 },
-                "quote" | "alert" => {
+                block::QUOTE | block::ALERT => {
                     let inside = format!("{prefix}> ");
                     return (block, prefix.to_owned(), inside.clone(), inside);
                 }
@@ -109,23 +109,27 @@ impl Document {
             _ => String::new(),
         };
         Some(match block_type.as_str() {
-            "divider" => "---".to_owned(),
-            "page_break" => PAGE_BREAK.to_owned(),
-            "alert" => format!("[!{}]", self.alert_kind(block).to_uppercase()),
-            "image" => format!("![{}]({})", escape(&attr("caption")), address(&attr("url"))),
-            "file" => {
-                let (name, url) = (attr("name"), attr("url"));
+            block::DIVIDER => "---".to_owned(),
+            block::PAGE_BREAK => PAGE_BREAK.to_owned(),
+            block::ALERT => format!("[!{}]", self.alert_kind(block).to_uppercase()),
+            block::IMAGE => format!(
+                "![{}]({})",
+                escape(&attr(attr::CAPTION)),
+                address(&attr(attr::URL))
+            ),
+            block::FILE => {
+                let (name, url) = (attr(attr::NAME), attr(attr::URL));
                 let shown = if name.is_empty() { &url } else { &name };
                 format!("[{}]({})", escape(shown), address(&url))
             }
-            "code_block" => {
+            block::CODE_BLOCK => {
                 let code = self.plain_text(block).ok()?;
                 let fence = "`".repeat(longest_run(&code, '`').max(2) + 1);
                 let language =
-                    attr("language").replace(|c: char| c == '`' || c.is_whitespace(), "");
+                    attr(attr::LANGUAGE).replace(|c: char| c == '`' || c.is_whitespace(), "");
                 format!("{fence}{language}\n{code}\n{fence}")
             }
-            "table" => {
+            block::TABLE => {
                 let (rows, columns) = (self.children(Some(block)).ok()?, self.columns(block).ok()?);
                 let line = |row: &BlockId| {
                     let cells = columns.iter().map(|column| {
@@ -144,8 +148,8 @@ impl Document {
                 lines.extend(body.iter().map(line));
                 lines.join("\n")
             }
-            "heading" => {
-                let level = match self.attr(block, "level") {
+            block::HEADING => {
+                let level = match self.attr(block, attr::LEVEL) {
                     Ok(Some(Value::Int(level))) => level.clamp(1, MAX_HEADING_LEVEL) as usize,
                     _ => 1,
                 };

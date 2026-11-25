@@ -1,4 +1,4 @@
-use crate::{Editor, Result, Value};
+use crate::{BlockKind, Editor, Result, Value};
 
 /// Something a key, a menu or a toolbar asks an editor to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,15 +62,27 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Mod-u", Command::toggle_mark("underline")),
         ("Mod-Shift-s", Command::toggle_mark("strike")),
         ("Mod-e", Command::toggle_mark("code")),
-        ("Mod-Alt-0", Command::set_block("paragraph")),
-        ("Mod-Shift-7", Command::set_block("numbered_list_item")),
-        ("Mod-Shift-8", Command::set_block("bullet_list_item")),
-        ("Mod-Shift-6", Command::set_block("toggle_list_item")),
+        ("Mod-Alt-0", Command::turn_into(&BlockKind::Paragraph)),
+        (
+            "Mod-Shift-7",
+            Command::turn_into(&BlockKind::NumberedListItem),
+        ),
+        (
+            "Mod-Shift-8",
+            Command::turn_into(&BlockKind::BulletListItem),
+        ),
+        (
+            "Mod-Shift-6",
+            Command::turn_into(&BlockKind::ToggleListItem),
+        ),
         (
             "Mod-Shift-9",
-            Command::set_block("check_list_item").with("checked", false),
+            Command::turn_into(&BlockKind::CheckListItem { checked: false }),
         ),
-        ("Mod-Alt-c", Command::set_block("code_block")),
+        (
+            "Mod-Alt-c",
+            Command::turn_into(&BlockKind::CodeBlock { language: None }),
+        ),
         ("Tab", Command::Indent),
         ("Shift-Tab", Command::Outdent),
         ("Mod-z", Command::Undo),
@@ -81,7 +93,7 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Backspace", Command::DeleteBackward),
         ("Delete", Command::DeleteForward),
     ];
-    let heading = |level| Command::set_block("heading").with("level", level);
+    let heading = |level| Command::turn_into(&BlockKind::Heading(level));
     let levels = [
         "Mod-Alt-1",
         "Mod-Alt-2",

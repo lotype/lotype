@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
-use crate::{Atom, BlockId, Document, Error, Result, Value, mark};
+use crate::{Atom, BlockId, Document, Error, Result, Value, block, mark};
 
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,29 +212,35 @@ impl Schema {
     pub fn builtin() -> Self {
         use Content::{Inline, None};
 
-        let mut schema = Self::new().with_text_block("paragraph");
+        let mut schema = Self::new().with_text_block(block::PARAGRAPH);
         let roles = [
-            ("paragraph", Role::Text),
-            ("quote", Role::Wrapper),
-            ("bullet_list_item", Role::ListItem),
-            ("numbered_list_item", Role::ListItem),
-            ("check_list_item", Role::ListItem),
-            ("toggle_list_item", Role::Toggle),
+            (block::PARAGRAPH, Role::Text),
+            (block::QUOTE, Role::Wrapper),
+            (block::BULLET_LIST_ITEM, Role::ListItem),
+            (block::NUMBERED_LIST_ITEM, Role::ListItem),
+            (block::CHECK_LIST_ITEM, Role::ListItem),
+            (block::TOGGLE_LIST_ITEM, Role::Toggle),
         ];
         for (name, role) in roles {
             let spec = BlockSpec::new(name, Inline).with_children().with_role(role);
             schema = schema.block(spec);
         }
-        let alert = BlockSpec::new("alert", None).with_children();
+        let alert = BlockSpec::new(block::ALERT, None).with_children();
         schema = schema.block(alert.with_role(Role::Wrapper));
-        schema = schema.block(BlockSpec::new("heading", Inline).top_level());
-        let code = BlockSpec::new("code_block", Inline).without_style();
+        schema = schema.block(BlockSpec::new(block::HEADING, Inline).top_level());
+        let code = BlockSpec::new(block::CODE_BLOCK, Inline).without_style();
         schema = schema.block(code.with_role(Role::Code));
-        for name in ["image", "file", "divider", "page_break", "table_row"] {
+        for name in [
+            block::IMAGE,
+            block::FILE,
+            block::DIVIDER,
+            block::PAGE_BREAK,
+            block::TABLE_ROW,
+        ] {
             schema = schema.block(BlockSpec::new(name, None));
         }
-        schema = schema.block(BlockSpec::new("table", None).with_children());
-        schema = schema.block(BlockSpec::new("table_cell", Inline));
+        schema = schema.block(BlockSpec::new(block::TABLE, None).with_children());
+        schema = schema.block(BlockSpec::new(block::TABLE_CELL, Inline));
         for name in [mark::BOLD, mark::ITALIC, mark::UNDERLINE, mark::STRIKE] {
             schema = schema.mark(MarkSpec::new(name, Expand::After));
         }
@@ -326,14 +332,14 @@ mod tests {
     #[test]
     fn builtin_specs() {
         let schema = Schema::builtin();
-        let paragraph = schema.block_spec("paragraph").unwrap();
+        let paragraph = schema.block_spec(block::PARAGRAPH).unwrap();
         assert_eq!(paragraph.content(), Content::Inline);
         assert!(paragraph.allows_children());
 
-        let heading = schema.block_spec("heading").unwrap();
+        let heading = schema.block_spec(block::HEADING).unwrap();
         assert!(!heading.allows_children());
 
-        let alert = schema.block_spec("alert").unwrap();
+        let alert = schema.block_spec(block::ALERT).unwrap();
         assert_eq!(alert.content(), Content::None);
         assert!(alert.allows_children());
 
@@ -344,8 +350,8 @@ mod tests {
 
     #[test]
     fn custom_spec_replaces_same_name() {
-        let schema =
-            Schema::builtin().block(BlockSpec::new("heading", Content::Inline).with_children());
-        assert!(schema.block_spec("heading").unwrap().allows_children());
+        let schema = Schema::builtin()
+            .block(BlockSpec::new(block::HEADING, Content::Inline).with_children());
+        assert!(schema.block_spec(block::HEADING).unwrap().allows_children());
     }
 }

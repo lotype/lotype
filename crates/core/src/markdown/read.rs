@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use super::PAGE_BREAK;
-use crate::{BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, alert, attr};
+use crate::{
+    BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, alert, attr, block,
+};
 
 /// A block to make.
 struct Node {
@@ -83,11 +85,11 @@ impl Reader {
             return;
         };
         let mut node = leaf.node;
-        let alone = !leaf.plain && node.block_type == "paragraph";
+        let alone = !leaf.plain && node.block_type == block::PARAGRAPH;
         if let Some(url) = leaf.image.filter(|_| alone) {
             // An image on its own is a block. The text was its description.
             let caption: String = node.spans.drain(..).map(|span| span.text).collect();
-            node = Node::new("image").with("url", url.clone());
+            node = Node::new(block::IMAGE).with(attr::URL, url.clone());
             if !caption.is_empty() && caption != url {
                 node.attrs.push(("caption", caption.into()));
             }
@@ -106,7 +108,7 @@ impl Reader {
             return;
         }
         if self.leaf.is_none() {
-            self.open(Node::new("paragraph"));
+            self.open(Node::new(block::PARAGRAPH));
         }
         // Not from every open mark: emphasis can nest as deep as the text is long.
         let mut marks: BTreeMap<String, Value> = BTreeMap::new();
@@ -147,16 +149,16 @@ impl Reader {
 
     fn start(&mut self, tag: Tag) {
         match tag {
-            Tag::Paragraph => self.open(Node::new("paragraph")),
+            Tag::Paragraph => self.open(Node::new(block::PARAGRAPH)),
             // A heading goes in no list item, quote or alert: there it is
             // read as a paragraph, the text of a list item where it leads.
-            Tag::Heading { .. } if self.nested() => self.open(Node::new("paragraph")),
+            Tag::Heading { .. } if self.nested() => self.open(Node::new(block::PARAGRAPH)),
             Tag::Heading { level, .. } => {
                 let level = (level as i64).min(MAX_HEADING_LEVEL);
-                self.open(Node::new("heading").with("level", level));
+                self.open(Node::new(block::HEADING).with(attr::LEVEL, level));
             }
             Tag::CodeBlock(kind) => {
-                let mut node = Node::new("code_block");
+                let mut node = Node::new(block::CODE_BLOCK);
                 if let CodeBlockKind::Fenced(info) = kind
                     && let Some(language) = info.split_whitespace().next()
                 {
@@ -164,7 +166,7 @@ impl Reader {
                 }
                 self.open(node);
             }
-            Tag::HtmlBlock => self.open(Node::new("paragraph")),
+            Tag::HtmlBlock => self.open(Node::new(block::PARAGRAPH)),
             Tag::BlockQuote(kind) => self.enter(Container::Quote(kind)),
             Tag::List(start) => {
                 let start = start.map(|start| i64::try_from(start).unwrap_or(1));
@@ -173,14 +175,14 @@ impl Reader {
             Tag::Item => self.enter(Container::Item(None)),
             Tag::Table(_) => self.enter(Container::Table),
             Tag::TableHead | Tag::TableRow => self.enter(Container::Row),
-            Tag::TableCell => self.open(Node::new("table_cell")),
+            Tag::TableCell => self.open(Node::new(block::TABLE_CELL)),
             Tag::Emphasis => self.mark(ITALIC, true),
             Tag::Strong => self.mark(BOLD, true),
             Tag::Strikethrough => self.mark(STRIKE, true),
             Tag::Link { dest_url, .. } => self.mark(LINK, dest_url.as_ref()),
             Tag::Image { dest_url, .. } => {
                 if self.leaf.is_none() {
-                    self.open(Node::new("paragraph"));
+                    self.open(Node::new(block::PARAGRAPH));
                 }
                 // A linked image stays text that goes where its link does.
                 let outer = self.marks[LINK].last().cloned();
@@ -217,7 +219,7 @@ impl Reader {
                 if let Some(leaf) = &mut self.leaf {
                     let html: String = leaf.node.spans.iter().map(|s| s.text.as_str()).collect();
                     if html.trim() == PAGE_BREAK {
-                        leaf.node = Node::new("page_break");
+                        leaf.node = Node::new(block::PAGE_BREAK);
                     } else if let Some(span) = leaf.node.spans.last_mut() {
                         span.text.truncate(span.text.trim_end().len());
                     }
@@ -262,7 +264,7 @@ impl Reader {
             let mut node = Node::new(block_type);
             if nodes
                 .first()
-                .is_some_and(|first| first.block_type == "paragraph")
+                .is_some_and(|first| first.block_type == block::PARAGRAPH)
             {
                 node.spans = nodes.remove(0).spans;
             }
@@ -273,7 +275,7 @@ impl Reader {
             Container::Root => self.stack.push((Container::Root, nodes)),
             Container::Table | Container::Row => {
                 let row = matches!(container, Container::Row);
-                let mut node = Node::new(if row { "table_row" } else { "table" });
+                let mut node = Node::new(if row { block::TABLE_ROW } else { block::TABLE });
                 node.children = nodes;
                 self.push(node);
             }
@@ -283,7 +285,7 @@ impl Reader {
                 }
             }
             Container::Quote(None) => {
-                let node = lead("quote");
+                let node = lead(block::QUOTE);
                 self.push(node);
             }
             Container::Quote(Some(kind)) => {
@@ -294,7 +296,7 @@ impl Reader {
                     BlockQuoteKind::Warning => alert::WARNING,
                     BlockQuoteKind::Caution => alert::CAUTION,
                 };
-                let mut node = Node::new("alert").with(attr::KIND, kind);
+                let mut node = Node::new(block::ALERT).with(attr::KIND, kind);
                 node.children = nodes;
                 self.push(node);
             }
@@ -304,10 +306,10 @@ impl Reader {
                     _ => None,
                 };
                 let node = match (checked, number) {
-                    (Some(checked), _) => lead("check_list_item").with("checked", checked),
-                    (None, Some(1)) => lead("numbered_list_item"),
-                    (None, Some(start)) => lead("numbered_list_item").with("start", start),
-                    (None, None) => lead("bullet_list_item"),
+                    (Some(checked), _) => lead(block::CHECK_LIST_ITEM).with(attr::CHECKED, checked),
+                    (None, Some(1)) => lead(block::NUMBERED_LIST_ITEM),
+                    (None, Some(start)) => lead(block::NUMBERED_LIST_ITEM).with(attr::START, start),
+                    (None, None) => lead(block::BULLET_LIST_ITEM),
                 };
                 self.push(node);
             }
@@ -336,7 +338,7 @@ impl Reader {
                 Event::HardBreak => self.plain("\n", false),
                 Event::Rule => {
                     self.close();
-                    self.push(Node::new("divider"));
+                    self.push(Node::new(block::DIVIDER));
                 }
                 Event::TaskListMarker(done) => {
                     if let Some((Container::Item(checked), _)) = self.stack.last_mut() {
@@ -378,9 +380,9 @@ impl Document {
             // of a type the schema lacks. So are its rows and cells then:
             // they only get here when their table was taken apart.
             let lacks = |name: &str| self.schema().block_spec(name).is_none();
-            let unmade = node.block_type == "table"
-                && (depth + 2 > MAX_DEPTH || lacks("table_row") || lacks("table_cell"));
-            let part = matches!(node.block_type, "table_row" | "table_cell");
+            let unmade = node.block_type == block::TABLE
+                && (depth + 2 > MAX_DEPTH || lacks(block::TABLE_ROW) || lacks(block::TABLE_CELL));
+            let part = matches!(node.block_type, block::TABLE_ROW | block::TABLE_CELL);
             // Nor is a heading in another block, where none goes.
             let top_level = |name: &str| {
                 let spec = self.schema().block_spec(name);
@@ -388,11 +390,11 @@ impl Document {
             };
             let nested = parent.is_some() && top_level(node.block_type);
             if unmade || part || nested || lacks(node.block_type) {
-                if node.block_type == "image" {
+                if node.block_type == block::IMAGE {
                     node.spans = image_link(&node.attrs);
                 }
                 // Without its type, its attributes mean nothing.
-                (node.block_type, node.attrs) = ("paragraph", Vec::new());
+                (node.block_type, node.attrs) = (block::PARAGRAPH, Vec::new());
                 if node.spans.is_empty() {
                     // It says nothing itself, so what is in it takes its place.
                     let children = node.children.into_iter().rev();
@@ -400,7 +402,7 @@ impl Document {
                     continue;
                 }
             }
-            if node.block_type == "table" {
+            if node.block_type == block::TABLE {
                 let index = next.entry(parent).or_insert(0);
                 let table = self.insert_rows(parent, *index, node.children)?;
                 *index += 1;
@@ -410,7 +412,7 @@ impl Document {
             let holds_text = self.holds_text(node.block_type)?;
             if !holds_text && !node.spans.is_empty() {
                 // The type holds no text here, so its text goes first inside it.
-                let mut text = Node::new("paragraph");
+                let mut text = Node::new(block::PARAGRAPH);
                 text.spans = std::mem::take(&mut node.spans);
                 node.children.insert(0, text);
             }

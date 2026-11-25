@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{BlockId, Document, Error, Pos, Result};
+use crate::{BlockId, Document, Error, Pos, Result, block};
 
 impl Document {
     /// The text from `a` to `b` with the blocks it is in, as a document of
@@ -34,7 +34,7 @@ impl Document {
             let parent = parent.filter(|parent| !top_level && takes(parent));
             let index = slice.children(parent)?.len();
             // A selection goes through a table only whole: its ends are text.
-            if known && self.block_type(block)? == "table" {
+            if known && self.block_type(block)? == block::TABLE {
                 if slice.has_tables() {
                     slice.copy_table(self, block, parent, index)?;
                 }
@@ -121,7 +121,7 @@ impl Document {
     ) -> Result<Option<BlockId>> {
         let block_type = other.block_type(block)?;
         let known = self.schema().block_spec(&block_type).is_some();
-        if known && block_type == "table" {
+        if known && block_type == block::TABLE {
             // Without its rows and cells in the schema, a table is left out.
             if !self.has_tables() {
                 return Ok(None);
@@ -201,7 +201,7 @@ impl Document {
     /// Whether the schema has tables whole, with their rows and cells.
     fn has_tables(&self) -> bool {
         let known = |name| self.schema().block_spec(name).is_some();
-        known("table") && known("table_row") && known("table_cell")
+        known(block::TABLE) && known(block::TABLE_ROW) && known(block::TABLE_CELL)
     }
 
     /// Copies a table with the text of its cells. Its rows and columns are

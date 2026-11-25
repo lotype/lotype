@@ -4,6 +4,7 @@
 
 mod atom;
 mod attrs;
+mod block_kind;
 mod clipboard;
 mod collab;
 mod commands;
@@ -29,7 +30,8 @@ mod trash;
 mod value;
 
 pub use atom::{Atom, OBJECT};
-pub use attrs::{Align, BlockColor, COLOR_NAMES, alert, attr, mark};
+pub use attrs::{Align, BlockColor, COLOR_NAMES, alert, attr, block, mark};
+pub use block_kind::BlockKind;
 pub use collab::Version;
 pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::{Changes, Editor};
