@@ -10,7 +10,7 @@ use gpui::{
 use gpui_component::ActiveTheme;
 use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr};
 
-use super::alert::alert_color;
+use super::alert::alert_bar;
 use super::input::Shown;
 use super::{BlockContent, EditorView};
 
@@ -256,7 +256,7 @@ impl EditorView {
         };
         let bars = row.bars.iter().map(|(depth, kind)| {
             let color = match kind {
-                Some(kind) => alert_color(kind, cx),
+                Some(kind) => alert_bar(kind, cx),
                 None => cx.theme().border,
             };
             let left = px(indent(*depth) + 2.);
