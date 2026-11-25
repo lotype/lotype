@@ -76,7 +76,7 @@ pub fn default_keymap() -> Vec<KeyBinding> {
         ("Mod-Alt-0", Command::turn_into(&BlockKind::Paragraph)),
         (
             "Mod-Shift-7",
-            Command::turn_into(&BlockKind::NumberedListItem),
+            Command::turn_into(&BlockKind::NumberedListItem { start: None }),
         ),
         (
             "Mod-Shift-8",

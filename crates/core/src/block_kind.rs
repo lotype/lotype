@@ -1,7 +1,7 @@
 //! The built-in block types with the attributes that make each what it is,
 //! to turn blocks into and to make them without spelling a name or a key.
 
-use crate::attrs::{attr, block};
+use crate::attrs::{LARGEST_LIST_NUMBER, attr, block};
 use crate::schema::MAX_HEADING_LEVEL;
 use crate::{AlertKind, BlockId, Command, Document, Editor, Result, Value};
 
@@ -22,7 +22,11 @@ pub enum BlockKind {
     /// An item of a bulleted list.
     BulletListItem,
     /// An item of a numbered list, counted along its siblings.
-    NumberedListItem,
+    NumberedListItem {
+        /// The number its list starts at, where it is the list's first item
+        /// and that is no 1; within 0 to CommonMark's largest.
+        start: Option<i64>,
+    },
     /// An item of a check list.
     CheckListItem {
         /// Whether it is checked.
@@ -64,7 +68,7 @@ impl BlockKind {
             Self::Quote => block::QUOTE,
             Self::Alert(_) => block::ALERT,
             Self::BulletListItem => block::BULLET_LIST_ITEM,
-            Self::NumberedListItem => block::NUMBERED_LIST_ITEM,
+            Self::NumberedListItem { .. } => block::NUMBERED_LIST_ITEM,
             Self::CheckListItem { .. } => block::CHECK_LIST_ITEM,
             Self::ToggleListItem => block::TOGGLE_LIST_ITEM,
             Self::CodeBlock { .. } => block::CODE_BLOCK,
@@ -90,6 +94,13 @@ impl BlockKind {
                 )]
             }
             Self::Alert(kind) => vec![(attr::KIND.to_owned(), kind.name().into())],
+            Self::NumberedListItem { start } => start
+                .map(|start| {
+                    let start = start.clamp(0, LARGEST_LIST_NUMBER);
+                    (attr::START.to_owned(), start.into())
+                })
+                .into_iter()
+                .collect(),
             Self::CheckListItem { checked } => vec![(attr::CHECKED.to_owned(), (*checked).into())],
             Self::CodeBlock { language } => language
                 .iter()
@@ -113,8 +124,7 @@ impl BlockKind {
     ///
     /// The kind is as the document reads it: a heading's level within its
     /// range, an alert's kind a note where no one knows it, no language for
-    /// an empty one. What is no part of a kind is left out, as the number a
-    /// numbered list starts at, so a block made of it starts without.
+    /// an empty one, a list's start within its range.
     pub fn of(doc: &Document, block: BlockId) -> Option<Self> {
         let text = |key| doc.text_of(block, key);
         Some(match doc.block_type(block).ok()?.as_str() {
@@ -123,7 +133,12 @@ impl BlockKind {
             block::QUOTE => Self::Quote,
             block::ALERT => Self::Alert(doc.alert_kind(block)),
             block::BULLET_LIST_ITEM => Self::BulletListItem,
-            block::NUMBERED_LIST_ITEM => Self::NumberedListItem,
+            block::NUMBERED_LIST_ITEM => Self::NumberedListItem {
+                start: match doc.attr(block, attr::START) {
+                    Ok(Some(Value::Int(start))) => Some(start.clamp(0, LARGEST_LIST_NUMBER)),
+                    _ => None,
+                },
+            },
             block::CHECK_LIST_ITEM => Self::CheckListItem {
                 checked: doc.is_checked(block),
             },
@@ -166,7 +181,8 @@ impl Editor {
     /// text and the other does not, so text becomes no divider, image, file
     /// or alert; and a block already of the type keeps the attributes the
     /// kind leaves out, so `CodeBlock { language: None }` leaves a code
-    /// block its language.
+    /// block its language and `NumberedListItem { start: None }` a list its
+    /// start.
     pub fn turn_into(&mut self, kind: &BlockKind) -> Result<()> {
         self.set_block(kind.name(), &kind.attrs())
     }

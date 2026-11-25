@@ -167,6 +167,38 @@ fn numbered_items_count_on_from_where_their_list_starts() {
 }
 
 #[test]
+fn a_list_starts_where_it_is_told_from_any_of_its_items() {
+    use lotype_core::{BlockKind, Error};
+    let mut doc = Document::new(Schema::builtin());
+    doc.insert_markdown(None, 0, "- x\n\n1. a\n2. b\n").unwrap();
+    let blocks = doc.blocks();
+    let (bullet, first, second) = (blocks[0], blocks[1], blocks[2]);
+    let mut ed = Editor::new(doc);
+    let numbers = |ed: &Editor| {
+        let doc = ed.document();
+        let first_number = doc.list_number(first, None);
+        (first_number, doc.list_number(second, first_number))
+    };
+    ed.set_list_start(second, Some(7)).unwrap();
+    assert_eq!(numbers(&ed), (Some(7), Some(8)));
+    assert_eq!(
+        BlockKind::of(ed.document(), first),
+        Some(BlockKind::NumberedListItem { start: Some(7) })
+    );
+    assert_eq!(ed.document().attr(second, attr::START).unwrap(), None);
+    ed.undo().unwrap();
+    assert_eq!(numbers(&ed), (Some(1), Some(2)));
+    ed.set_list_start(first, Some(4)).unwrap();
+    assert_eq!(numbers(&ed), (Some(4), Some(5)));
+    ed.set_list_start(first, None).unwrap();
+    assert_eq!(numbers(&ed), (Some(1), Some(2)));
+    assert!(matches!(
+        ed.set_list_start(bullet, Some(2)),
+        Err(Error::NotOfType("numbered_list_item"))
+    ));
+}
+
+#[test]
 fn the_block_types_a_toolbar_offers_describe_the_blocks_of_them() {
     use lotype_core::default_block_types;
     let types = default_block_types();

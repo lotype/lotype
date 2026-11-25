@@ -3,7 +3,7 @@
 //! undo step, so that no view writes a block's attributes itself.
 
 use super::Editor;
-use crate::attrs::{Align, BlockColor, attr, block as types};
+use crate::attrs::{Align, BlockColor, LARGEST_LIST_NUMBER, attr, block as types};
 use crate::{AlertKind, BlockId, Document, Error, Pos, Result, Selection};
 
 /// Fails unless `block` is of the type `name`.
@@ -56,6 +56,30 @@ impl Editor {
         check_type(&self.doc, block, types::ALERT)?;
         self.apply(|doc, selection| {
             doc.set_attr(block, attr::KIND, kind.name())?;
+            Ok(selection.cloned())
+        })
+    }
+
+    /// Makes the numbered list `block` is in start at `start`, within 0 to
+    /// CommonMark's largest, or at 1 for `None`; fails for a block that is
+    /// no numbered list item. The list's first item holds its start.
+    pub fn set_list_start(&mut self, block: BlockId, start: Option<i64>) -> Result<()> {
+        check_type(&self.doc, block, types::NUMBERED_LIST_ITEM)?;
+        self.apply(|doc, selection| {
+            let siblings = doc.children(doc.parent(block)?)?;
+            let at = doc.index_of(block)?;
+            let numbered = |sibling: &BlockId| {
+                doc.block_type(*sibling)
+                    .is_ok_and(|name| name == types::NUMBERED_LIST_ITEM)
+            };
+            let before = siblings[..at].iter().rev().take_while(|b| numbered(b));
+            let first = before.last().copied().unwrap_or(block);
+            match start {
+                Some(start) => {
+                    doc.set_attr(first, attr::START, start.clamp(0, LARGEST_LIST_NUMBER))?
+                }
+                None => doc.remove_attr(first, attr::START)?,
+            }
             Ok(selection.cloned())
         })
     }

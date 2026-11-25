@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::{MAX_HEADING_LEVEL, Value, block, mark};
+use crate::{MAX_HEADING_LEVEL, Value, attr, block, mark};
 
 /// What a paragraph becomes.
 #[derive(Debug, PartialEq)]
@@ -55,7 +55,7 @@ pub(crate) fn block_rule(typed: &str) -> Option<BlockRule> {
         let start: i64 = number.parse().ok()?;
         let mut rule = block(block::NUMBERED_LIST_ITEM)?;
         if start != 1 {
-            rule.attrs.push(("start", start.into()));
+            rule.attrs.push((attr::START, start.into()));
         }
         return Some(rule);
     }

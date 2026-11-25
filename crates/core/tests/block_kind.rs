@@ -12,8 +12,9 @@ fn a_block_turns_into_a_kind_and_reads_back_as_it() {
         BlockKind::CodeBlock {
             language: Some("rust".into()),
         },
-        BlockKind::NumberedListItem,
+        BlockKind::NumberedListItem { start: Some(3) },
         BlockKind::Paragraph,
+        BlockKind::NumberedListItem { start: None },
     ] {
         ed.turn_into(&kind).unwrap();
         assert_eq!(BlockKind::of(ed.document(), block), Some(kind));
