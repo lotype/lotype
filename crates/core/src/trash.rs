@@ -42,6 +42,7 @@ impl Document {
             return Ok(trash);
         }
         let trash = self.tree.create(TreeParentId::Root)?;
+        self.places = self.places.take().map(|_| Default::default());
         self.tree.get_meta(trash)?.insert(TRASH, true)?;
         self.trash.insert(trash);
         Ok(trash)
@@ -118,6 +119,11 @@ impl Document {
     /// Moves a node and everything in it to the trash.
     pub(crate) fn discard(&mut self, node: TreeID) -> Result<()> {
         let trash = self.trash_node()?;
+        // Where it leaves, the children after it are one place up.
+        let from = self.tree.parent(node);
+        if let Some((places, from)) = self.places.as_mut().zip(from) {
+            places.remove(&from);
+        }
         self.tree.mov(node, TreeParentId::Node(trash))?;
         self.record(|| Box::new(move |doc| doc.discard(node)));
         Ok(())
@@ -148,6 +154,13 @@ impl Document {
         let len = self.tree.children_num(parent).unwrap_or(0) - usize::from(here);
         if index + hidden == len {
             return len;
+        }
+        // Before the block last placed here, or right after it, with
+        // nothing between them but what is no block.
+        let placed = self.places.as_ref().and_then(|places| places.get(&parent));
+        if let Some((at, raw)) = placed.filter(|(at, _)| !here && (index == *at || index == at + 1))
+        {
+            return raw + (index - at);
         }
         let mut raw = self.tree.children(parent).unwrap_or_default();
         raw.retain(|id| Some(*id) != moving);

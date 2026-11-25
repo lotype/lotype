@@ -367,6 +367,15 @@ impl Document {
         index: usize,
         markdown: &str,
     ) -> Result<Vec<BlockId>> {
+        self.batch(|doc| doc.read_markdown(parent, index, markdown))
+    }
+
+    fn read_markdown(
+        &mut self,
+        parent: Option<BlockId>,
+        index: usize,
+        markdown: &str,
+    ) -> Result<Vec<BlockId>> {
         let top = parent;
         let depth = top.map_or(Ok(0), |parent| self.depth(parent))?;
         let mut next = HashMap::from([(top, index)]);

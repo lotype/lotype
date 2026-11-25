@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -66,6 +66,10 @@ pub struct Document {
     pub(crate) draft: Option<Draft>,
     /// The nodes marked as trash, wherever a peer has put them.
     pub(crate) trash: HashSet<TreeID>,
+    /// While a run of inserts is made ([`Document::batch`]): for a parent,
+    /// the child last placed in it, as its index among the blocks and
+    /// Loro's among all the children.
+    pub(crate) places: Option<HashMap<TreeParentId, (usize, usize)>>,
     schema: Schema,
 }
 
@@ -88,6 +92,7 @@ impl Document {
             order: Mutex::default(),
             draft: None,
             trash: HashSet::new(),
+            places: None,
             schema,
         }
     }
@@ -258,10 +263,35 @@ impl Document {
     ) -> Result<()> {
         self.check_index(parent, index, Some(node))?;
         let parent_id = self.slot(parent)?.0;
+        let from = self.tree.parent(node);
         let raw = self.raw_index(parent_id, index, Some(node));
         self.tree.mov_to(node, parent_id, raw)?;
+        if let Some(places) = &mut self.places {
+            // Where it left, the children after it are one place up.
+            if let Some(from) = from.filter(|from| *from != parent_id) {
+                places.remove(&from);
+            }
+            places.insert(parent_id, (index, raw));
+        }
         self.record(|| Box::new(move |doc| doc.relocate_node(node, parent, index)));
         Ok(())
+    }
+
+    /// Runs `work`, which places many blocks. Finding Loro's index for a
+    /// block's reads all its siblings where a trash node is among them, as
+    /// at the top level; inside, a block placed next to the last one placed
+    /// in the same parent is put there without that, so a run of blocks
+    /// costs its length and not that times the siblings. Only the
+    /// document's own methods may change it meanwhile, which is why this is
+    /// not kept between calls: an import or an undo moves blocks unseen.
+    pub(crate) fn batch<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = self.places.is_some();
+        self.places.get_or_insert_default();
+        let done = work(self);
+        if !outer {
+            self.places = None;
+        }
+        done
     }
 
     /// The name of `block`'s type, `table_cell` for a cell.

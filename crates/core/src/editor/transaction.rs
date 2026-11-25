@@ -103,9 +103,7 @@ impl Editor {
             self.fork = Some(draft);
         }
         let result = self.step(false, |doc, _| {
-            for edit in edits {
-                edit(doc)?;
-            }
+            doc.batch(|doc| edits.into_iter().try_for_each(|edit| edit(doc)))?;
             Ok(after)
         });
         self.history.group_end();

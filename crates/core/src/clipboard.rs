@@ -103,13 +103,15 @@ impl Document {
         index: usize,
         other: &Document,
     ) -> Result<Vec<BlockId>> {
-        let mut made = Vec::new();
-        for block in other.children(None)? {
-            if let Some(copy) = self.copy_block(other, block, parent, index + made.len())? {
-                made.push(copy);
+        self.batch(|doc| {
+            let mut made = Vec::new();
+            for block in other.children(None)? {
+                if let Some(copy) = doc.copy_block(other, block, parent, index + made.len())? {
+                    made.push(copy);
+                }
             }
-        }
-        Ok(made)
+            Ok(made)
+        })
     }
 
     fn copy_block(
