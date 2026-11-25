@@ -12,6 +12,7 @@
 
 mod apply;
 mod context;
+mod diff;
 mod partial;
 mod provider;
 mod selected;
@@ -23,6 +24,7 @@ mod tools;
 
 pub use apply::EditLocation;
 pub use context::DocumentState;
+pub use diff::{Diff, word_diff};
 pub use provider::{
     LlmError, LlmEvent, LlmProvider, LlmRequest, LlmStream, Message, Role, ToolSpec,
 };
