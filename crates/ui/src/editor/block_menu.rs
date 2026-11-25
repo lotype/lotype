@@ -8,13 +8,10 @@ use gpui::{
 };
 use gpui_component::list::ListItem;
 use gpui_component::{ThemeStyled, v_flex};
-use lotype_core::{BlockId, Selection, Value};
+use lotype_core::{BlockColor, BlockId, Selection, Value};
 
 use super::EditorView;
 use crate::marks::{COLORS, color};
-
-const TEXT_COLOR: &str = "text_color";
-const BACKGROUND_COLOR: &str = "background_color";
 
 impl EditorView {
     /// Deletes the selected blocks where `block` is one of them, or else
@@ -34,31 +31,16 @@ impl EditorView {
         }
     }
 
-    /// Gives `block` the color named `name` under `key`, or none for `None`.
-    fn color_block(&mut self, block: BlockId, key: &'static str, name: Option<&'static str>) {
-        self.editor
-            .apply(|doc, selection| {
-                match name {
-                    Some(name) => doc.set_attr(block, key, name)?,
-                    None => doc.remove_attr(block, key)?,
-                }
-                Ok(selection.cloned())
-            })
-            .ok();
-    }
-
-    /// A row of swatches for the block's colors under `key`, the first one
-    /// the default.
-    fn swatches(&self, block: BlockId, key: &'static str, cx: &mut Context<Self>) -> Div {
-        let current = match self.editor.document().attr(block, key) {
-            Ok(Some(Value::Str(name))) => Some(name),
-            _ => None,
-        };
+    /// A row of swatches for one of the block's colors, the first one the
+    /// default.
+    fn swatches(&self, block: BlockId, which: BlockColor, cx: &mut Context<Self>) -> Div {
+        let current = self.editor.document().block_color(block, which);
         let pick = move |view: &mut Self, name: Option<&'static str>| {
-            view.color_block(block, key, name);
+            view.editor.set_block_color(block, which, name).ok();
             view.side_menu.menu = None;
         };
-        swatch_row(current.as_deref(), key == BACKGROUND_COLOR, key, pick, cx)
+        let background = which == BlockColor::Background;
+        swatch_row(current.as_deref(), background, which.key(), pick, cx)
     }
 
     /// The block menu for `block`, placed where it is rendered, when open.
@@ -109,9 +91,9 @@ impl EditorView {
             )
             .when(colored, |menu| {
                 menu.child(title("Text"))
-                    .child(self.swatches(block, TEXT_COLOR, cx))
+                    .child(self.swatches(block, BlockColor::Text, cx))
                     .child(title("Background"))
-                    .child(self.swatches(block, BACKGROUND_COLOR, cx))
+                    .child(self.swatches(block, BlockColor::Background, cx))
             });
         Some(
             deferred(anchored().child(menu))

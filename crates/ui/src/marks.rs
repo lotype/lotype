@@ -4,7 +4,7 @@ use gpui::{
     FontStyle, FontWeight, HighlightStyle, Hsla, Rgba, StrikethroughStyle, TextRun, TextStyle,
     UnderlineStyle, px, rgb,
 };
-use lotype_core::{Span, Value};
+use lotype_core::{Span, Value, mark};
 
 pub(crate) const CODE_FONT: &str = "Menlo";
 
@@ -39,28 +39,28 @@ fn text_run(span: &Span, base: &TextStyle) -> TextRun {
     // Marks come sorted by name, so an explicit color wins over the link's.
     for (name, value) in &span.marks {
         match name.as_str() {
-            "background_color" => style.background_color = color(value, true),
-            "bold" => style.font_weight = Some(FontWeight::BOLD),
-            "code" => {
+            mark::BACKGROUND_COLOR => style.background_color = color(value, true),
+            mark::BOLD => style.font_weight = Some(FontWeight::BOLD),
+            mark::CODE => {
                 let code = Hsla::from(rgb(0xebeced));
                 style.background_color.get_or_insert(code);
             }
-            "italic" => style.font_style = Some(FontStyle::Italic),
-            "link" => {
+            mark::ITALIC => style.font_style = Some(FontStyle::Italic),
+            mark::LINK => {
                 style.color = Some(link);
                 style.underline = Some(line(Some(link)));
             }
-            "strike" => {
+            mark::STRIKE => {
                 let (thickness, color) = (px(1.), None);
                 style.strikethrough = Some(StrikethroughStyle { thickness, color });
             }
-            "text_color" => style.color = color(value, false).or(style.color),
-            "underline" => style.underline = Some(line(None)),
+            mark::TEXT_COLOR => style.color = color(value, false).or(style.color),
+            mark::UNDERLINE => style.underline = Some(line(None)),
             _ => {}
         }
     }
     let mut run = base.clone().highlight(style).to_run(span.text.len());
-    if span.marks.contains_key("code") {
+    if span.marks.contains_key(mark::CODE) {
         run.font.family = CODE_FONT.into();
     }
     run

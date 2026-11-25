@@ -7,7 +7,7 @@ use gpui::{
 };
 use gpui_component::list::ListItem;
 use gpui_component::{Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, Document, Value};
+use lotype_core::{BlockId, Document, attr};
 
 use super::EditorView;
 use crate::icons::{self, icon};
@@ -25,10 +25,7 @@ const KINDS: [Kind; 5] = [
 ];
 
 fn kind(doc: &Document, block: BlockId) -> Kind {
-    let name = match doc.attr(block, "kind") {
-        Ok(Some(Value::Str(name))) => name,
-        _ => String::new(),
-    };
+    let name = doc.text_of(block, attr::KIND);
     let known = KINDS.iter().find(|kind| kind.0.eq_ignore_ascii_case(&name));
     *known.unwrap_or(&KINDS[0])
 }
@@ -69,12 +66,7 @@ impl EditorView {
         let items = KINDS.iter().map(|&(name, title, color, svg)| {
             let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
                 view.alert_menu = None;
-                view.editor
-                    .apply(|doc, selection| {
-                        doc.set_attr(block, "kind", name)?;
-                        Ok(selection.cloned())
-                    })
-                    .ok();
+                view.editor.set_alert_kind(block, name).ok();
                 cx.notify();
             });
             let row = h_flex()

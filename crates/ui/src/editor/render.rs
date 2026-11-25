@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
     TextStyle, UnderlineStyle, Window, div, px, rems, rgb,
 };
-use lotype_core::{Atom, BlockId, Content, MAX_HEADING_LEVEL, Role, Selection, Span, Value};
+use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span};
 
 use super::EditorView;
 
@@ -44,22 +44,16 @@ impl EditorView {
             return None;
         }
         // Where the lines go in their room, for a type that takes a style.
-        let align = match doc.attr(block, "text_alignment") {
-            Ok(Some(Value::Str(align))) if spec.takes_style() => match align.as_str() {
-                "center" => 0.5,
-                "right" => 1.,
-                _ => 0.,
-            },
-            _ => 0.,
+        let align = match doc.alignment(block) {
+            Align::Left => 0.,
+            Align::Center => 0.5,
+            Align::Right => 1.,
         };
         let mut style = base.clone();
         let mut line = div();
         match block_type.as_str() {
             "heading" => {
-                let level = match doc.attr(block, "level") {
-                    Ok(Some(Value::Int(level))) => level.clamp(1, MAX_HEADING_LEVEL),
-                    _ => 1,
-                };
+                let level = doc.heading_level(block);
                 let sizes = [2.0, 1.5, 1.25, 1.125, 1.0];
                 // The text takes its size from the element around it.
                 line = line.text_size(rems(sizes[level as usize - 1]));

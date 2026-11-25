@@ -11,7 +11,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::list::ListItem;
 use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex, v_flex};
-use lotype_core::{BlockId, MAX_HEADING_LEVEL, Value};
+use lotype_core::{BlockId, Value, attr, mark};
 
 use super::EditorView;
 use super::block_menu::swatch_row;
@@ -64,10 +64,7 @@ impl EditorView {
     ) -> Option<(AnyElement, Option<AnyElement>)> {
         let doc = self.editor.document();
         let kind = doc.block_type(first).ok()?;
-        let level = match doc.attr(first, "level") {
-            Ok(Some(Value::Int(level))) => Some(level.clamp(1, MAX_HEADING_LEVEL)),
-            _ => Some(1),
-        };
+        let level = Some(doc.heading_level(first));
         let schema = doc.schema();
         let offered =
             |(name, ..): &(&str, Option<i64>, &[u8], &str)| schema.block_spec(name).is_some();
@@ -97,7 +94,7 @@ impl EditorView {
                 let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
                     let mut attrs = Vec::new();
                     if let Some(level) = level {
-                        attrs.push(("level".to_owned(), Value::Int(level)));
+                        attrs.push((attr::LEVEL.to_owned(), Value::Int(level)));
                     }
                     view.toolbar.menu = None;
                     view.editor.set_block(name, &attrs).ok();
@@ -143,7 +140,8 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> Option<(AnyElement, Option<AnyElement>)> {
         let schema = self.editor.document().schema();
-        let marks = ["text_color", "background_color"].map(|name| schema.mark_spec(name).is_some());
+        let marks =
+            [mark::TEXT_COLOR, mark::BACKGROUND_COLOR].map(|name| schema.mark_spec(name).is_some());
         if marks == [false, false] {
             return None;
         }
@@ -174,8 +172,8 @@ impl EditorView {
         };
         let mut rows = Vec::new();
         for (mark, shown, label) in [
-            ("text_color", marks[0], "Text"),
-            ("background_color", marks[1], "Background"),
+            (mark::TEXT_COLOR, marks[0], "Text"),
+            (mark::BACKGROUND_COLOR, marks[1], "Background"),
         ] {
             if !shown {
                 continue;
@@ -184,7 +182,7 @@ impl EditorView {
                 view.editor.set_mark(mark, name.map(Value::from)).ok();
                 view.toolbar.menu = None;
             };
-            let selector = if mark == "text_color" {
+            let selector = if mark == mark::TEXT_COLOR {
                 "mark-text_color"
             } else {
                 "mark-background_color"
@@ -194,7 +192,7 @@ impl EditorView {
             rows.push(
                 swatch_row(
                     current.as_deref(),
-                    mark == "background_color",
+                    mark == mark::BACKGROUND_COLOR,
                     selector,
                     pick,
                     cx,

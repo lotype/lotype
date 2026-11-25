@@ -11,7 +11,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex};
-use lotype_core::{BlockId, Pos, Selection, Value};
+use lotype_core::{Align, BlockId, Pos, Selection, Value, mark};
 
 use super::EditorView;
 use super::popup::{Placement, popup};
@@ -19,18 +19,18 @@ use crate::icons::{self, icon};
 
 /// The marks on the toolbar, with their icons and names.
 const MARKS: [(&str, &[u8], &str); 5] = [
-    ("bold", icons::BOLD, "Bold"),
-    ("italic", icons::ITALIC, "Italic"),
-    ("underline", icons::UNDERLINE, "Underline"),
-    ("strike", icons::STRIKE, "Strikethrough"),
-    ("code", icons::CODE, "Code"),
+    (mark::BOLD, icons::BOLD, "Bold"),
+    (mark::ITALIC, icons::ITALIC, "Italic"),
+    (mark::UNDERLINE, icons::UNDERLINE, "Underline"),
+    (mark::STRIKE, icons::STRIKE, "Strikethrough"),
+    (mark::CODE, icons::CODE, "Code"),
 ];
 
 /// The alignments, as `text_alignment` names them; left is none at all.
-const ALIGNMENTS: [(&str, &[u8], &str); 3] = [
-    ("left", icons::ALIGN_LEFT, "Align left"),
-    ("center", icons::ALIGN_CENTER, "Align center"),
-    ("right", icons::ALIGN_RIGHT, "Align right"),
+const ALIGNMENTS: [(Align, &str, &[u8], &str); 3] = [
+    (Align::Left, "left", icons::ALIGN_LEFT, "Align left"),
+    (Align::Center, "center", icons::ALIGN_CENTER, "Align center"),
+    (Align::Right, "right", icons::ALIGN_RIGHT, "Align right"),
 ];
 
 /// The toolbar's state between frames.
@@ -154,17 +154,13 @@ impl EditorView {
                 tagged(name, button.on_click(click))
             })
             .collect();
-        let alignment = match doc.attr(first, "text_alignment") {
-            Ok(Some(Value::Str(alignment))) => alignment,
-            _ => "left".to_owned(),
-        };
-        let alignments = ALIGNMENTS.into_iter().map(|(name, svg, tip)| {
+        let alignment = doc.alignment(first);
+        let alignments = ALIGNMENTS.into_iter().map(|(align, name, svg, tip)| {
             let click = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
-                let value = (name != "left").then(|| Value::from(name));
-                view.editor.set_block_attr("text_alignment", value).ok();
+                view.editor.set_alignment(align).ok();
                 view.selection_changed(window, cx);
             });
-            let on = alignment == name;
+            let on = alignment == align;
             tagged(name, button(name, svg, tip).selected(on).on_click(click))
         });
         let alignments: Vec<_> = if styled {
@@ -180,8 +176,8 @@ impl EditorView {
             view.editor.outdent().ok();
             view.selection_changed(window, cx);
         });
-        let link = schema.mark_spec("link").is_some().then(|| {
-            let url = match active.get("link") {
+        let link = schema.mark_spec(mark::LINK).is_some().then(|| {
+            let url = match active.get(mark::LINK) {
                 Some(Value::Str(url)) => url.clone(),
                 _ => String::new(),
             };

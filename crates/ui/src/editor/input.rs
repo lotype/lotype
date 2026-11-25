@@ -124,17 +124,7 @@ impl EditorView {
     /// the first click, key or text: a document is changed only once
     /// someone writes in it. Returns whether it did.
     pub(crate) fn start_writing(&mut self) -> bool {
-        let doc = self.editor.document();
-        let empty = self.editor.selection().is_none()
-            && doc.children(None).is_ok_and(|blocks| blocks.is_empty());
-        empty
-            && self
-                .editor
-                .apply(|doc, _| {
-                    let paragraph = doc.insert_block(None, 0, &doc.text_block()?)?;
-                    Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
-                })
-                .is_ok()
+        self.editor.start_writing().unwrap_or(false)
     }
 
     pub(crate) fn commit(&mut self, text: &str) {

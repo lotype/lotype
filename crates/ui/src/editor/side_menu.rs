@@ -12,7 +12,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{Sizable, h_flex};
-use lotype_core::{BlockId, Pos, Selection};
+use lotype_core::{BlockId, Pos};
 
 use super::EditorView;
 use crate::icons::{self, icon};
@@ -237,37 +237,13 @@ impl EditorView {
     /// Moves `block` next to `target`, among `target`'s siblings, as one
     /// undo step. A block cannot go inside itself, and does not.
     fn drop_block(&mut self, block: BlockId, target: BlockId, after: bool) {
-        self.editor
-            .apply(|doc, selection| {
-                doc.move_block_next_to(block, target, after)?;
-                Ok(selection.cloned())
-            })
-            .ok();
+        self.editor.move_block_next_to(block, target, after).ok();
     }
 
     /// Adds an empty paragraph below `block`, or takes `block` where it is
     /// one, and opens the slash menu in it.
     fn add_below(&mut self, block: BlockId) {
-        let doc = self.editor.document();
-        let text = doc.schema().text_block();
-        let empty = doc
-            .block_type(block)
-            .is_ok_and(|kind| text == Some(kind.as_str()))
-            && doc.text_len(block).is_ok_and(|len| len == 0)
-            && doc
-                .children(Some(block))
-                .is_ok_and(|children| children.is_empty());
-        let placed = if empty {
-            self.editor
-                .set_selection(Some(Selection::caret(Pos::new(block, 0))))
-        } else {
-            self.editor.apply(|doc, _| {
-                let index = doc.index_of(block)? + 1;
-                let text = doc.text_block()?;
-                let paragraph = doc.insert_block(doc.parent(block)?, index, &text)?;
-                Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
-            })
-        };
+        let placed = self.editor.add_text_block_after(block);
         if placed.is_ok() {
             self.editor.insert_text("/").ok();
         }

@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, SharedString,
     TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
-use lotype_core::{BlockId, Document, Pos, Role, Selection, Value};
+use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr};
 
 use super::EditorView;
 use super::alert::alert_color;
@@ -79,7 +79,7 @@ pub(crate) fn rows(
         numbers.resize(depth + 1, None);
         let number = (block_type == "numbered_list_item").then(|| match numbers[depth] {
             Some(before) => before.saturating_add(1),
-            None => match doc.attr(block, "start") {
+            None => match doc.attr(block, attr::START) {
                 Ok(Some(Value::Int(start))) => start,
                 _ => 1,
             },
@@ -121,13 +121,6 @@ pub(crate) fn rows(
     rows
 }
 
-fn text_attr(doc: &Document, block: BlockId, key: &str) -> String {
-    match doc.attr(block, key) {
-        Ok(Some(Value::Str(text))) => text,
-        _ => String::new(),
-    }
-}
-
 fn muted() -> Hsla {
     rgb(0x8a8f98).into()
 }
@@ -150,13 +143,11 @@ impl EditorView {
         let doc = self.editor.document();
         // A block's own colors, which its marks go on top of, where its
         // type takes colors: code, math and diagrams have their own.
-        let spec = doc.schema().block_spec(&row.block_type);
-        let colored = spec.is_some_and(|spec| spec.takes_style());
-        let painted = |key| match doc.attr(block, key) {
-            Ok(Some(value)) if colored => crate::marks::color(&value, key == "background_color"),
-            _ => None,
+        let painted = |which| {
+            let name = doc.block_color(block, which)?;
+            crate::marks::color(&Value::Str(name), which == BlockColor::Background)
         };
-        let (ink, fill) = (painted("text_color"), painted("background_color"));
+        let (ink, fill) = (painted(BlockColor::Text), painted(BlockColor::Background));
         let mut colored = base.clone();
         if let Some(ink) = ink {
             colored.color = ink;
@@ -198,8 +189,8 @@ impl EditorView {
             }
             "image" => {
                 let (url, caption) = (
-                    text_attr(doc, block, "url"),
-                    text_attr(doc, block, "caption"),
+                    doc.text_of(block, attr::URL),
+                    doc.text_of(block, attr::CAPTION),
                 );
                 let label = if caption.is_empty() {
                     url.clone()
@@ -220,7 +211,10 @@ impl EditorView {
                 div().flex().flex_col().child(image).children(caption)
             }
             "file" => {
-                let (url, name) = (text_attr(doc, block, "url"), text_attr(doc, block, "name"));
+                let (url, name) = (
+                    doc.text_of(block, attr::URL),
+                    doc.text_of(block, attr::NAME),
+                );
                 let name = if name.is_empty() { url } else { name };
                 div().text_color(rgb(0x0969da)).child(format!("📎 {name}"))
             }
@@ -298,8 +292,7 @@ impl EditorView {
             "bullet_list_item" => slot.child("•"),
             "numbered_list_item" => slot.child(format!("{}.", row.number.unwrap_or(1))),
             "check_list_item" => {
-                let doc = self.editor.document();
-                let checked = matches!(doc.attr(block, "checked"), Ok(Some(Value::Bool(true))));
+                let checked = self.editor.document().is_checked(block);
                 let mut check = div()
                     .mt(px(4.))
                     .size(px(14.))
@@ -316,7 +309,7 @@ impl EditorView {
                 }
                 let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    view.set_checked(block, !checked);
+                    view.editor.set_checked(block, !checked).ok();
                     cx.notify();
                 });
                 slot.child(check.on_mouse_down(MouseButton::Left, click))
@@ -324,15 +317,6 @@ impl EditorView {
             _ => return None,
         };
         Some(marker.into_any_element())
-    }
-
-    fn set_checked(&mut self, block: BlockId, checked: bool) {
-        self.editor
-            .apply(|doc, selection| {
-                doc.set_attr(block, "checked", checked)?;
-                Ok(selection.cloned())
-            })
-            .ok();
     }
 
     /// Closes a toggle, taking the selection out of what it hides.
@@ -406,7 +390,7 @@ mod tests {
         let second = doc
             .insert_block(Some(quote), 1, "numbered_list_item")
             .unwrap();
-        doc.set_attr(first, "start", 3).unwrap();
+        doc.set_attr(first, attr::START, 3).unwrap();
         let toggle = doc.insert_block(None, 2, "toggle_list_item").unwrap();
         let inside = doc.insert_block(Some(toggle), 0, "paragraph").unwrap();
 

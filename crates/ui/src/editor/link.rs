@@ -10,12 +10,11 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, ThemeStyled, h_flex};
+use lotype_core::mark::LINK;
 use lotype_core::{Pos, Selection, Value};
 
 use super::EditorView;
 use super::popup::{Placement, popup};
-
-const LINK: &str = "link";
 
 /// The links' state between frames.
 #[derive(Default)]
