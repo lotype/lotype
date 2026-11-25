@@ -12,7 +12,7 @@ pub mod attr {
     pub const CHECKED: &str = "checked";
     /// The number a numbered list starts at, on its first item.
     pub const START: &str = "start";
-    /// An alert's kind.
+    /// An alert's kind, one of [`alert::KINDS`](crate::alert::KINDS).
     pub const KIND: &str = "kind";
     /// A code block's language.
     pub const LANGUAGE: &str = "language";
@@ -29,6 +29,23 @@ pub mod attr {
     /// Where a block's lines go: `center` or `right`, or left without it.
     pub const TEXT_ALIGNMENT: &str = "text_alignment";
 }
+
+/// The kinds of an alert, as GitHub has them.
+pub mod alert {
+    pub const NOTE: &str = "note";
+    pub const TIP: &str = "tip";
+    pub const IMPORTANT: &str = "important";
+    pub const WARNING: &str = "warning";
+    pub const CAUTION: &str = "caution";
+    /// All of them, the note first, which a kind no one knows is read as.
+    pub const KINDS: [&str; 5] = [NOTE, TIP, IMPORTANT, WARNING, CAUTION];
+}
+
+/// The named colors of a block and of text, BlockNote's, so that documents
+/// written with it look the same. A view picks how each looks.
+pub const COLOR_NAMES: [&str; 9] = [
+    "gray", "brown", "red", "orange", "yellow", "green", "blue", "purple", "pink",
+];
 
 /// The names of the built-in marks.
 pub mod mark {
@@ -130,6 +147,15 @@ impl Document {
     pub fn block_color(&self, block: BlockId, which: BlockColor) -> Option<String> {
         let styled = self.spec(block).is_ok_and(|spec| spec.takes_style());
         styled.then(|| self.text_attr(block, which.key()))?
+    }
+
+    /// An alert's kind, a note for a kind no one knows.
+    pub fn alert_kind(&self, block: BlockId) -> &'static str {
+        let kind = self.text_attr(block, attr::KIND).unwrap_or_default();
+        let known = alert::KINDS
+            .into_iter()
+            .find(|known| known.eq_ignore_ascii_case(&kind));
+        known.unwrap_or(alert::NOTE)
     }
 
     /// An attribute that is text, as an image's address or a file's name,

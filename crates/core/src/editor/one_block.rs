@@ -3,8 +3,8 @@
 //! undo step, so that no view writes a block's attributes itself.
 
 use super::Editor;
-use crate::attrs::{Align, BlockColor, attr};
-use crate::{BlockId, Pos, Result, Selection};
+use crate::attrs::{Align, BlockColor, alert, attr};
+use crate::{BlockId, Error, Pos, Result, Selection};
 
 impl Editor {
     /// Checks or unchecks a check list item.
@@ -40,8 +40,11 @@ impl Editor {
         self.set_block_attr(attr::TEXT_ALIGNMENT, align.value())
     }
 
-    /// Sets an alert's kind.
+    /// Sets an alert's kind, one of [`alert::KINDS`].
     pub fn set_alert_kind(&mut self, block: BlockId, kind: &str) -> Result<()> {
+        if !alert::KINDS.contains(&kind) {
+            return Err(Error::UnknownAlertKind(kind.to_owned()));
+        }
         self.apply(|doc, selection| {
             doc.set_attr(block, attr::KIND, kind)?;
             Ok(selection.cloned())

@@ -106,3 +106,57 @@ fn writing_starts_in_an_empty_document_only() {
     assert!(!ed.start_writing().unwrap());
     assert_eq!(ed.document().blocks().len(), 1);
 }
+
+#[test]
+fn an_alert_kind_is_one_of_five_and_an_unknown_one_reads_as_a_note() {
+    use lotype_core::{Error, alert};
+    let tip = block("alert", vec![p!["x"].into()]).attr(attr::KIND, "TIP");
+    let other = block("alert", vec![p!["y"].into()]).attr(attr::KIND, "rumour");
+    let mut ed = editor(blocks![tip, other]);
+    let blocks = ed.document().blocks();
+    let (tip, other) = (blocks[0], blocks[2]);
+    assert_eq!(ed.document().alert_kind(tip), alert::TIP);
+    assert_eq!(ed.document().alert_kind(other), alert::NOTE);
+    assert!(matches!(
+        ed.set_alert_kind(tip, "rumour"),
+        Err(Error::UnknownAlertKind(_))
+    ));
+    ed.set_alert_kind(tip, alert::CAUTION).unwrap();
+    assert!(ed.document().to_markdown().starts_with("> [!CAUTION]"));
+}
+
+#[test]
+fn the_block_types_a_toolbar_offers_describe_the_blocks_of_them() {
+    use lotype_core::default_block_types;
+    let types = default_block_types();
+    let keys: Vec<_> = types.iter().map(|item| item.key.as_str()).collect();
+    assert_eq!(keys[..2], ["paragraph", "heading_1"]);
+    assert!(keys.contains(&"check_list") && keys.contains(&"code_block"));
+    // No entry starts a block checked or unchecked: it keeps what it was.
+    assert!(
+        types
+            .iter()
+            .all(|item| item.attrs.iter().all(|(key, _)| key == attr::LEVEL))
+    );
+
+    let checked = block("check_list_item", vec!["t".into()]).attr(attr::CHECKED, true);
+    let mut ed = editor(blocks![h1!["a"], checked]);
+    let [heading, item] = ed.document().blocks()[..] else {
+        panic!()
+    };
+    let describes = |ed: &Editor, block, key: &str| {
+        let found = types
+            .iter()
+            .find(|item| item.describes(ed.document(), block));
+        found.is_some_and(|item| item.key == key)
+    };
+    assert!(describes(&ed, heading, "heading_1"));
+    assert!(describes(&ed, item, "check_list"));
+    // A level a peer wrote out of range is the deepest heading.
+    ed.apply(|doc, selection| {
+        doc.set_attr(heading, attr::LEVEL, 9)?;
+        Ok(selection.cloned())
+    })
+    .unwrap();
+    assert!(describes(&ed, heading, "heading_5"));
+}

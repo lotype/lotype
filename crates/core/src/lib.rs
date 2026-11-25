@@ -29,7 +29,7 @@ mod trash;
 mod value;
 
 pub use atom::{Atom, OBJECT};
-pub use attrs::{Align, BlockColor, attr, mark};
+pub use attrs::{Align, BlockColor, COLOR_NAMES, alert, attr, mark};
 pub use collab::Version;
 pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::{Changes, Editor};
@@ -39,7 +39,9 @@ pub use schema::{
     BlockSpec, Content, Expand, InlineSpec, MAX_HEADING_LEVEL, MarkSpec, Role, Schema,
 };
 pub use selection::{Pos, Selection};
-pub use suggestion::{SlashItem, SlashQuery, default_slash_items, filter_slash_items};
+pub use suggestion::{
+    SlashItem, SlashQuery, default_block_types, default_slash_items, filter_slash_items,
+};
 pub use table::ColumnId;
 pub use text::Span;
 pub use value::Value;

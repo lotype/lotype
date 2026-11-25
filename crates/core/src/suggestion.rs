@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
-use crate::{BlockId, Editor, Error, Pos, Result, Role, Selection, Value, mark};
+use crate::{BlockId, Document, Editor, Error, Pos, Result, Role, Selection, Value, attr, mark};
 
 /// An entry of the slash menu: a block to insert. A paragraph is none: it
 /// is what typing in an empty block makes already.
@@ -43,6 +43,18 @@ impl SlashItem {
     fn with(mut self, key: &str, value: impl Into<Value>) -> Self {
         self.attrs.push((key.to_owned(), value.into()));
         self
+    }
+
+    /// Whether `block` is of this entry's type, with its attributes: a
+    /// heading of its level, as a peer's level out of range reads.
+    pub fn describes(&self, doc: &Document, block: BlockId) -> bool {
+        let same = |(key, value): &(String, Value)| match key.as_str() {
+            attr::LEVEL => Value::Int(doc.heading_level(block)) == *value,
+            _ => doc.attr(block, key).ok().flatten().as_ref() == Some(value),
+        };
+        doc.block_type(block)
+            .is_ok_and(|kind| kind == self.block_type)
+            && self.attrs.iter().all(same)
     }
 }
 
@@ -161,6 +173,44 @@ pub fn default_slash_items() -> Vec<SlashItem> {
             "file",
         ),
     ]
+}
+
+/// The types a block with text can be turned into, as a toolbar's select
+/// offers them: the paragraph, and the slash menu's headings, quote, lists
+/// and code block, without the attributes a new block starts with.
+pub fn default_block_types() -> Vec<SlashItem> {
+    let keys = [
+        "heading_1",
+        "heading_2",
+        "heading_3",
+        "heading_4",
+        "heading_5",
+        "quote",
+        "toggle_list",
+        "bullet_list",
+        "numbered_list",
+        "check_list",
+        "code_block",
+    ];
+    let slash = default_slash_items();
+    let found = keys
+        .iter()
+        .filter_map(|key| slash.iter().find(|item| item.key == *key));
+    let paragraph = item(
+        "paragraph",
+        "Paragraph",
+        "Plain text",
+        "Basic blocks",
+        &["p"],
+        "paragraph",
+    );
+    let types = std::iter::once(paragraph).chain(found.cloned());
+    types
+        .map(|mut item| {
+            item.attrs.retain(|(key, _)| key == attr::LEVEL);
+            item
+        })
+        .collect()
 }
 
 /// The entries that `query` finds, in their order: those whose title or one

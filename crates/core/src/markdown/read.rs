@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use super::PAGE_BREAK;
-use crate::{BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value};
+use crate::{BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, alert, attr};
 
 /// A block to make.
 struct Node {
@@ -288,13 +288,13 @@ impl Reader {
             }
             Container::Quote(Some(kind)) => {
                 let kind = match kind {
-                    BlockQuoteKind::Note => "note",
-                    BlockQuoteKind::Tip => "tip",
-                    BlockQuoteKind::Important => "important",
-                    BlockQuoteKind::Warning => "warning",
-                    BlockQuoteKind::Caution => "caution",
+                    BlockQuoteKind::Note => alert::NOTE,
+                    BlockQuoteKind::Tip => alert::TIP,
+                    BlockQuoteKind::Important => alert::IMPORTANT,
+                    BlockQuoteKind::Warning => alert::WARNING,
+                    BlockQuoteKind::Caution => alert::CAUTION,
                 };
-                let mut node = Node::new("alert").with("kind", kind);
+                let mut node = Node::new("alert").with(attr::KIND, kind);
                 node.children = nodes;
                 self.push(node);
             }

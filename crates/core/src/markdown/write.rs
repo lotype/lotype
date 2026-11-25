@@ -111,12 +111,7 @@ impl Document {
         Some(match block_type.as_str() {
             "divider" => "---".to_owned(),
             "page_break" => PAGE_BREAK.to_owned(),
-            "alert" => {
-                let kinds = ["TIP", "IMPORTANT", "WARNING", "CAUTION"];
-                let kind = attr("kind").to_uppercase();
-                let kind = kinds.into_iter().find(|known| *known == kind);
-                format!("[!{}]", kind.unwrap_or("NOTE"))
-            }
+            "alert" => format!("[!{}]", self.alert_kind(block).to_uppercase()),
             "image" => format!("![{}]({})", escape(&attr("caption")), address(&attr("url"))),
             "file" => {
                 let (name, url) = (attr("name"), attr("url"));
