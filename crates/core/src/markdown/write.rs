@@ -61,6 +61,32 @@ impl Document {
         out
     }
 
+    /// Every block in reading order, with how deep it is nested and its own
+    /// Markdown: its lines of [`Document::to_markdown`] without what is
+    /// nested in it. A table is one block here, with its rows.
+    pub fn markdown_blocks(&self) -> Vec<(BlockId, usize, String)> {
+        let mut out = Vec::new();
+        let level = |parent, depth| {
+            let items = self.items(parent, "").into_iter().rev();
+            items.map(move |item| (item, depth))
+        };
+        let mut stack: Vec<(Item, usize)> = level(None, 0).collect();
+        while let Some(((block, _, first, rest), depth)) = stack.pop() {
+            let body = self.body(block).unwrap_or_default();
+            let lines = body.split('\n').enumerate();
+            let lines =
+                lines.map(|(at, line)| [if at == 0 { &first } else { &rest }, line].concat());
+            out.push((block, depth, lines.collect::<Vec<_>>().join("\n")));
+            if self
+                .block_type(block)
+                .is_ok_and(|kind| kind != block::TABLE)
+            {
+                stack.extend(level(Some(block), depth + 1));
+            }
+        }
+        out
+    }
+
     /// The children of `parent`, each with its list marker or quote sign.
     fn items(&self, parent: Option<BlockId>, prefix: &str) -> Vec<Item> {
         let mut number = None;
