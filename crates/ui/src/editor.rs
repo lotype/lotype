@@ -396,8 +396,9 @@ impl Render for EditorView {
             .children(rows)
             // Over the rows, whose colors would hide it, and see-through.
             .child(paint::selection(cx.entity()))
-            .child(paint::caret(cx.entity()))
+            // The peers under the caret, which stays in sight where one is.
             .child(collab::cursors(cx.entity()))
+            .child(paint::caret(cx.entity()))
             .children(self.slash_menu(window, cx))
             .children(self.toolbar(window, cx))
             .children(self.link_field(window, cx))

@@ -7,6 +7,7 @@ use gpui::{
 use lotype_core::{Presence, Selection};
 
 use super::EditorView;
+use crate::text_el::Affinity;
 
 /// A name tag shows this much of a name, which is the peer's to choose.
 const NAME_CHARS: usize = 24;
@@ -15,14 +16,15 @@ impl EditorView {
     /// Draws the caret and the selected text of each peer in `presence`,
     /// in the peer's color and under its name. The application keeps a
     /// clone, which it feeds what the peers send, and redraws the view
-    /// with `cx.notify()` when it has.
+    /// with `cx.notify()` when it has, and when a peer it has not heard
+    /// of for `PRESENCE_TIMEOUT` is to go.
     pub fn with_presence(mut self, presence: Presence) -> Self {
         self.presence = Some(presence);
         self
     }
 }
 
-/// Paints the peers after the text, like the caret.
+/// Paints the peers after the text, like the caret, and before it.
 // shortcut: text selections only; a peer's selected blocks and cells are
 // not drawn, to add when collaborators ask where the others are in a table.
 pub(super) fn cursors(view: Entity<EditorView>) -> impl IntoElement {
@@ -32,6 +34,10 @@ pub(super) fn cursors(view: Entity<EditorView>) -> impl IntoElement {
             return;
         };
         let peers = presence.collaborators(editor.editor.document());
+        // Text being composed is laid out in place of the document's, so
+        // offsets into that block's text are not where they are drawn.
+        let composing = editor.composition.as_ref().and(editor.shown());
+        let composing = composing.map(|shown| shown.block);
         // Where each is, before the painting takes the application.
         let placed: Vec<_> = peers
             .into_iter()
@@ -39,8 +45,17 @@ pub(super) fn cursors(view: Entity<EditorView>) -> impl IntoElement {
                 let Some(Selection::Text { anchor, head }) = peer.selection else {
                     return None;
                 };
+                if [anchor.block, head.block]
+                    .iter()
+                    .any(|b| Some(*b) == composing)
+                {
+                    return None;
+                }
                 let selected = editor.rectangles_between(anchor, head);
-                Some((peer.name, peer.color, selected, editor.caret_bounds(head)))
+                // Not the side of a soft wrap the local caret is on.
+                let layout = editor.layouts.get(&head.block);
+                let caret = layout.and_then(|l| l.caret(head.offset, Affinity::default()));
+                Some((peer.name, peer.color, selected, caret))
             })
             .collect();
         let font = window.text_style().font();
