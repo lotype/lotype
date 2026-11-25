@@ -21,5 +21,10 @@ unicode-segmentation.workspace = true
 test-support = []
 
 [dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 lotype-core = { path = ".", features = ["test-support"] }
 proptest.workspace = true
+
+[[bench]]
+name = "large"
+harness = false
