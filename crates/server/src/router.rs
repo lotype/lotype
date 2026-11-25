@@ -95,10 +95,11 @@ impl Client {
         let present = self.room.present();
         let mut greeting: Vec<_> = present.into_iter().map(Message::Binary).collect();
         // The answer to the version is an update, which is not for a reader to send.
-        if self.access == Access::Write
-            && let Ok(version) = self.room.version()
-        {
-            greeting.push(binary(SyncMessage::Version(version)));
+        if self.access == Access::Write {
+            let _stored = self.room.stored.lock().await;
+            if let Ok(version) = self.room.version() {
+                greeting.push(binary(SyncMessage::Version(version)));
+            }
         }
         for message in greeting {
             if !send(&mut socket, message).await {
@@ -155,6 +156,7 @@ impl Client {
         let room = &self.room;
         match SyncMessage::decode(bytes).map_err(|_| close_code::POLICY)? {
             SyncMessage::Version(version) => {
+                let _stored = room.stored.lock().await;
                 let updates = room.updates_since(&version)?;
                 return Ok(Some(SyncMessage::Update(updates)));
             }
@@ -162,6 +164,7 @@ impl Client {
                 if self.access != Access::Write {
                     return Err(close_code::POLICY);
                 }
+                let _stored = room.stored.lock().await;
                 let (brought, valid) = room.import(&update, self.id)?;
                 if let Some((has, brought)) = brought {
                     if store.append_update(&self.doc, &brought).await.is_err() {

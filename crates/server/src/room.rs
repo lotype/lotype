@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Instant;
 
 use axum::body::Bytes;
 use axum::extract::ws::close_code;
-use lotype_core::{Document, Error, SyncMessage, Version};
+use lotype_core::{Document, Error, PRESENCE_TIMEOUT, SyncMessage, Version};
 use lotype_storage::{DocId, DocStore, StoreError, restore};
 use tokio::sync::broadcast;
 
@@ -23,8 +24,13 @@ pub(crate) type Brought = (u64, Vec<u8>);
 pub(crate) struct Room {
     /// `None` once Loro panicked in it.
     doc: Mutex<Option<Document>>,
-    /// What each client last said of itself, as the message the others got.
-    present: Mutex<HashMap<u64, Bytes>>,
+    /// What each client last said of itself, as the message the others
+    /// got, and when.
+    present: Mutex<HashMap<u64, (Bytes, Instant)>>,
+    /// Held from importing an update until it is stored, and to say what
+    /// the room has: so nothing leaves the room that the store has not,
+    /// and no update is on its way to the store when the room is given up.
+    pub(crate) stored: tokio::sync::Mutex<()>,
     /// Messages for the clients, each with the number of the one not to
     /// send it to: the client it came of.
     pub(crate) relay: broadcast::Sender<(u64, Bytes)>,
@@ -38,9 +44,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Room {
     fn new(stored: Vec<Vec<u8>>) -> Result<Self, StoreError> {
+        let doc = restore(stored)?;
+        // The room sends updates, which are of no use without the history.
+        if doc.is_shallow() {
+            return Err("the stored document has no history".into());
+        }
         Ok(Self {
-            doc: Mutex::new(Some(restore(stored)?)),
+            doc: Mutex::new(Some(doc)),
             present: Mutex::default(),
+            stored: tokio::sync::Mutex::default(),
             relay: broadcast::channel(BACKLOG).0,
             failed: AtomicBool::new(false),
         })
@@ -117,15 +129,20 @@ impl Room {
         let mut present = lock(&self.present);
         match left {
             true => present.remove(&client),
-            false => present.insert(client, message.clone()),
+            false => present.insert(client, (message.clone(), Instant::now())),
         };
         // Under the lock, so that the clients hear it in the order kept.
         let _ = self.relay.send((client, message));
     }
 
-    /// What the clients here last said of themselves.
+    /// What the clients here last said of themselves, unless so long ago
+    /// that the others have forgotten them.
     pub(crate) fn present(&self) -> Vec<Bytes> {
-        lock(&self.present).values().cloned().collect()
+        let present = lock(&self.present);
+        let fresh = present
+            .values()
+            .filter(|(_, said)| said.elapsed() < PRESENCE_TIMEOUT);
+        fresh.map(|(message, _)| message.clone()).collect()
     }
 
     /// Gives the room up, as it has what the store does not. Its clients

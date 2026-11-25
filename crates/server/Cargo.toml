@@ -23,5 +23,5 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 loro.workspace = true
 lotype-core = { workspace = true, features = ["test-support"] }
 lotype-storage = { workspace = true, features = ["sqlite"] }
-tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
