@@ -17,10 +17,12 @@ mod keymap;
 mod markdown;
 mod marks;
 mod order;
+mod presence;
 mod rules;
 mod schema;
 mod selection;
 mod suggestion;
+mod sync;
 mod table;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -39,6 +41,7 @@ pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::{Changes, Editor};
 pub use error::{Error, Result};
 pub use keymap::{Command, KeyBinding, default_keymap};
+pub use presence::{Collaborator, MAX_PRESENCE_BYTES, PRESENCE_TIMEOUT, Presence};
 pub use schema::{
     BlockSpec, Content, Expand, InlineSpec, MAX_HEADING_LEVEL, MarkSpec, Role, Schema,
 };
@@ -46,6 +49,7 @@ pub use selection::{Pos, Selection};
 pub use suggestion::{
     SlashItem, SlashQuery, default_block_types, default_slash_items, filter_slash_items,
 };
+pub use sync::SyncMessage;
 pub use table::ColumnId;
 pub use text::Span;
 pub use value::Value;

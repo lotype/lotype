@@ -15,6 +15,21 @@ use crate::{BlockId, Document, Error, Pos, Result, Selection};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Version(VersionVector);
 
+impl Version {
+    /// The version as bytes, to send to a peer.
+    pub fn encode(&self) -> Vec<u8> {
+        self.0.encode()
+    }
+
+    /// A version from the bytes of [`Version::encode`].
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let decoded = VersionVector::decode(bytes);
+        decoded
+            .map(Self)
+            .map_err(|error| Error::InvalidUpdate(Box::new(error)))
+    }
+}
+
 /// A selection that follows its text through changes from other peers.
 pub(crate) enum Anchored {
     Text { anchor: Anchor, head: Anchor },
@@ -78,6 +93,20 @@ impl Document {
     /// The changes that a peer at `since` lacks.
     pub fn export_updates(&self, since: &Version) -> Result<Vec<u8>> {
         self.export(ExportMode::updates(&since.0))
+    }
+
+    /// The changes imported before those they come after, which wait for
+    /// them and are in no snapshot or update: what to keep with a snapshot
+    /// so that it holds all the document was given. `None` when none wait.
+    pub fn export_waiting(&self) -> Result<Option<Vec<u8>>> {
+        let waiting = self.doc.export_pending_updates();
+        waiting.map_err(|error| Error::Internal(Box::new(error)))
+    }
+
+    /// Whether the document came of a snapshot without its early history.
+    /// Its updates are of no use to a peer that has not the same start.
+    pub fn is_shallow(&self) -> bool {
+        self.doc.is_shallow()
     }
 
     fn export(&self, mode: ExportMode) -> Result<Vec<u8>> {
