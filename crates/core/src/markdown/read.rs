@@ -13,7 +13,7 @@ pub(super) struct Node {
     pub(super) block_type: Cow<'static, str>,
     pub(super) attrs: Vec<(Cow<'static, str>, Value)>,
     pub(super) spans: Vec<Span>,
-    children: Vec<Node>,
+    pub(super) children: Vec<Node>,
     /// What follows the signs that open a fenced block, where it is one.
     pub(super) info: Option<String>,
 }

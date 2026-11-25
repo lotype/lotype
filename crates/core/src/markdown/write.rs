@@ -397,7 +397,7 @@ fn escape(text: &str) -> String {
 
 /// A line of a paragraph, kept from reading as a heading, a list item, a
 /// quote, a rule or code.
-fn line_start(line: &str) -> String {
+pub(super) fn line_start(line: &str) -> String {
     let text = line.trim_start_matches([' ', '\t']);
     // Space written as character references is no indentation.
     let indent = line[..line.len() - text.len()].chars();

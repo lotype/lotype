@@ -129,6 +129,41 @@ fn what_is_written_reads_back_the_same() {
 }
 
 #[test]
+fn a_value_is_read_as_a_model_writes_it() {
+    let (doc, made) = read(
+        "```video url=\"https://x.dev/a%20b.mp4?q=1&r=2\"\n```\n\n```callout title='Say \"hi\"'\nHi\n```",
+    );
+    // A percent sign in an address is the address's own.
+    let url = "https://x.dev/a%20b.mp4?q=1&r=2";
+    assert_eq!(attr_of(&doc, made[0], "url"), Some(url.into()));
+    assert_eq!(attr_of(&doc, made[1], "title"), Some("Say \"hi\"".into()));
+    let (back, made) = read(&doc.to_markdown());
+    assert_eq!(attr_of(&back, made[0], "url"), Some(url.into()));
+    assert_eq!(attr_of(&back, made[1], "title"), Some("Say \"hi\"".into()));
+}
+
+#[test]
+fn text_that_looks_like_other_blocks_stays_the_block_s_text() {
+    for text in [
+        "- not a list",
+        "# not a heading",
+        "> not a quote",
+        "1. not numbered",
+        "one\n- two",
+    ] {
+        let mut doc = Document::new(schema());
+        let callout = doc.insert_block(None, 0, "callout").unwrap();
+        doc.insert_text(callout, 0, text).unwrap();
+        let (back, made) = read(&doc.to_markdown());
+        assert_eq!(made.len(), 1, "{text}");
+        assert_eq!(back.plain_text(made[0]).unwrap(), text);
+    }
+    // What a model nests in a fence is all text of the one block.
+    let (doc, made) = read("```callout\n- a\n  - nested\n- b\n```");
+    assert_eq!(doc.plain_text(made[0]).unwrap(), "a\nnested\nb");
+}
+
+#[test]
 fn the_types_are_listed_in_the_order_they_were_added() {
     let schema = schema();
     let names: Vec<_> = schema.block_specs().map(BlockSpec::name).collect();

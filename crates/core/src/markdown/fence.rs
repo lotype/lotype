@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use super::read::{Node, Reader};
-use super::write::{inline, longest_run};
+use super::write::{inline, line_start, longest_run};
 use crate::{BlockId, Content, Document, Role, Span, Value};
 
 impl Document {
@@ -28,7 +28,12 @@ impl Document {
             (Content::None, _) => String::new(),
             // Text as typed, as code is.
             (_, Role::Code) => self.plain_text(block).ok()?,
-            _ => inline(&self.plain_spans(block).ok()?),
+            // No line of it may read as a heading, a list item or a quote.
+            _ => {
+                let text = inline(&self.plain_spans(block).ok()?);
+                let lines: Vec<_> = text.split('\n').map(line_start).collect();
+                lines.join("\n")
+            }
         };
         let fence = "`".repeat(longest_run(&text, '`').max(2) + 1);
         Some(match text.is_empty() {
@@ -67,10 +72,15 @@ impl Document {
     }
 }
 
-/// The text of `markdown` with its marks, a line for each block of it.
+/// The text of `markdown` with its marks, a line for each block of it,
+/// those nested in others too: a fence holds text, and none of it is lost
+/// for looking like a list.
 fn lines(markdown: &str) -> Vec<Span> {
     let mut spans = Vec::new();
-    for node in Reader::default().read(markdown) {
+    let mut nodes = Reader::default().read(markdown);
+    nodes.reverse();
+    while let Some(mut node) = nodes.pop() {
+        nodes.extend(node.children.drain(..).rev());
         if node.spans.is_empty() {
             continue;
         }
@@ -82,9 +92,12 @@ fn lines(markdown: &str) -> Vec<Span> {
     spans
 }
 
-/// What is written in place of a sign that would end a value or that
-/// Markdown reads otherwise after a fence's tag: its code, in hex.
-const SIGNS: [char; 5] = ['%', '"', '\\', '`', '&'];
+/// The signs a value is written without, as `\u0022` is a quote: those
+/// that would end it, and those Markdown reads otherwise after a fence's
+/// tag. Other signs stay as they are, a `%` in an address among them.
+fn escaped(c: char) -> bool {
+    matches!(c, '"' | '\'' | '\\' | '`' | '&') || c.is_control()
+}
 
 /// A value after a fence's tag: bare where it reads back as it is, and in
 /// quotes otherwise.
@@ -94,17 +107,15 @@ fn written(value: &Value) -> String {
         Value::Int(number) => return number.to_string(),
         Value::Str(text) => text,
     };
-    let kept = |c: char| !c.is_whitespace() && !c.is_control() && c != '=' && !SIGNS.contains(&c);
+    let kept = |c: char| !c.is_whitespace() && c != '=' && !escaped(c);
     if !text.is_empty() && text.chars().all(kept) && bare(text) == *value {
         return text.clone();
     }
     let mut quoted = String::from("\"");
     for c in text.chars() {
-        match c {
-            c if SIGNS.contains(&c) || c.is_control() => {
-                quoted.push_str(&format!("%{:02X}", u32::from(c).min(0xFF)));
-            }
-            c => quoted.push(c),
+        match escaped(c) {
+            true => quoted.push_str(&format!("\\u{:04X}", u32::from(c))),
+            false => quoted.push(c),
         }
     }
     quoted + "\""
@@ -126,17 +137,18 @@ fn bare(word: &str) -> Value {
 fn unquoted(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
-    while let Some(at) = rest.find('%') {
+    while let Some(at) = rest.find("\\u") {
         out.push_str(&rest[..at]);
-        let code = rest.get(at + 1..at + 3);
-        match code.and_then(|code| u8::from_str_radix(code, 16).ok()) {
-            Some(code) => {
-                out.push(char::from(code));
-                rest = &rest[at + 3..];
+        let code = rest.get(at + 2..at + 6);
+        let sign = code.and_then(|code| u32::from_str_radix(code, 16).ok());
+        match sign.and_then(char::from_u32) {
+            Some(sign) => {
+                out.push(sign);
+                rest = &rest[at + 6..];
             }
             None => {
-                out.push('%');
-                rest = &rest[at + 1..];
+                out.push_str("\\u");
+                rest = &rest[at + 2..];
             }
         }
     }
@@ -144,7 +156,7 @@ fn unquoted(text: &str) -> String {
 }
 
 /// The words after the signs that open a fence: its tag, then `key=value`,
-/// a value with spaces in quotes.
+/// a value with spaces in quotes of either kind.
 fn words(info: &str) -> Vec<(String, Option<Value>)> {
     let mut words = Vec::new();
     let mut rest = info.trim_start();
@@ -156,9 +168,11 @@ fn words(info: &str) -> Vec<(String, Option<Value>)> {
             rest = after.trim_start();
             continue;
         };
-        let (value, after) = match after.strip_prefix('"') {
-            Some(quoted) => {
-                let (text, after) = quoted.split_once('"').unwrap_or((quoted, ""));
+        let quote = after.chars().next().filter(|c| matches!(c, '"' | '\''));
+        let (value, after) = match quote {
+            Some(quote) => {
+                let quoted = &after[1..];
+                let (text, after) = quoted.split_once(quote).unwrap_or((quoted, ""));
                 (Value::Str(unquoted(text)), after)
             }
             None => {
