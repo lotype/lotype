@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
-use crate::{BlockId, Editor, Error, Pos, Result, Selection, Value};
+use crate::{BlockId, Editor, Error, Pos, Result, Role, Selection, Value};
 
 /// An entry of the slash menu: a block to insert. A paragraph is none: it
 /// is what typing in an empty block makes already.
@@ -191,9 +191,7 @@ impl Editor {
         };
         let doc = self.document();
         // A slash in code is a slash.
-        let code = doc
-            .block_type(head.block)
-            .is_ok_and(|block_type| block_type == "code_block")
+        let code = doc.role(head.block) == Role::Code
             || doc
                 .marks_at(*head)
                 .is_ok_and(|marks| marks.contains_key("code"));
@@ -263,9 +261,10 @@ impl Editor {
             let caret = if holds_text {
                 target
             } else if doc.spec(target)?.allows_children() {
-                doc.create_block(Some(target), 0, "paragraph")?
+                doc.create_block(Some(target), 0, &doc.text_block()?)?
             } else {
-                doc.create_block(parent, doc.index_of(target)? + 1, "paragraph")?
+                let below = doc.index_of(target)? + 1;
+                doc.create_block(parent, below, &doc.text_block()?)?
             };
             Ok(Some(Selection::caret(Pos::new(caret, 0))))
         })

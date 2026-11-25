@@ -46,7 +46,7 @@ fn remove_table(doc: &mut Document, table: BlockId) -> Result<Option<Selection>>
     let caret = match (after, before) {
         (Some(after), _) => Pos::new(after, 0),
         (None, Some(before)) => Pos::new(before, doc.text_len(before)?),
-        (None, None) => Pos::new(doc.create_block(parent, index, "paragraph")?, 0),
+        (None, None) => Pos::new(doc.create_block(parent, index, &doc.text_block()?)?, 0),
     };
     Ok(Some(Selection::caret(caret)))
 }

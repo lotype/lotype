@@ -3,26 +3,23 @@ use unicode_segmentation::GraphemeCursor;
 
 use super::{Editor, text_selection};
 use crate::editor::BLOCK_STYLE;
-use crate::{BlockId, Document, Error, Pos, Result, Selection};
+use crate::table::{ROW, TABLE};
+use crate::{BlockId, Document, Error, Pos, Result, Role, Selection};
 
-const PARAGRAPH: &str = "paragraph";
-const LIST_ITEMS: [&str; 4] = [
-    "bullet_list_item",
-    "numbered_list_item",
-    "check_list_item",
-    "toggle_list_item",
-];
-
-/// Makes `block` a paragraph, keeping its text, its children and its style.
-fn make_paragraph(doc: &mut Document, block: BlockId) -> Result<()> {
-    let paragraph = doc.schema().block_spec(PARAGRAPH);
-    let style = paragraph.is_some_and(|spec| spec.takes_style());
+/// Makes `block` the schema's text block, as a paragraph, keeping its text,
+/// its children and its style.
+fn make_text_block(doc: &mut Document, block: BlockId) -> Result<()> {
+    let text = doc.text_block()?;
+    let style = doc
+        .schema()
+        .block_spec(&text)
+        .is_some_and(|spec| spec.takes_style());
     for key in doc.attrs(block)?.into_keys() {
         if !(style && BLOCK_STYLE.contains(&key.as_str())) {
             doc.remove_attr(block, &key)?;
         }
     }
-    doc.set_block_type(block, PARAGRAPH)
+    doc.set_block_type(block, &text)
 }
 
 /// The first block after `block` in document order that holds text.
@@ -121,7 +118,7 @@ impl Editor {
         };
         if edge && self.becomes_paragraph(head.block)? {
             return self.apply(|doc, selection| {
-                make_paragraph(doc, head.block)?;
+                make_text_block(doc, head.block)?;
                 Ok(selection.cloned())
             });
         }
@@ -155,25 +152,21 @@ impl Editor {
         let Some(Selection::Text { anchor, head }) = self.selection else {
             return Ok(false);
         };
-        let list_item = |kind: &str| LIST_ITEMS.contains(&kind);
+        let list_item = |block| self.doc.role(block).is_list_item();
         let block = head.block;
         let empty = anchor == head
             && block.column().is_none()
-            && list_item(&self.doc.block_type(block)?)
+            && list_item(block)
             && self.doc.text_len(block)? == 0
             && self.doc.children(Some(block))?.is_empty();
         if !empty || !self.becomes_paragraph(block)? {
             return Ok(false);
         }
         let parent = self.doc.parent(block)?;
-        let nested = parent.is_some_and(|parent| {
-            self.doc
-                .block_type(parent)
-                .is_ok_and(|kind| list_item(&kind))
-        });
+        let nested = parent.is_some_and(list_item);
         self.apply(|doc, selection| {
             if !(nested && doc.outdent_block(block)?) {
-                make_paragraph(doc, block)?;
+                make_text_block(doc, block)?;
             }
             Ok(selection.cloned())
         })?;
@@ -194,7 +187,7 @@ impl Editor {
         }
         // Where the caret is once the selected text is gone.
         let start = self.doc.ordered(anchor, head)?.0.block;
-        if LIST_ITEMS.contains(&self.doc.block_type(start)?.as_str()) {
+        if self.doc.role(start).is_list_item() {
             return Ok(false);
         }
         let mut at = Some(start);
@@ -202,7 +195,7 @@ impl Editor {
             let Some(block) = at else {
                 return Ok(false);
             };
-            if matches!(self.doc.block_type(block)?.as_str(), "quote" | "alert") {
+            if self.doc.role(block) == Role::Wrapper {
                 break block;
             }
             at = self.doc.parent(block)?;
@@ -215,11 +208,11 @@ impl Editor {
             let empty = block != container && len == 0 && doc.children(Some(block))?.is_empty();
             if empty && doc.parent(block)? == Some(container) {
                 doc.move_block(block, parent, index)?;
-                make_paragraph(doc, block)?;
+                make_text_block(doc, block)?;
                 doc.remove_if_emptied(Some(container))?;
                 return Ok(Some(Selection::caret(Pos::new(block, 0))));
             }
-            let paragraph = doc.create_block(parent, index, PARAGRAPH)?;
+            let paragraph = doc.create_block(parent, index, &doc.text_block()?)?;
             doc.copy_text(block, caret.offset..len, paragraph, 0)?;
             doc.delete_text(block, caret.offset..len)?;
             Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
@@ -246,7 +239,8 @@ impl Editor {
         }
         self.apply(|doc, _| {
             let after = doc.index_of(table)? + 1;
-            let paragraph = doc.create_block(doc.parent(table)?, after, PARAGRAPH)?;
+            let text = doc.text_block()?;
+            let paragraph = doc.create_block(doc.parent(table)?, after, &text)?;
             Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
         })
     }
@@ -255,20 +249,20 @@ impl Editor {
     fn last_cell(&self, block: BlockId) -> Option<BlockId> {
         let doc = &self.doc;
         let table = match doc.block_type(block).ok()?.as_str() {
-            "table" => block,
-            "table_row" => doc.parent(block).ok()??,
+            TABLE => block,
+            ROW => doc.parent(block).ok()??,
             _ => return None,
         };
         let row = *doc.children(Some(table)).ok()?.last()?;
         doc.cell(row, *doc.columns(table).ok()?.last()?).ok()
     }
 
-    /// Whether `block` is no paragraph and can become one where it is: a
-    /// cell cannot, nor a block in a schema without paragraphs.
+    /// Whether `block` is no text block and can become one where it is: a
+    /// cell cannot, nor a block in a schema without a text block.
     fn becomes_paragraph(&self, block: BlockId) -> Result<bool> {
         let kind = self.doc.block_type(block)?;
-        let paragraph = self.doc.schema().block_spec(PARAGRAPH);
-        Ok(kind != PARAGRAPH && block.column().is_none() && paragraph.is_some())
+        let text = self.doc.schema().text_block();
+        Ok(text.is_some_and(|text| text != kind) && block.column().is_none())
     }
 
     /// Backspace at the start of a paragraph: joins it onto the block before

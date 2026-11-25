@@ -17,6 +17,8 @@ pub enum Error {
     InvalidBlockId(String),
     /// The block's type holds no inline text.
     NoInlineContent,
+    /// The schema names no block for text, as a paragraph, to make one of.
+    NoTextBlock,
     /// The block type named here cannot have child blocks.
     ChildrenNotAllowed(String),
     /// The block type named here goes only at the top level, in no block.
@@ -68,6 +70,7 @@ impl fmt::Display for Error {
             Self::BlockNotFound => f.write_str("block not found"),
             Self::InvalidBlockId(text) => write!(f, "`{text}` is not a block id"),
             Self::NoInlineContent => f.write_str("block has no inline content"),
+            Self::NoTextBlock => f.write_str("the schema has no block for text"),
             Self::ChildrenNotAllowed(name) => {
                 write!(f, "block type `{name}` cannot have children")
             }

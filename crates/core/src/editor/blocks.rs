@@ -1,5 +1,7 @@
 use super::{Editor, text_selection};
-use crate::{Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Selection, Span, Value};
+use crate::{
+    Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Role, Selection, Span, Value,
+};
 
 /// A block's own style, which goes with it whatever its type becomes, where
 /// that type takes a style.
@@ -200,13 +202,14 @@ impl Editor {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let top = pasted.children(None)?;
         let (start, _) = self.doc.ordered(anchor, head)?;
-        let plain =
-            start.block.column().is_some() || self.doc.block_type(start.block)? == "code_block";
-        let paragraph =
-            |block| -> Result<bool> {
-                Ok(pasted.block_type(block)? == "paragraph"
-                    && pasted.children(Some(block))?.is_empty())
-            };
+        let plain = start.block.column().is_some() || self.doc.role(start.block) == Role::Code;
+        let text = pasted.schema().text_block();
+        let paragraph = |block| -> Result<bool> {
+            Ok(
+                text.is_some_and(|text| pasted.block_type(block).is_ok_and(|kind| kind == text))
+                    && pasted.children(Some(block))?.is_empty(),
+            )
+        };
         let mut spans = match top[..] {
             _ if plain => {
                 let marks = self.active_marks()?;
@@ -290,7 +293,7 @@ impl Editor {
         // A selection that starts elsewhere ends up there, where Enter is Enter.
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let start = self.doc.ordered(anchor, head)?.0.block;
-        if self.doc.block_type(start)? != "toggle_list_item" {
+        if self.doc.role(start) != Role::Toggle {
             return self.split_block();
         }
         if self.leave_list()? {
@@ -301,10 +304,11 @@ impl Editor {
             let caret = doc.delete_range(anchor, head)?;
             let block = caret.block;
             let new = if open {
-                doc.create_block(Some(block), 0, "paragraph")?
+                doc.create_block(Some(block), 0, &doc.text_block()?)?
             } else {
                 let after = doc.index_of(block)? + 1;
-                let new = doc.create_block(doc.parent(block)?, after, "toggle_list_item")?;
+                let kind = doc.block_type(block)?;
+                let new = doc.create_block(doc.parent(block)?, after, &kind)?;
                 doc.copy_attrs(block, new)?;
                 new
             };

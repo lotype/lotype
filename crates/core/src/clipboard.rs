@@ -15,7 +15,7 @@ impl Document {
             return Err(Error::TablePart);
         }
         if start.block.column().is_some() {
-            let copy = slice.insert_block(None, 0, "paragraph")?;
+            let copy = slice.insert_block(None, 0, &slice.text_block()?)?;
             let mut spans = self.spans_in(start.block, start.offset..end.offset)?;
             slice.fit_marks(&mut spans);
             slice.insert_spans(copy, 0, &spans)?;

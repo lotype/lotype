@@ -266,12 +266,13 @@ impl Editor {
                 for parent in around {
                     doc.remove_if_emptied(parent?)?;
                 }
-                // A document left empty gets a paragraph to type in, where
+                // A document left empty gets a text block to type in, where
                 // the schema has one.
                 if !doc.children(None)?.is_empty() {
                     return Ok(None);
                 }
-                let paragraph = doc.insert_block(None, 0, "paragraph").ok();
+                let text = doc.text_block();
+                let paragraph = text.and_then(|text| doc.insert_block(None, 0, &text)).ok();
                 Ok(paragraph.map(|block| Selection::caret(Pos::new(block, 0))))
             }
             Some(Selection::Cells { anchor, head }) => {

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
-use crate::{Atom, Error, Result, Value};
+use crate::{Atom, BlockId, Document, Error, Result, Value};
 
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +12,35 @@ pub enum Content {
     None,
 }
 
+/// What a block of a type is to editing: what Enter, Backspace and typed
+/// Markdown do in it. A schema gives its own types these as the built-in
+/// one gives its own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Role {
+    /// Text, as a paragraph or a heading.
+    #[default]
+    Text,
+    /// Enter goes on with the next item, and leaves the list from an empty
+    /// one, as a bullet, numbered or check list item.
+    ListItem,
+    /// A list item whose blocks a view shows or hides: Enter in an open one
+    /// writes in it.
+    Toggle,
+    /// Holds blocks that Enter leaves for a text block after it, as a quote
+    /// or an alert.
+    Wrapper,
+    /// Text as typed: no Markdown turns into anything, no slash opens a
+    /// menu, and a paste is plain text, as in a code block.
+    Code,
+}
+
+impl Role {
+    /// Enter goes on with the next item, as in a toggle too.
+    pub fn is_list_item(self) -> bool {
+        matches!(self, Self::ListItem | Self::Toggle)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BlockSpec {
     name: String,
@@ -19,6 +48,7 @@ pub struct BlockSpec {
     children: bool,
     style: bool,
     top_level: bool,
+    role: Role,
 }
 
 impl BlockSpec {
@@ -29,7 +59,14 @@ impl BlockSpec {
             children: false,
             style: true,
             top_level: false,
+            role: Role::Text,
         }
+    }
+
+    /// What a block of this type is to editing.
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.role = role;
+        self
     }
 
     pub fn with_children(mut self) -> Self {
@@ -71,6 +108,10 @@ impl BlockSpec {
 
     pub fn is_top_level(&self) -> bool {
         self.top_level
+    }
+
+    pub fn role(&self) -> Role {
+        self.role
     }
 }
 
@@ -159,6 +200,7 @@ pub struct Schema {
     blocks: HashMap<String, BlockSpec>,
     marks: HashMap<String, MarkSpec>,
     inlines: HashMap<String, InlineSpec>,
+    text_block: Option<String>,
 }
 
 impl Schema {
@@ -170,20 +212,24 @@ impl Schema {
     pub fn builtin() -> Self {
         use Content::{Inline, None};
 
-        let mut schema = Self::new();
-        for name in [
-            "paragraph",
-            "quote",
-            "bullet_list_item",
-            "numbered_list_item",
-            "check_list_item",
-            "toggle_list_item",
-        ] {
-            schema = schema.block(BlockSpec::new(name, Inline).with_children());
+        let mut schema = Self::new().with_text_block("paragraph");
+        let roles = [
+            ("paragraph", Role::Text),
+            ("quote", Role::Wrapper),
+            ("bullet_list_item", Role::ListItem),
+            ("numbered_list_item", Role::ListItem),
+            ("check_list_item", Role::ListItem),
+            ("toggle_list_item", Role::Toggle),
+        ];
+        for (name, role) in roles {
+            let spec = BlockSpec::new(name, Inline).with_children().with_role(role);
+            schema = schema.block(spec);
         }
-        schema = schema.block(BlockSpec::new("alert", None).with_children());
+        let alert = BlockSpec::new("alert", None).with_children();
+        schema = schema.block(alert.with_role(Role::Wrapper));
         schema = schema.block(BlockSpec::new("heading", Inline).top_level());
-        schema = schema.block(BlockSpec::new("code_block", Inline).without_style());
+        let code = BlockSpec::new("code_block", Inline).without_style();
+        schema = schema.block(code.with_role(Role::Code));
         for name in ["image", "file", "divider", "page_break", "table_row"] {
             schema = schema.block(BlockSpec::new(name, None));
         }
@@ -198,6 +244,21 @@ impl Schema {
         schema
             .mark(MarkSpec::new("code", Expand::None))
             .mark(MarkSpec::new("link", Expand::None).with_value())
+    }
+
+    /// Names the block typing starts in, and that what leaves another block
+    /// becomes, as a paragraph. It must be a block type of the schema that
+    /// holds text; without one, commands that would make one do nothing.
+    pub fn with_text_block(mut self, name: impl Into<String>) -> Self {
+        self.text_block = Some(name.into());
+        self
+    }
+
+    /// The block for text, where it is one of the schema's types with text.
+    pub fn text_block(&self) -> Option<&str> {
+        let name = self.text_block.as_deref()?;
+        let spec = self.blocks.get(name)?;
+        (spec.content == Content::Inline).then_some(name)
     }
 
     /// Adds a block type, replacing any existing one with the same name.
@@ -242,6 +303,19 @@ impl Schema {
             config.insert(spec.name.as_str().into(), StyleConfig { expand });
         }
         config
+    }
+}
+
+impl Document {
+    /// What `block` is to editing; text for a type this schema lacks.
+    pub fn role(&self, block: BlockId) -> Role {
+        self.spec(block).map_or(Role::Text, BlockSpec::role)
+    }
+
+    /// The schema's block for text, to make one of.
+    pub(crate) fn text_block(&self) -> Result<String> {
+        let name = self.schema().text_block().ok_or(Error::NoTextBlock)?;
+        Ok(name.to_owned())
     }
 }
 

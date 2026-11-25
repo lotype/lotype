@@ -1,6 +1,6 @@
 use super::Editor;
 use crate::rules::{self, BlockRule, MarkRule};
-use crate::{BlockId, Content, Pos, Result, Selection};
+use crate::{BlockId, Content, Pos, Result, Role, Selection};
 
 impl Editor {
     /// Applies the input rule that the text before the caret asks for, as a
@@ -23,9 +23,7 @@ impl Editor {
             return Ok(());
         }
         // Code is typed as it is, in a code block and in inline code alike.
-        if self.doc.block_type(block)? == "code_block"
-            || self.doc.marks_at(head)?.contains_key("code")
-        {
+        if self.doc.role(block) == Role::Code || self.doc.marks_at(head)?.contains_key("code") {
             return Ok(());
         }
         let on_off = |name| {
@@ -55,10 +53,13 @@ impl Editor {
             return Ok(false);
         };
         let has_children = !self.doc.children(Some(block))?.is_empty();
-        Ok(self.doc.block_type(block)? == "paragraph"
-            && self.doc.parent(block)?.is_none()
-            && (spec.allows_children() || !has_children)
-            && (spec.content() == Content::Inline || at_end))
+        let text = self.doc.schema().text_block();
+        Ok(
+            text.is_some_and(|text| self.doc.block_type(block).is_ok_and(|kind| kind == text))
+                && self.doc.parent(block)?.is_none()
+                && (spec.allows_children() || !has_children)
+                && (spec.content() == Content::Inline || at_end),
+        )
     }
 
     fn turn_into(&mut self, block: BlockId, typed: usize, rule: BlockRule) -> Result<()> {
@@ -72,8 +73,9 @@ impl Editor {
                 return Ok(Some(Selection::caret(Pos::new(block, 0))));
             }
             // The block holds no text now, so typing goes on below it.
-            let below = doc.create_block(doc.parent(block)?, doc.index_of(block)? + 1, "paragraph");
-            Ok(Some(Selection::caret(Pos::new(below?, 0))))
+            let (parent, index) = (doc.parent(block)?, doc.index_of(block)? + 1);
+            let below = doc.create_block(parent, index, &doc.text_block()?)?;
+            Ok(Some(Selection::caret(Pos::new(below, 0))))
         })
     }
 
