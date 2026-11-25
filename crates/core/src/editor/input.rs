@@ -1,6 +1,6 @@
 use super::Editor;
 use crate::rules::{self, BlockRule, MarkRule};
-use crate::{BlockId, Content, Pos, Result, Role, Selection};
+use crate::{BlockId, Content, Pos, Result, Role, Selection, mark};
 
 impl Editor {
     /// Applies the input rule that the text before the caret asks for, as a
@@ -23,7 +23,7 @@ impl Editor {
             return Ok(());
         }
         // Code is typed as it is, in a code block and in inline code alike.
-        if self.doc.role(block) == Role::Code || self.doc.marks_at(head)?.contains_key("code") {
+        if self.doc.role(block) == Role::Code || self.doc.marks_at(head)?.contains_key(mark::CODE) {
             return Ok(());
         }
         let on_off = |name| {

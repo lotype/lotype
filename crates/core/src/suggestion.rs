@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::editor::BLOCK_STYLE;
 use crate::table::{CELL, ROW, TABLE};
-use crate::{BlockId, Editor, Error, Pos, Result, Role, Selection, Value};
+use crate::{BlockId, Editor, Error, Pos, Result, Role, Selection, Value, mark};
 
 /// An entry of the slash menu: a block to insert. A paragraph is none: it
 /// is what typing in an empty block makes already.
@@ -194,7 +194,7 @@ impl Editor {
         let code = doc.role(head.block) == Role::Code
             || doc
                 .marks_at(*head)
-                .is_ok_and(|marks| marks.contains_key("code"));
+                .is_ok_and(|marks| marks.contains_key(mark::CODE));
         // Nor is there a menu in a cell, which is no block to turn into another.
         let plain = anchor == head && !code && head.block.column().is_none();
         let text = plain.then(|| doc.text(head.block).ok())??;

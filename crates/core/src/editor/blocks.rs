@@ -1,11 +1,8 @@
 use super::{Editor, text_selection};
+use crate::attrs::{BLOCK_STYLE, mark};
 use crate::{
     Atom, BlockId, Content, Document, Error, OBJECT, Pos, Result, Role, Selection, Span, Value,
 };
-
-/// A block's own style, which goes with it whatever its type becomes, where
-/// that type takes a style.
-pub(crate) const BLOCK_STYLE: [&str; 3] = ["text_color", "background_color", "text_alignment"];
 
 impl Editor {
     /// Turns the blocks of the selection into `block_type`, with these
@@ -165,15 +162,15 @@ impl Editor {
     pub fn paste_text(&mut self, text: &str) -> Result<()> {
         let (anchor, head) = text_selection(self.selection.as_ref())?;
         let address = text.trim();
-        let links = is_address(address) && self.doc.mark_spec("link").is_ok();
+        let links = is_address(address) && self.doc.mark_spec(mark::LINK).is_ok();
         let selected = !self.doc.segments(anchor, head)?.is_empty();
         let mut marks = self.active_marks()?;
         if links {
-            marks.insert("link".to_owned(), Value::from(address));
+            marks.insert(mark::LINK.to_owned(), Value::from(address));
         }
         self.apply(|doc, selection| {
             if links && selected {
-                doc.mark_range(anchor, head, "link", address)?;
+                doc.mark_range(anchor, head, mark::LINK, address)?;
                 return Ok(selection.cloned());
             }
             let text = if links { address } else { text }.to_owned();

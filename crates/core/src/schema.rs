@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
-use crate::{Atom, BlockId, Document, Error, Result, Value};
+use crate::{Atom, BlockId, Document, Error, Result, Value, mark};
 
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,15 +235,15 @@ impl Schema {
         }
         schema = schema.block(BlockSpec::new("table", None).with_children());
         schema = schema.block(BlockSpec::new("table_cell", Inline));
-        for name in ["bold", "italic", "underline", "strike"] {
+        for name in [mark::BOLD, mark::ITALIC, mark::UNDERLINE, mark::STRIKE] {
             schema = schema.mark(MarkSpec::new(name, Expand::After));
         }
-        for name in ["text_color", "background_color"] {
+        for name in [mark::TEXT_COLOR, mark::BACKGROUND_COLOR] {
             schema = schema.mark(MarkSpec::new(name, Expand::After).with_value());
         }
         schema
-            .mark(MarkSpec::new("code", Expand::None))
-            .mark(MarkSpec::new("link", Expand::None).with_value())
+            .mark(MarkSpec::new(mark::CODE, Expand::None))
+            .mark(MarkSpec::new(mark::LINK, Expand::None).with_value())
     }
 
     /// Names the block typing starts in, and that what leaves another block

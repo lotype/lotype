@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use crate::{MAX_HEADING_LEVEL, Value};
+use crate::{MAX_HEADING_LEVEL, Value, mark};
 
 /// What a paragraph becomes.
 #[derive(Debug, PartialEq)]
@@ -74,11 +74,11 @@ pub(crate) struct MarkRule {
 pub(crate) fn mark_rule(typed: &str) -> Option<MarkRule> {
     // Longer delimiters first: `**` ends in `*`.
     let rules = [
-        ("**", "bold"),
-        ("~~", "strike"),
-        ("`", "code"),
-        ("*", "italic"),
-        ("_", "italic"),
+        ("**", mark::BOLD),
+        ("~~", mark::STRIKE),
+        ("`", mark::CODE),
+        ("*", mark::ITALIC),
+        ("_", mark::ITALIC),
     ];
     rules.into_iter().find_map(|(delimiter, mark)| {
         let before = typed.strip_suffix(delimiter)?;

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod atom;
+mod attrs;
 mod clipboard;
 mod collab;
 mod commands;
@@ -28,6 +29,7 @@ mod trash;
 mod value;
 
 pub use atom::{Atom, OBJECT};
+pub use attrs::{Align, BlockColor, attr, mark};
 pub use collab::Version;
 pub use document::{BlockId, Document, MAX_DEPTH};
 pub use editor::{Changes, Editor};
