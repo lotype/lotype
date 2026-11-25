@@ -37,7 +37,11 @@ fn large(c: &mut Criterion) {
 
     let text = paragraphs(4_000, "new");
     group.bench_function("markdown: 4,000 blocks into the middle of 16,000", |b| {
-        let read = |mut doc: Document| doc.insert_markdown(None, 8_000, black_box(&text)).unwrap();
+        // What it is given goes back, so that dropping it is not timed.
+        let read = |mut doc: Document| {
+            doc.insert_markdown(None, 8_000, black_box(&text)).unwrap();
+            doc
+        };
         b.iter_batched(|| document(16_000), read, BatchSize::PerIteration);
     });
 
@@ -53,14 +57,20 @@ fn large(c: &mut Criterion) {
         editor
     };
     group.bench_function("enter: a new block at 5,000 paragraphs", |b| {
-        let enter = |mut editor: Editor| editor.split_block().unwrap();
+        let enter = |mut editor: Editor| {
+            editor.split_block().unwrap();
+            editor
+        };
         b.iter_batched(|| warm(5_000), enter, BatchSize::PerIteration);
     });
 
     // Blocks made after other edits of the command: the draft is made anew.
     let pasted = paragraphs(20, "pasted");
     group.bench_function("paste: 20 blocks at 5,000 paragraphs", |b| {
-        let paste = |mut editor: Editor| editor.paste_markdown(black_box(&pasted)).unwrap();
+        let paste = |mut editor: Editor| {
+            editor.paste_markdown(black_box(&pasted)).unwrap();
+            editor
+        };
         b.iter_batched(|| warm(5_000), paste, BatchSize::PerIteration);
     });
     group.finish();
