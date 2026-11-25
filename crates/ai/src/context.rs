@@ -1,6 +1,6 @@
 //! What a model is told of a document.
 
-use lotype_core::{BlockId, Document, Schema, Selection, block};
+use lotype_core::{BlockId, BlockSpec, Content, Document, Role, Schema, Selection};
 use serde_json::{Value, json};
 
 /// A document as a model is shown it: every block with its id, how deep it
@@ -69,27 +69,38 @@ impl DocumentState {
     }
 }
 
-/// What the model is to do, with the Markdown the document's schema takes.
+/// How a block type the schema writes as a fence is written, in a few
+/// words: its tag, the attributes after it, and what goes inside.
+fn fence(spec: &BlockSpec, tag: &str) -> String {
+    let named = spec.hint().unwrap_or(spec.name());
+    let attrs = spec.markdown_attrs();
+    let attrs = match attrs {
+        [] => String::new(),
+        attrs => {
+            let keys: Vec<_> = attrs.iter().map(|key| format!("`{key}`")).collect();
+            format!(
+                ", with {} after the tag as `key=value`, a value with spaces in quotes",
+                keys.join(", ")
+            )
+        }
+    };
+    let inside = match (spec.content(), spec.role()) {
+        (Content::None, _) => "nothing inside",
+        (_, Role::Code) => "its text inside as it is",
+        _ => "its text inside",
+    };
+    format!("{named} (a fenced block tagged `{tag}`{attrs}, and {inside})")
+}
+
+/// What the model is to do, with the Markdown the document's schema takes:
+/// each of its block types says how it is written, those an application
+/// added as those built in.
 pub(crate) fn system(schema: &Schema) -> String {
-    let kinds = [
-        (block::HEADING, "headings (`# Title`)"),
-        (block::BULLET_LIST_ITEM, "bullet items (`- item`)"),
-        (block::NUMBERED_LIST_ITEM, "numbered items (`1. item`)"),
-        (block::CHECK_LIST_ITEM, "tasks (`- [ ] task`)"),
-        (block::QUOTE, "quotes (`> text`)"),
-        (
-            block::ALERT,
-            "alerts (`> [!NOTE]`, with their text added after them)",
-        ),
-        (block::CODE_BLOCK, "fenced code"),
-        (block::TABLE, "tables"),
-        (block::DIVIDER, "dividers (`---`)"),
-        (block::IMAGE, "images (`![caption](url)`)"),
-    ];
-    let known = kinds
-        .iter()
-        .filter(|(name, _)| schema.block_spec(name).is_some());
-    let known: Vec<_> = known.map(|(_, written)| *written).collect();
+    let known = schema.block_specs().filter_map(|spec| match spec.fence() {
+        Some(tag) => Some(fence(spec, tag)),
+        None => spec.hint().map(str::to_owned),
+    });
+    let known: Vec<_> = known.collect();
     format!(
         "You edit a document for its user. Each request comes with the document as JSON: \
          `blocks` in reading order, each with its `id`, how deep it is nested (`depth`) and \
