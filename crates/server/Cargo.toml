@@ -1,0 +1,27 @@
+[package]
+name = "lotype-server"
+description = "Realtime collaboration for lotype documents: a WebSocket relay to mount in an Axum server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["ws"] }
+lotype-core.workspace = true
+lotype-storage.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+
+[dev-dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+loro.workspace = true
+lotype-core = { workspace = true, features = ["test-support"] }
+lotype-storage = { workspace = true, features = ["sqlite"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }

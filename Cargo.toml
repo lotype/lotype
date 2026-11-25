@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/storage", "crates/ui"]
+members = ["crates/core", "crates/server", "crates/storage", "crates/ui"]
 exclude = ["porting"]
 
 [workspace.package]
