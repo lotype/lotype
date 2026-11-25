@@ -13,19 +13,20 @@ use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span, block};
 use super::EditorView;
 
 /// What an empty paragraph says while the caret is in it.
-const PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
+const PLACEHOLDER: &str = "Type '/' for blocks, or just write";
+const AI_PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
 use super::input::Shown;
 use crate::marks::{CODE_FONT, Inks, text_runs};
 use crate::text_el::TextElement;
 
 /// The row of a document with no blocks: where writing starts, as the first
 /// click, key or text makes it a paragraph.
-pub(super) fn empty_document(cx: &App) -> AnyElement {
+pub(super) fn empty_document(has_ai: bool, cx: &App) -> AnyElement {
     div()
         .py(px(2.))
         .text_color(cx.theme().muted_foreground)
         .debug_selector(|| "empty-document".to_owned())
-        .child(PLACEHOLDER)
+        .child(if has_ai { AI_PLACEHOLDER } else { PLACEHOLDER })
         .into_any_element()
 }
 
@@ -138,7 +139,11 @@ impl EditorView {
             .whitespace_nowrap()
             .text_color(cx.theme().muted_foreground)
             .debug_selector(|| "placeholder".to_owned())
-            .child(PLACEHOLDER);
+            .child(if self.has_ai() {
+                AI_PLACEHOLDER
+            } else {
+                PLACEHOLDER
+            });
         shown.then_some(placeholder)
     }
 

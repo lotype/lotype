@@ -9,24 +9,33 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Entity, Subscription, Task, Window, prelude::*};
-use gpui_component::input::{InputEvent, InputState};
+use gpui::{Context, Task, Window};
 use lotype_ai::{
     Accepted, AiSession, AiState, AiTranscript, Change, LlmError, LlmEvent, LlmProvider,
 };
-use lotype_core::{BlockKind, Document, Editor, Pos, Selection, SlashItem};
+use lotype_core::{Document, Editor, Selection};
 
 use super::EditorView;
+use super::ai_prompt::PromptField;
+use super::popup::Placement;
 
 /// How long what comes of an answer waits for more, to be taken together.
 const FRAME: Duration = Duration::from_millis(16);
+
+/// The surface and context that own an AI request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PromptScope {
+    Inline,
+    Selection,
+    Document,
+}
 
 /// The AI's state between frames.
 #[derive(Default)]
 pub(crate) struct Ai {
     provider: Option<Arc<dyn LlmProvider>>,
-    /// What was said, in the sessions before this one.
     transcript: AiTranscript,
+    pub(super) scope: Option<PromptScope>,
     pub(super) session: Option<AiSession>,
     /// The document's editor, while the view shows a session's copy.
     pub(super) main: Option<Editor>,
@@ -38,24 +47,12 @@ pub(crate) struct Ai {
     /// Reads the answer. Dropping it cancels the request.
     reading: Option<Task<()>>,
     /// The field to ask in, while the bar is open.
-    pub(super) field: Option<(Entity<InputState>, Subscription)>,
+    pub(super) field: Option<PromptField>,
+    pub(super) place: Placement,
     /// The blocks the session changed, as of the last frame.
     pub(super) changes: Vec<Change>,
     /// The slash menu's entry asked for the bar, which the next frame opens.
     pub(super) wanted: bool,
-}
-
-/// The slash menu's entry for the prompt.
-pub(super) fn slash_item() -> SlashItem {
-    SlashItem {
-        key: "ai".to_owned(),
-        title: "Ask AI".to_owned(),
-        subtext: "Write or edit with a prompt".to_owned(),
-        group: "AI".to_owned(),
-        aliases: vec!["ask".to_owned(), "write".to_owned()],
-        block_type: String::new(),
-        attrs: Vec::new(),
-    }
 }
 
 /// An editor of a document of its own that starts as `doc` is.
@@ -66,10 +63,8 @@ fn copy_of(doc: &Document) -> Option<Editor> {
 }
 
 impl EditorView {
-    /// Gives the editor a model to ask: a button in the formatting toolbar,
-    /// an entry in the slash menu and Space in an empty paragraph open a
-    /// prompt, and the model's edits are shown for review before they are
-    /// the document's.
+    /// Enables inline writing, selection suggestions and whole-document chat.
+    /// The model's edits stay in a private preview until accepted.
     ///
     /// The answer is read where the view runs. A provider whose stream
     /// needs a runtime of its own, as Tokio's, reads it there and passes
@@ -89,10 +84,24 @@ impl EditorView {
         self.ai.session.as_ref().map(AiSession::state)
     }
 
-    /// What was said to and by the model, in this session and those before.
+    /// The shared history of inline, selection and whole-document requests.
     pub fn ai_transcript(&self) -> &AiTranscript {
         let session = self.ai.session.as_ref();
         session.map_or(&self.ai.transcript, AiSession::transcript)
+    }
+
+    /// The state of the document chat's active request or review.
+    pub fn ai_chat_state(&self) -> Option<&AiState> {
+        if self.ai.scope == Some(PromptScope::Document) {
+            self.ai_state()
+        } else {
+            None
+        }
+    }
+
+    /// The text arriving in the shared thread.
+    pub(crate) fn ai_streaming_reply(&self) -> Option<&str> {
+        self.ai.session.as_ref()?.streaming_reply()
     }
 
     /// The session's copy of the document, which the view shows while a
@@ -101,33 +110,94 @@ impl EditorView {
         self.ai.session.as_ref().map(AiSession::document)
     }
 
-    /// Asks the model, about the document and what is selected in it. The
-    /// first question opens a session; one asked while edits wait for
-    /// review goes on from them.
+    /// Asks about the current selection or caret in the contextual prompt.
     pub fn ai_ask(&mut self, text: &str, cx: &mut Context<Self>) {
-        if self.ai.provider.is_none() || text.trim().is_empty() {
-            return;
+        let scope = self
+            .ai
+            .field
+            .as_ref()
+            .map_or_else(|| self.context_scope(), |field| field.scope);
+        self.ai_submit(text, scope, cx);
+    }
+
+    /// Sends a question to the whole-document chat, without the editor selection.
+    /// Returns whether the request was queued.
+    pub fn ai_ask_document(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        self.ai_submit(text, PromptScope::Document, cx)
+    }
+
+    /// Whether the document chat can send another question.
+    pub(crate) fn ai_chat_can_send(&self) -> bool {
+        self.ai_can_submit(PromptScope::Document)
+    }
+
+    /// Inferred context for a prompt opened by the application.
+    pub(super) fn context_scope(&self) -> PromptScope {
+        if matches!(self.editor().selection(), Some(Selection::Text { anchor, head }) if anchor != head)
+        {
+            PromptScope::Selection
+        } else {
+            PromptScope::Inline
+        }
+    }
+
+    /// Whether this surface owns the current turn, and is allowed to ask.
+    pub(super) fn ai_can_submit(&self, scope: PromptScope) -> bool {
+        self.has_ai()
+            && match self.ai_state() {
+                None => scope != PromptScope::Selection || self.context_scope() == scope,
+                Some(AiState::Reviewing) => self.ai.scope == Some(scope),
+                _ => false,
+            }
+    }
+
+    /// Starts or continues a session owned by one surface.
+    pub(super) fn ai_submit(
+        &mut self,
+        text: &str,
+        scope: PromptScope,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let text = text.trim();
+        if text.is_empty() || !self.ai_can_submit(scope) {
+            return false;
         }
         if self.ai.session.is_none() {
             if let Some(composition) = self.composition.take() {
                 self.commit(&composition.text);
             }
-            let Ok(session) = AiSession::new(&self.editor) else {
-                return;
+            let session = match scope {
+                PromptScope::Document => AiSession::for_document(self.editor.document()),
+                PromptScope::Selection => AiSession::for_selection(&self.editor),
+                PromptScope::Inline => AiSession::new(&self.editor),
+            };
+            let Ok(session) = session else {
+                return false;
             };
             let Some(copy) = copy_of(session.document()) else {
-                return;
+                return false;
+            };
+            let mut session = session.with_transcript(self.ai.transcript.clone());
+            let Ok(request) = session.prompt(text) else {
+                return false;
             };
             self.dismiss_edit_controls();
-            let transcript = std::mem::take(&mut self.ai.transcript);
-            self.ai.session = Some(session.with_transcript(transcript));
+            if scope == PromptScope::Document {
+                self.ai.field = None;
+            }
+            self.ai.scope = Some(scope);
+            self.ai.session = Some(session);
             self.ai.main = Some(std::mem::replace(&mut self.editor, copy));
-        }
-        let asked = self.ai.session.as_mut().map(|session| session.prompt(text));
-        if let Some(Ok(request)) = asked {
+            self.ai_send(request, cx);
+        } else {
+            let Some(Ok(request)) = self.ai.session.as_mut().map(|session| session.prompt(text))
+            else {
+                return false;
+            };
             self.ai_send(request, cx);
         }
         cx.notify();
+        true
     }
 
     /// Drops editing popups, delayed callbacks and gestures before showing the draft.
@@ -145,10 +215,15 @@ impl EditorView {
     }
 
     /// Sends a request and reads its answer, an event at a time.
-    fn ai_send(&mut self, request: lotype_ai::LlmRequest, cx: &mut Context<Self>) {
+    fn ai_send(&mut self, mut request: lotype_ai::LlmRequest, cx: &mut Context<Self>) {
         let Some(provider) = self.ai.provider.clone() else {
             return;
         };
+        if self.ai.scope == Some(PromptScope::Inline) {
+            request.system.push_str(
+                "\n\nThis is an inline writing prompt. When a cursor block is provided, use it as the place to write unless the user asks for another location.",
+            );
+        }
         self.ai.arrived.clear();
         self.ai.taken = Some(Instant::now());
         self.ai.reading = Some(cx.spawn(async move |view, cx| {
@@ -246,6 +321,7 @@ impl EditorView {
         if let Some(session) = self.ai.session.take() {
             self.ai.transcript = session.transcript().clone();
         }
+        self.ai.scope = None;
         if let Some(main) = self.ai.main.take() {
             self.editor = main;
         }
@@ -298,78 +374,5 @@ impl EditorView {
         self.ai_close();
         self.ai_close_bar(window, cx);
         self.selection_changed(window, cx);
-    }
-
-    /// Opens the bar to ask in, at the foot of the editor.
-    pub fn open_ai_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ai.provider.is_none() || self.ai.field.is_some() {
-            return;
-        }
-        let input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Ask AI to write or edit…"));
-        let events = cx.subscribe_in(&input, window, |view, input, event, window, cx| {
-            match event {
-                InputEvent::PressEnter { .. } => {
-                    let text = input.read(cx).value().to_string();
-                    input.update(cx, |input, cx| input.set_value("", window, cx));
-                    view.ai_ask(&text, cx);
-                }
-                // The focus went elsewhere, where it stays, and with no
-                // session there is nothing the bar is open for.
-                InputEvent::Blur if window.is_window_active() && view.ai.session.is_none() => {
-                    view.ai.field = None;
-                    cx.notify();
-                }
-                _ => {}
-            }
-        });
-        input.update(cx, |input, cx| input.focus(window, cx));
-        self.ai.field = Some((input, events));
-        cx.notify();
-    }
-
-    pub(super) fn ai_close_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ai.field.take().is_some() {
-            window.focus(&self.focus, cx);
-        }
-        cx.notify();
-    }
-
-    /// Space in an empty paragraph opens the prompt instead of writing a
-    /// space. Returns whether it did.
-    pub(super) fn ai_space(
-        &mut self,
-        text: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let caret = match self.editor.selection() {
-            Some(Selection::Text { anchor, head }) if anchor == head => Some(*head),
-            _ => None,
-        };
-        let doc = self.editor.document();
-        let empty = caret.filter(|caret| {
-            BlockKind::of(doc, caret.block) == Some(BlockKind::Paragraph)
-                && doc.text_len(caret.block).is_ok_and(|len| len == 0)
-                && caret.block.column().is_none()
-        });
-        if text != " " || empty.is_none() || !self.has_ai() || self.composition.is_some() {
-            return false;
-        }
-        self.open_ai_prompt(window, cx);
-        true
-    }
-
-    /// The slash menu's entry: takes the query out and opens the prompt.
-    pub(super) fn ai_from_slash(&mut self) {
-        if let Some(query) = self.editor.slash_query() {
-            let caret = Selection::caret(Pos::new(query.block, query.range.start));
-            let cleared = self.editor.apply(|doc, _| {
-                doc.delete_text(query.block, query.range)?;
-                Ok(Some(caret))
-            });
-            cleared.ok();
-        }
-        self.ai.wanted = true;
     }
 }

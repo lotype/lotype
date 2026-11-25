@@ -91,7 +91,7 @@ fn separator(cx: &App) -> Div {
 
 impl EditorView {
     /// The selected text, when it is some and not being dragged out.
-    fn selected_text(&self) -> Option<(Pos, Pos)> {
+    pub(super) fn selected_text(&self) -> Option<(Pos, Pos)> {
         let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
             return None;
         };
@@ -128,7 +128,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.focus.is_focused(window) || self.selected_text().is_none() {
+        // Its AI menu's field has the focus while it asks.
+        let asking = self.ai_asks_selection();
+        if !(self.focus.is_focused(window) || asking) || self.selected_text().is_none() {
             self.toolbar.menu = None;
             return None;
         }
@@ -206,22 +208,32 @@ impl EditorView {
         });
         let ask = self.has_ai().then(|| {
             let click = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
-                view.open_ai_prompt(window, cx);
+                if view.ai_asks_selection() {
+                    view.ai_close_bar(window, cx);
+                } else {
+                    view.toolbar.menu = None;
+                    view.open_selection_ai_prompt(window, cx);
+                }
             });
-            let ask = Button::new("ai")
-                .ghost()
-                .small()
-                .tab_stop(false)
-                .label("AI");
-            tagged("ai", ask.tooltip("Ask AI").on_click(click))
+            let trigger = button("ai", icons::SPARKLES, "AI suggestions for selected text")
+                .accessibility_label("AI")
+                .selected(asking)
+                .on_click(click);
+            let trigger = div()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(trigger);
+            tagged("ai", trigger)
         });
+        let ai_menu = self.ai_selection_menu(cx);
         let (block_type, type_menu) = self.block_type_select(first, cx).unzip();
         let (color, color_menu) = self.color_button(&active, cx).unzip();
         // The open dropdown comes last, so that it is in front of the bar's
         // buttons and takes the clicks on itself: under the select from the
-        // left, under the color button from the right.
-        let left = type_menu.flatten().map(|menu| (menu, false));
-        let dropdown = left.or(color_menu.flatten().map(|menu| (menu, true)));
+        // left, under the color button or the bar's end from the right.
+        let color_button = self.toolbar.color_button.get();
+        let left = type_menu.flatten().map(|menu| (menu, false, None));
+        let colors = color_menu.flatten().map(|menu| (menu, true, color_button));
+        let dropdown = left.or(colors).or(ai_menu.map(|menu| (menu, true, None)));
         // Under the bar, or over it where there is more room there than
         // under it and not room enough under it for the dropdown.
         let height = self.toolbar.dropdown_height.get().unwrap_or(DROPDOWN_GUESS);
@@ -229,10 +241,10 @@ impl EditorView {
             let below = window.viewport_size().height - bar.bottom();
             below < height + px(12.) && bar.top() > below
         });
-        if self.toolbar.menu.is_none() {
+        if self.toolbar.menu.is_none() && !asking {
             self.toolbar.dropdown_height.set(None);
         }
-        let dropdown = dropdown.map(|(menu, right)| {
+        let dropdown = dropdown.map(|(menu, right, button)| {
             let hanging = div().absolute();
             let hanging = if up {
                 hanging.bottom_full()
@@ -242,8 +254,8 @@ impl EditorView {
             // The color dropdown hangs from the color button, so that it is
             // plainly that button's; the select's from the bar's start, where
             // the select is.
-            let from_button = match (self.toolbar.bar.get(), self.toolbar.color_button.get()) {
-                (Some(bar), Some(button)) if right => Some(button.left() - bar.left()),
+            let from_button = match (self.toolbar.bar.get(), button) {
+                (Some(bar), Some(button)) => Some(button.left() - bar.left()),
                 _ => None,
             };
             let hanging = match from_button {
@@ -293,8 +305,11 @@ impl EditorView {
             // dropdown, which takes clicks on itself and its button first.
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
+                cx.listener(|view: &mut Self, _: &gpui::MouseDownEvent, window, cx| {
                     cx.stop_propagation();
+                    if view.ai_asks_selection() {
+                        view.ai_close_bar(window, cx);
+                    }
                     if view.toolbar.menu.take().is_some() {
                         cx.notify();
                     }

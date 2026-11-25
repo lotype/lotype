@@ -143,7 +143,8 @@ pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
         let view = revealed.read(cx);
         let behind = view.slash.place.left_behind(view.slash_target())
             || view.toolbar.place.left_behind(view.toolbar_target())
-            || view.links.place.left_behind(view.links_target());
+            || view.links.place.left_behind(view.links_target())
+            || view.ai.place.left_behind(view.ai_prompt_target());
         if behind {
             let id = revealed.entity_id();
             window.on_next_frame(move |_, cx| cx.notify(id));

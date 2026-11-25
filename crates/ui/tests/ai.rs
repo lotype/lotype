@@ -1,12 +1,14 @@
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures_util::{StreamExt, stream};
 use gpui::{
     AppContext, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px,
 };
 use lotype_ai::test_support::{MockProvider, tool_call};
-use lotype_ai::{AiState, LlmError, LlmEvent, Role};
+use lotype_ai::{AiState, LlmError, LlmEvent, LlmProvider, LlmRequest, LlmStream, Role};
 use lotype_core::test_support::{BlockNode, editor};
-use lotype_core::{BlockId, blocks, p};
+use lotype_core::{BlockId, Pos, Selection, blocks, p};
 use lotype_ui::test_support::EditorTestContext;
 use lotype_ui::{AiPanel, EditorView};
 
@@ -191,6 +193,36 @@ fn the_ai_cursor_labels_the_last_edited_row_not_the_last_row_in_the_document(
     assert!(!shows(&mut ed, "ai-cursor"));
 }
 
+/// A model that starts rewriting a block and never finishes.
+struct Stalled(BlockId);
+
+impl LlmProvider for Stalled {
+    fn stream(&self, _: LlmRequest) -> LlmStream {
+        let args = format!(r#"{{"id": "{}", "block": "ON"#, self.0);
+        Box::pin(stream::iter(tool_call("1", "update", &args, 99)).chain(stream::pending()))
+    }
+}
+
+#[gpui::test]
+fn the_label_rides_the_live_caret_while_the_model_writes_text(cx: &mut TestAppContext) {
+    let doc = editor(blocks![p!["one<a>"], p!["two"]]);
+    let model = Arc::new(Stalled(doc.document().blocks()[0]));
+    let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(model));
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Shout", cx));
+    // The card's mark moves while the model works, so no frame is the last.
+    let frame = |ed: &mut EditorTestContext| {
+        ed.cx.run_until_parked();
+        ed.cx.update(|window, cx| window.simulate_next_frame(cx));
+        ed.cx.run_until_parked();
+    };
+    frame(&mut ed);
+    ed.cx.executor().advance_clock(Duration::from_millis(20));
+    frame(&mut ed);
+    assert!(ed.cx.debug_bounds("ai-cursor").is_none() && ed.cx.debug_bounds("ai-stop").is_some());
+    assert_eq!(state(&mut ed), Some(AiState::Writing));
+    assert_eq!(first(&mut ed), ("one".into(), Some("ON".into())));
+}
+
 #[gpui::test]
 fn the_ai_cursor_marks_a_preview_emptied_by_the_model(cx: &mut TestAppContext) {
     let (mut ed, _) = with_model(cx, blocks![p!["one<a>"]], |blocks| {
@@ -263,44 +295,15 @@ fn an_answer_with_no_edits_leaves_nothing_to_review(cx: &mut TestAppContext) {
         .update(ed.cx, |view, _| view.ai_transcript().clone());
     assert_eq!(said.messages[1].text, "One paragraph.");
     // The bar stays to ask more, and Escape closes it.
-    assert!(shows(&mut ed, "ai-bar") && !shows(&mut ed, "ai-accept"));
+    assert!(shows(&mut ed, "ai-status") && !shows(&mut ed, "ai-accept"));
     ed.keys("escape");
     assert!(!shows(&mut ed, "ai-bar"));
+    ed.view
+        .update_in(ed.cx, |view, window, cx| view.open_ai_prompt(window, cx));
+    assert!(shows(&mut ed, "ai-bar") && !shows(&mut ed, "ai-status"));
+    ed.keys("escape");
     ed.type_text("!");
     ed.assert(blocks![p!["one!<a>"]]);
-}
-
-#[gpui::test]
-fn the_prompt_opens_from_an_empty_paragraph_the_slash_menu_and_the_toolbar(
-    cx: &mut TestAppContext,
-) {
-    let (mut ed, _) = with_model(cx, blocks![p!["text"], p!["<a>"]], |_| Vec::new());
-    ed.type_text(" ");
-    assert!(shows(&mut ed, "ai-bar"));
-    ed.assert(blocks![p!["text"], p!["<a>"]]);
-    ed.keys("escape");
-
-    ed.type_text("/ai");
-    assert!(shows(&mut ed, "slash-ai"));
-    ed.keys("enter");
-    assert!(shows(&mut ed, "ai-bar"));
-    ed.assert(blocks![p!["text"], p!["<a>"]]);
-    ed.keys("escape");
-
-    ed.keys("up shift-right shift-right");
-    let selection = ed.editor(|editor| editor.selection().cloned());
-    assert!(shows(&mut ed, "toolbar-bold"), "{selection:?}");
-    click(&mut ed, "toolbar-ai");
-    assert!(shows(&mut ed, "ai-bar"));
-}
-
-#[gpui::test]
-fn without_a_model_space_is_a_space_and_no_prompt_is_offered(cx: &mut TestAppContext) {
-    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
-    ed.type_text(" ");
-    ed.assert(blocks![p![" <a>"]]);
-    ed.type_text("/ai");
-    assert!(!shows(&mut ed, "slash-ai") && !shows(&mut ed, "ai-bar"));
 }
 
 #[gpui::test]
@@ -327,4 +330,109 @@ fn the_panel_asks_shows_what_was_said_and_accepts(cx: &mut TestAppContext) {
     let accept = drawn(cx, "ai-panel-accept").expect("the edits wait for review");
     cx.simulate_click(accept.center(), Modifiers::none());
     assert!(drawn(cx, "ai-panel-accept").is_none());
+}
+
+#[gpui::test]
+fn all_ai_entry_points_share_a_thread_but_only_the_current_context(cx: &mut TestAppContext) {
+    let reply = |text: &str| [Ok(LlmEvent::TextDelta(text.into())), Ok(LlmEvent::Done)];
+    let provider = Arc::new(
+        MockProvider::new()
+            .answer(reply("Selection answer"))
+            .answer(reply("Document answer"))
+            .answer(reply("Inline answer")),
+    );
+    let model = provider.clone();
+    let doc = editor(blocks![p!["First <a>phrase<b>"], p!["Second paragraph"]]);
+    let second = doc.document().blocks()[1];
+    let view = cx.update(|cx| cx.new(|cx| EditorView::new(doc, cx).with_ai(model)));
+    let (panel, cx) = cx.add_window_view(|window, cx| AiPanel::new(view.clone(), window, cx));
+    view.update(cx, |view, cx| view.ai_ask("Selection only", cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("ai-panel-message-0").is_some());
+    assert!(cx.debug_bounds("ai-panel-message-1").is_some());
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle(cx).focus(window, cx)
+    });
+
+    cx.simulate_input("Summarize both");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("Use one sentence");
+    cx.run_until_parked();
+    assert_eq!(provider.requests().len(), 1);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            editor.set_selection(Some(Selection::caret(Pos::new(second, 0))))
+        })
+        .unwrap();
+        view.ai_ask("Write here", cx);
+    });
+    cx.run_until_parked();
+
+    let requests = provider.requests();
+    assert!(
+        requests[0].messages[0]
+            .text
+            .contains(r#""selectedText":"phrase""#)
+    );
+    let first_chat = &requests[1].messages;
+    assert_eq!(first_chat.len(), 3);
+    assert_eq!(first_chat[0].text, "Selection only");
+    assert_eq!(first_chat[1].text, "Selection answer");
+    let document = &first_chat[2].text;
+    assert!(document.ends_with("Summarize both\nUse one sentence"));
+    assert!(document.contains("Second paragraph"));
+    for absent in [r#""selectedText":"#, r#""selected":"#, r#""cursor":"#] {
+        assert!(!document.contains(absent));
+    }
+    let inline = &requests[2].messages;
+    assert_eq!(inline.len(), 5);
+    assert_eq!(inline[2].text, "Summarize both\nUse one sentence");
+    assert_eq!(inline[3].text, "Document answer");
+    assert!(inline[4].text.contains(&format!(r#""cursor":"{second}""#)));
+    assert!(inline[4].text.ends_with("Write here"));
+    assert!(cx.debug_bounds("ai-panel-message-5").is_some());
+}
+
+#[gpui::test]
+fn document_composer_keeps_unsent_text_while_a_contextual_edit_is_under_review(
+    cx: &mut TestAppContext,
+) {
+    let doc = editor(blocks![p!["one<a>"]]);
+    let block = doc.document().blocks()[0];
+    let provider = Arc::new(
+        MockProvider::new()
+            .answer(update(block, "ONE"))
+            .answer([Ok(LlmEvent::Done)]),
+    );
+    let model = provider.clone();
+    let view = cx.update(|cx| cx.new(|cx| EditorView::new(doc, cx).with_ai(model)));
+    let (panel, cx) = cx.add_window_view(|window, cx| AiPanel::new(view.clone(), window, cx));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle(cx).focus(window, cx)
+    });
+    view.update(cx, |view, cx| view.ai_ask("Rewrite inline", cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("ai-panel-accept").is_none());
+    cx.simulate_input("Keep this draft");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(provider.requests().len(), 1);
+
+    view.update_in(cx, |view, window, cx| view.ai_reject(window, cx));
+    cx.run_until_parked();
+    let send = cx.debug_bounds("ai-panel-send").unwrap();
+    cx.simulate_click(send.center(), Modifiers::none());
+    cx.run_until_parked();
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]
+            .messages
+            .last()
+            .unwrap()
+            .text
+            .ends_with("Keep this draft")
+    );
 }

@@ -39,7 +39,7 @@ impl EditorView {
             return None;
         }
         // The prompt first, where there is a model to ask.
-        let ai = self.has_ai().then(super::ai::slash_item);
+        let ai = self.has_ai().then(super::ai_prompt::slash_item);
         let ai = filter_slash_items(ai.as_slice(), &query.query);
         let items = filter_slash_items(&self.slash_items, &query.query);
         let items: Vec<_> = ai.into_iter().chain(items).cloned().collect();

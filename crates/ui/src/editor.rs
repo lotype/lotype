@@ -1,5 +1,7 @@
 mod ai;
 mod ai_bar;
+mod ai_controls;
+mod ai_prompt;
 mod alert;
 mod blink;
 mod block_menu;
@@ -21,7 +23,7 @@ mod toolbar;
 mod toolbar_menus;
 mod visible;
 
-pub(crate) use ai_bar::Act;
+pub(crate) use ai_controls::{Act, send, status, tier};
 pub use alert::{AlertLook, Shade};
 
 use std::cell::Cell;
@@ -291,7 +293,7 @@ impl Render for EditorView {
             self.watches = vec![blur, focus, active];
         }
         if std::mem::take(&mut self.ai.wanted) {
-            self.open_ai_prompt(window, cx);
+            self.open_inline_ai_prompt(window, cx);
         }
         // The frame's cost, up to the caret's paint, decides the blinking.
         self.blink.started.set(Some(std::time::Instant::now()));
@@ -299,6 +301,8 @@ impl Render for EditorView {
         self.place_toolbar();
         self.place_side_menu();
         self.place_links();
+        self.place_ai_prompt();
+        self.ai_refocus_field(window, cx);
         self.layouts.clear();
         self.measure_rows();
         let base = window.text_style();
@@ -322,7 +326,10 @@ impl Render for EditorView {
             .iter()
             .filter_map(|peer| self.visible_cursor_row(peer.ai_block?, &candidates))
             .collect();
-        if let Some(EditLocation::Block(block) | EditLocation::Removal(Some(block))) = ai_cursor {
+        // The live cursor carries the label while the model writes text.
+        if let Some(EditLocation::Block(block) | EditLocation::Removal(Some(block))) = ai_cursor
+            && self.ai_writing_block() != Some(block)
+        {
             ai_cursor_blocks.insert(block);
         }
         // Rows far from the view lay out nothing: those next to each other
@@ -386,7 +393,7 @@ impl Render for EditorView {
             .children(None)
             .is_ok_and(|blocks| blocks.is_empty())
         {
-            let empty = render::empty_document(cx);
+            let empty = render::empty_document(self.has_ai(), cx);
             rows.push(if ai_cursor == Some(EditLocation::Removal(None)) {
                 div()
                     .relative()

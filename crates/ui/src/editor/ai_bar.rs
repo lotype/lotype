@@ -1,78 +1,41 @@
-//! What is drawn of a session: the bar to ask in and to act on the model's
-//! edits, the marks on the blocks they changed, and where the model writes.
+//! What is drawn of a session: the card to ask in and to act on the model's
+//! edits, the toolbar's menu for selected text, the marks on the blocks they changed, and where the model writes.
 
 use gpui::{
     Anchor, AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, Hsla, IntoElement,
-    KeyDownEvent, MouseButton, Pixels, Window, anchored, canvas, deferred, div, fill, point,
-    prelude::*, px,
+    KeyDownEvent, MouseButton, Pixels, TextAlign, TextRun, TransformationMatrix, Window, anchored,
+    canvas, deferred, div, fill, point, prelude::*, px, size,
 };
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::Input;
+use gpui_component::input::Textarea;
+use gpui_component::list::ListItem;
 use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex, v_flex};
 use lotype_ai::{AiState, Change, EditLocation, Role};
 use lotype_core::BlockId;
 
 use super::EditorView;
+use super::ai::PromptScope;
+use super::ai_controls::{Act, WORKING, send, status, tier, working};
+use crate::icons::{self, icon};
 use crate::text_el::Affinity;
 
-/// What can be done with a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Act {
-    Stop,
-    Retry,
-    Accept,
-    Reject,
-}
-
-impl Act {
-    /// What a session in `state` offers, the last of them the one to press.
-    pub(crate) fn offered(state: Option<&AiState>) -> &'static [(Act, &'static str)] {
-        match state {
-            Some(AiState::Thinking | AiState::Writing) => &[(Act::Stop, "Stop")],
-            Some(AiState::Reviewing) => &[(Act::Reject, "Reject"), (Act::Accept, "Accept")],
-            Some(AiState::Error(_)) => &[(Act::Reject, "Close"), (Act::Retry, "Retry")],
-            _ => &[],
-        }
-    }
-
-    /// The name a test finds its button by, after `prefix`.
-    fn name(self) -> &'static str {
-        match self {
-            Act::Stop => "stop",
-            Act::Retry => "retry",
-            Act::Accept => "accept",
-            Act::Reject => "reject",
-        }
-    }
-
-    /// The buttons for what a session in `state` offers, each doing `act`
-    /// of its own, and found by tests as `{prefix}-{name}`.
-    pub(crate) fn buttons<V: 'static>(
-        state: Option<&AiState>,
-        prefix: &'static str,
-        cx: &mut Context<V>,
-        act: impl Fn(&mut V, Act, &mut Window, &mut Context<V>) + Clone + 'static,
-    ) -> Vec<AnyElement> {
-        let offered = Self::offered(state);
-        let buttons = offered.iter().enumerate().map(|(at, (what, label))| {
-            let (what, act) = (*what, act.clone());
-            let click = cx.listener(move |view: &mut V, _: &ClickEvent, window, cx| {
-                act(view, what, window, cx);
-            });
-            let button = Button::new((prefix, at))
-                .small()
-                .tab_stop(false)
-                .label(*label);
-            let button = match at + 1 == offered.len() && offered.len() > 1 {
-                true => button.primary(),
-                false => button.ghost(),
-            };
-            let tagged = div().debug_selector(move || format!("{prefix}-{}", what.name()));
-            tagged.child(button.on_click(click)).into_any_element()
-        });
-        buttons.collect()
-    }
-}
+/// Quick edits offered for selected text, with their request text.
+const SUGGESTIONS: [(&str, &str, &str); 3] = [
+    (
+        "spelling",
+        "Fix spelling & grammar",
+        "Fix spelling and grammar in the selected text.",
+    ),
+    (
+        "clarity",
+        "Improve clarity",
+        "Rewrite the selected text for clarity without changing its meaning.",
+    ),
+    (
+        "shorten",
+        "Shorten",
+        "Shorten the selected text without losing its meaning.",
+    ),
+];
 
 impl EditorView {
     /// Finds the visible row for the cursor, using an ancestor when the target is hidden.
@@ -89,6 +52,16 @@ impl EditorView {
         } else {
             EditLocation::Block(block)
         })
+    }
+
+    /// The text block the model is writing, where its live cursor is drawn.
+    pub(super) fn ai_writing_block(&self) -> Option<BlockId> {
+        let session = self.ai.session.as_ref()?;
+        let EditLocation::Block(block) = session.edit_location()? else {
+            return None;
+        };
+        let writes = session.state() == &AiState::Writing;
+        (writes && self.editor.document().text_len(block).is_ok()).then_some(block)
     }
 
     /// Finds the closest row in the view, including a collapsed block's ancestor.
@@ -113,40 +86,188 @@ impl EditorView {
         }
     }
 
-    /// What the model is doing, in a line: or what it said of what it did,
-    /// and how many blocks it removed, which the view does not show.
+    /// What the session says, in a line: what the model is doing, that
+    /// its edits wait for review and how many blocks they removed, which
+    /// the view does not show, or its answer where it made no edits.
     pub(crate) fn ai_status(&self) -> Option<String> {
-        match self.ai_state()? {
-            AiState::Thinking => Some("Thinking…".to_owned()),
-            AiState::Writing => Some("Writing…".to_owned()),
-            AiState::Error(error) => Some(error.clone()),
-            AiState::Reviewing => {
+        match self.ai_state() {
+            None => self
+                .ai_transcript()
+                .messages
+                .get(self.ai.field.as_ref()?.history_start..)?
+                .last()
+                .filter(|message| message.role == Role::Assistant)
+                .map(|message| message.text.clone()),
+            Some(AiState::Thinking | AiState::Writing) => Some(WORKING.to_owned()),
+            Some(AiState::Error(error)) => Some(error.clone()),
+            Some(AiState::Reviewing) => {
                 let removed = self.ai.changes.iter();
                 let removed = removed.filter(|change| matches!(change, Change::Removed(_)));
-                let gone = match removed.count() {
-                    0 => String::new(),
-                    1 => " 1 block removed.".to_owned(),
-                    more => format!(" {more} blocks removed."),
-                };
-                let said = self.ai_transcript().messages.last();
-                let said = said.filter(|message| message.role == Role::Assistant);
-                let said = said
-                    .map(|message| message.text.as_str())
-                    .unwrap_or_default();
-                Some(format!("{said}{gone}").trim().to_owned()).filter(|text| !text.is_empty())
+                Some(match removed.count() {
+                    0 => "Review the changes".to_owned(),
+                    1 => "Review the changes · 1 block removed".to_owned(),
+                    more => format!("Review the changes · {more} blocks removed"),
+                })
             }
             _ => None,
         }
     }
 
-    /// The bar, at the foot of the editor: what the model is doing or
-    /// said, the field to ask in, and what can be done with its edits.
+    /// Whether the toolbar's menu for the selected text is open: its field
+    /// asks, and no session has started.
+    pub(super) fn ai_asks_selection(&self) -> bool {
+        let field = self.ai.field.as_ref();
+        self.ai.session.is_none()
+            && field.is_some_and(|field| field.scope == PromptScope::Selection)
+            && self.selected_text().is_some()
+    }
+
+    /// Closes a prompt that has no edits to review, on Escape: leaving
+    /// those is said with a button.
+    fn ai_escape(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" && self.ai.session.is_none() {
+            cx.stop_propagation();
+            self.ai_close_bar(window, cx);
+        }
+    }
+
+    /// The field to ask in under the AI's mark, which grows with what is
+    /// written, and the button that sends it: next to the field while the
+    /// text is one line, and on a row of its own below once it is more,
+    /// where it takes none of the field's width.
+    fn ai_field_row(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let field = self.ai.field.as_ref()?;
+        let text = field.input.read(cx).value();
+        let ready = !text.trim().is_empty() && self.ai_can_submit(field.scope);
+        let click = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            view.ai_submit_field(window, cx);
+        });
+        let send = send("ai-send", ready, cx).on_click(click);
+        let sent = div().debug_selector(|| "ai-send".to_owned()).child(send);
+        // Text that fit before it grew past one line fits again once it
+        // is shorter than it was then: otherwise the two layouts, of
+        // different widths, would take turns.
+        let (height, line) = (field.height.get(), field.line.get());
+        let line = line.into_iter().chain(height).reduce(Pixels::min);
+        field.line.set(line);
+        let tall = height
+            .zip(line)
+            .is_some_and(|(height, line)| height > line + px(1.));
+        let broken = text.contains('\n');
+        match field.wrapped_at.get() {
+            None if tall || broken => field.wrapped_at.set(Some(text.len())),
+            Some(len) if text.len() < len && !broken => field.wrapped_at.set(None),
+            _ => {}
+        }
+        let below = field.wrapped_at.get().is_some();
+        // How tall the field is decides the layout of the next frame.
+        let (heights, view) = (field.height.clone(), cx.entity().entity_id());
+        let measured = canvas(
+            move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+                if heights.replace(Some(bounds.size.height)) != Some(bounds.size.height) {
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            },
+            |_, _, _, _| {},
+        );
+        let input = Textarea::new(&field.input).small().appearance(false);
+        let input = div().relative().flex_1().min_w_0().child(input);
+        let input = input.child(measured.absolute().top_0().left_0().size_full());
+        let mark = div().pl_1().text_color(cx.theme().muted_foreground);
+        let mark = mark.child(icon(icons::SPARKLES));
+        let row = h_flex().gap_1();
+        Some(match below {
+            true => v_flex()
+                .p_1()
+                .gap_1()
+                .child(row.items_start().child(mark.pt(px(5.))).child(input))
+                .child(h_flex().justify_end().child(sent)),
+            false => row
+                .p_1()
+                .items_center()
+                .child(mark)
+                .child(input)
+                .child(sent),
+        })
+    }
+
+    /// What an open session says in the card's row.
+    fn ai_line(&self, cx: &App) -> Option<AnyElement> {
+        let state = self.ai_state()?;
+        let said = match state {
+            AiState::Thinking | AiState::Writing => working(cx).into_any_element(),
+            _ => status(self.ai_status()?, Some(state), cx).into_any_element(),
+        };
+        let line = div().debug_selector(|| "ai-status".to_owned());
+        Some(line.child(said).into_any_element())
+    }
+
+    /// The answer of a session that made no edits, over the field to ask
+    /// more in.
+    fn ai_answer(&self, cx: &App) -> Option<Div> {
+        if self.ai.session.is_some() {
+            return None;
+        }
+        let said = div().px_2().pt_2().pb_1();
+        let said = said.debug_selector(|| "ai-status".to_owned());
+        Some(said.child(status(self.ai_status()?, None, cx)))
+    }
+
+    /// The toolbar's menu for the selected text: the quick edits, and a
+    /// field to ask for another.
+    pub(super) fn ai_selection_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.ai_asks_selection() {
+            return None;
+        }
+        let focus = self.ai.field.as_ref()?.focus.clone();
+        let items = SUGGESTIONS.map(|(id, title, prompt)| {
+            let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, window, cx| {
+                if view.ai_submit(prompt, PromptScope::Selection, cx) {
+                    view.ai_hold_focus(window, cx);
+                }
+            });
+            let row = h_flex()
+                .gap_2()
+                .text_sm()
+                .items_center()
+                .child(icon(icons::SPARKLES))
+                .child(title);
+            div()
+                .debug_selector(move || format!("ai-suggestion-{id}"))
+                .child(ListItem::new(id).child(row).on_click(choose))
+        });
+        let border = cx.theme().border;
+        let said = self.ai_answer(cx);
+        let field = self.ai_field_row(cx);
+        let menu = v_flex()
+            .popover_style(cx)
+            .occlude()
+            .overflow_hidden()
+            .w(px(300.))
+            .debug_selector(|| "ai-menu".to_owned())
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_key_down(cx.listener(Self::ai_escape))
+            .children(said.map(|said| said.pb_2().border_b_1().border_color(border)))
+            .child(v_flex().p_1().children(items))
+            .children(field.map(|field| field.border_t_1().border_color(border)));
+        Some(menu.into_any_element())
+    }
+
+    /// The card next to the row a prompt was opened at: what the session
+    /// says and offers, over the field to ask in.
     pub(super) fn ai_bar(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let input = self.ai.field.as_ref()?.0.clone();
+        if self.ai.scope == Some(PromptScope::Document)
+            || (self.ai.field.is_none() && self.ai.session.is_none())
+            || self.ai_asks_selection()
+        {
+            return None;
+        }
+        let focus = self.ai.field.as_ref().map(|field| field.focus.clone());
         let view = self.scroll.bounds();
         if view.size.width <= Pixels::ZERO {
             window.request_animation_frame();
@@ -154,35 +275,32 @@ impl EditorView {
         }
         let state = self.ai_state().cloned();
         let buttons = Act::buttons(state.as_ref(), "ai", cx, Self::ai_act);
-        let escape = cx.listener(|view: &mut Self, event: &KeyDownEvent, window, cx| {
-            // With edits to review, leaving them is said with a button.
-            if event.keystroke.key == "escape" && view.ai.session.is_none() {
-                cx.stop_propagation();
-                view.ai_close_bar(window, cx);
-            }
-        });
-        let muted = cx.theme().muted_foreground;
-        let status = self.ai_status().map(|status| {
-            let line = div().px_1().text_sm().text_color(muted);
-            line.debug_selector(|| "ai-status".to_owned()).child(status)
-        });
-        let width = (view.size.width - px(48.)).min(px(560.)).max(px(240.));
+        // One row: what the session says and offers, or the field to ask in.
+        let row = tier(self.ai_line(cx), buttons);
+        let field = match row {
+            Some(_) => None,
+            None => self.ai_field_row(cx),
+        };
+        let width = (view.size.width - px(24.)).min(px(560.)).max(px(1.));
         let bar = v_flex()
             .popover_style(cx)
             .occlude()
-            .p_1()
-            .gap_1()
+            .overflow_hidden()
             .w(width)
             .debug_selector(|| "ai-bar".to_owned())
+            .when_some(focus, |bar, focus| bar.track_focus(&focus))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(escape)
-            .children(status)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(div().flex_1().child(Input::new(&input).small()))
-                    .children(buttons),
-            );
+            .on_key_down(cx.listener(Self::ai_escape))
+            .children(self.ai_answer(cx))
+            .children(row)
+            .children(field);
+        if let Some(mut target) = self.ai.place.get(window)
+            && target.bottom() >= view.top()
+            && target.top() <= view.bottom()
+        {
+            target.origin.x = target.left().min(view.right() - width).max(view.left());
+            return Some(super::popup::popup(target, false, bar));
+        }
         let left = view.left() + (view.size.width - width) / 2.;
         let at = point(left, view.bottom() - px(12.));
         let placed = anchored()
@@ -195,7 +313,7 @@ impl EditorView {
 
 /// Labels the AI cursor in the editor gutter, alongside its row.
 pub(super) fn cursor(cx: &App) -> Div {
-    div()
+    h_flex()
         .absolute()
         .left(px(-super::side_menu::GUTTER))
         .top_0()
@@ -205,8 +323,42 @@ pub(super) fn cursor(cx: &App) -> Div {
         .bg(cx.theme().primary)
         .text_color(cx.theme().primary_foreground)
         .text_xs()
+        .gap_0p5()
         .debug_selector(|| "ai-cursor".to_owned())
+        .child(icon(icons::SPARKLES).size_3())
         .child("AI")
+}
+
+/// Paints the agent's name tag over `caret`, as a peer's name is over theirs.
+fn caret_tag(caret: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    let (ink, paper) = (cx.theme().primary_foreground, cx.theme().primary);
+    let (font_size, height, icon) = (px(11.), px(16.), px(10.));
+    let run = TextRun {
+        len: 2,
+        font: window.text_style().font(),
+        color: ink,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let line = window
+        .text_system()
+        .shape_line("AI".into(), font_size, &[run], None);
+    let origin = point(caret.left(), caret.top() - height);
+    let tag = Bounds::new(origin, size(icon + line.width + px(9.), height));
+    window.paint_quad(fill(tag, paper));
+    let sparkles = Bounds::new(
+        origin + point(px(3.), (height - icon) / 2.),
+        size(icon, icon),
+    );
+    let unit = TransformationMatrix::unit();
+    let svg = Some(icons::SPARKLES);
+    window
+        .paint_svg(sparkles, "lotype/sparkles".into(), svg, unit, ink, cx)
+        .ok();
+    let text = origin + point(icon + px(6.), Pixels::ZERO);
+    line.paint(text, height, TextAlign::Left, None, window, cx)
+        .ok();
 }
 
 /// Marks the blocks a session changed, and shows where the model is
@@ -231,18 +383,13 @@ pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
                 window.paint_quad(fill(bounds, tint(color)));
             }
         }
-        let caret = editor.ai.session.as_ref().and_then(|session| {
-            let EditLocation::Block(block) = session.edit_location()? else {
-                return None;
-            };
-            if session.state() != &AiState::Writing {
-                return None;
-            }
+        let caret = editor.ai_writing_block().and_then(|block| {
             let end = editor.editor.document().text_len(block).ok()?;
             editor.layouts.get(&block)?.caret(end, Affinity::default())
         });
         if let Some(caret) = caret {
             window.paint_quad(fill(caret, cx.theme().primary));
+            caret_tag(caret, window, cx);
         }
     };
     canvas(|_, _, _| (), paint).absolute().size_full()

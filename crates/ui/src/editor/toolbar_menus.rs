@@ -21,7 +21,16 @@ fn stop(_: &MouseDownEvent, _: &mut gpui::Window, cx: &mut gpui::App) {
 }
 
 impl EditorView {
-    fn toggle_dropdown(&mut self, dropdown: Dropdown) {
+    fn toggle_dropdown(
+        &mut self,
+        dropdown: Dropdown,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        // One menu hangs from the bar at a time.
+        if self.ai_asks_selection() {
+            self.ai_close_bar(window, cx);
+        }
         let open = self.toolbar.menu != Some(dropdown);
         self.toolbar.menu = open.then_some(dropdown);
     }
@@ -50,8 +59,8 @@ impl EditorView {
         let current = types.iter().position(|item| item.describes(doc, first))?;
         let svg = icons::entry(&types[current].key).unwrap_or(icons::PARAGRAPH);
         let title = types[current].title.clone();
-        let toggle = cx.listener(|view: &mut Self, _: &ClickEvent, _, cx| {
-            view.toggle_dropdown(Dropdown::BlockType);
+        let toggle = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            view.toggle_dropdown(Dropdown::BlockType, window, cx);
             cx.notify();
         });
         let trigger = Button::new("block-type")
@@ -131,8 +140,8 @@ impl EditorView {
         if marks == [false, false] {
             return None;
         }
-        let toggle = cx.listener(|view: &mut Self, _: &ClickEvent, _, cx| {
-            view.toggle_dropdown(Dropdown::Color);
+        let toggle = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+            view.toggle_dropdown(Dropdown::Color, window, cx);
             cx.notify();
         });
         let trigger = Button::new("color")

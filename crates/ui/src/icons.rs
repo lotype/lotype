@@ -33,6 +33,8 @@ icons! {
     NEST = "list-indent-increase",
     UNNEST = "list-indent-decrease",
     LINK = "link",
+    SPARKLES = "sparkles",
+    RETURN = "corner-down-left",
     CHEVRON_DOWN = "chevron-down",
     CHECK = "check",
     ALERT = "info",

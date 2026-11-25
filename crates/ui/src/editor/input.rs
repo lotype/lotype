@@ -213,10 +213,13 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.ai.session.is_some() || self.ai_space(text, window, cx) {
+        if self.ai.session.is_some() {
             return;
         }
         self.start_writing();
+        if range.is_none() && self.ai_space(text, window, cx) {
+            return;
+        }
         let Some(shown) = self.shown() else { return };
         // Typing over a selection that spans blocks replaces all of it, as
         // the editor does; any other range is in this block.
