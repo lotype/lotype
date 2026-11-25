@@ -70,6 +70,7 @@ impl EditorView {
         let inks = Inks {
             link: cx.theme().link,
             code: cx.theme().muted,
+            dark: cx.theme().mode.is_dark(),
         };
         let mut runs = text_runs(&spans, &style, inks);
         // Text being composed is underlined, and is a span of its own.

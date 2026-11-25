@@ -8,21 +8,23 @@ use lotype_core::{Span, Value, mark};
 
 pub(crate) const CODE_FONT: &str = "Menlo";
 
-/// How the core's named colors look, text then background, as BlockNote
-/// draws them, so that documents written with it look the same.
-fn named(name: &str) -> Option<(u32, u32)> {
-    Some(match name {
-        "gray" => (0x9b9a97, 0xebeced),
-        "brown" => (0x64473a, 0xe9e5e3),
-        "red" => (0xe03e3e, 0xfbe4e4),
-        "orange" => (0xd9730d, 0xf6e9d9),
-        "yellow" => (0xdfab01, 0xfbf3db),
-        "green" => (0x4d6461, 0xddedea),
-        "blue" => (0x0b6e99, 0xddebf1),
-        "purple" => (0x6940a5, 0xeae4f2),
-        "pink" => (0xad1a72, 0xf4dfeb),
+/// How the core's named colors look, as BlockNote draws them
+/// (`defaultColors.ts`), so that documents written with it look the same:
+/// text then background, in the light and in the dark color scheme.
+fn named(name: &str, dark: bool) -> Option<(u32, u32)> {
+    let (light, night) = match name {
+        "gray" => ((0x676767, 0xe8e8e8), (0xa3a3a3, 0x383838)),
+        "brown" => ((0x7b5540, 0xf1e5df), (0xc79d86, 0x473328)),
+        "red" => ((0x994a37, 0xffdfd6), (0xe69783, 0x5a2619)),
+        "orange" => ((0x8f5509, 0xfbe3cd), (0xdaa168, 0x532d00)),
+        "yellow" => ((0x796300, 0xf0e8cb), (0xc2ad61, 0x453700)),
+        "green" => ((0x48722d, 0xddeed4), (0x92bc7c, 0x254112)),
+        "blue" => ((0x006d9a, 0xcfedff), (0x6ab8e4, 0x003d5b)),
+        "purple" => ((0x6f549a, 0xece2ff), (0xb7a0e4, 0x3f2d5b)),
+        "pink" => ((0x904873, 0xfddeee), (0xdc94bc, 0x542541)),
         _ => return None,
-    })
+    };
+    Some(if dark { night } else { light })
 }
 
 /// The colors of links and of inline code, from the theme.
@@ -30,6 +32,8 @@ fn named(name: &str) -> Option<(u32, u32)> {
 pub(crate) struct Inks {
     pub link: Hsla,
     pub code: Hsla,
+    /// The theme is dark, for the named colors.
+    pub dark: bool,
 }
 
 /// One run per span, styled by its marks on top of `base`.
@@ -49,7 +53,7 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
     // Marks come sorted by name, so an explicit color wins over the link's.
     for (name, value) in &span.marks {
         match name.as_str() {
-            mark::BACKGROUND_COLOR => style.background_color = color(value, true),
+            mark::BACKGROUND_COLOR => style.background_color = color(value, true, inks.dark),
             mark::BOLD => style.font_weight = Some(FontWeight::BOLD),
             mark::CODE => {
                 style.background_color.get_or_insert(inks.code);
@@ -63,7 +67,7 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
                 let (thickness, color) = (px(1.), None);
                 style.strikethrough = Some(StrikethroughStyle { thickness, color });
             }
-            mark::TEXT_COLOR => style.color = color(value, false).or(style.color),
+            mark::TEXT_COLOR => style.color = color(value, false, inks.dark).or(style.color),
             mark::UNDERLINE => style.underline = Some(line(None)),
             _ => {}
         }
@@ -75,14 +79,15 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
     run
 }
 
-/// A color mark's value: one of BlockNote's names or a CSS hex color.
-pub(crate) fn color(value: &Value, background: bool) -> Option<Hsla> {
+/// A color mark's value: one of BlockNote's names, in the light or the
+/// dark color scheme, or a CSS hex color.
+pub(crate) fn color(value: &Value, background: bool, dark: bool) -> Option<Hsla> {
     let Value::Str(name) = value else { return None };
     // Longer than `#rrggbbaa` is no color, and a peer's long text is not parsed.
     if name.len() > 9 {
         return None;
     }
-    let named = named(name).map(|(text, fill)| rgb(if background { fill } else { text }));
+    let named = named(name, dark).map(|(text, fill)| rgb(if background { fill } else { text }));
     let hex = || Rgba::try_from(name.as_str()).ok();
     named.or_else(hex).map(Hsla::from)
 }
@@ -103,7 +108,10 @@ mod tests {
     #[test]
     fn every_named_color_of_the_core_looks_like_something() {
         for name in lotype_core::COLOR_NAMES {
-            assert!(named(name).is_some(), "{name}");
+            assert!(
+                named(name, false).is_some() && named(name, true).is_some(),
+                "{name}"
+            );
         }
     }
 
@@ -131,12 +139,23 @@ mod tests {
     #[test]
     fn colors_are_names_or_hex_and_win_over_links() {
         let base = TextStyle::default();
-        let red = Hsla::from(rgb(0xe03e3e));
         let colored = span(
             "a",
             &[("link", "https://x".into()), ("text_color", "red".into())],
         );
-        assert_eq!(text_runs(&[colored], &base, Inks::default())[0].color, red);
+        let named = Hsla::from(rgb(0x994a37));
+        let runs = text_runs(std::slice::from_ref(&colored), &base, Inks::default());
+        assert_eq!(runs[0].color, named);
+        // BlockNote's red for a dark theme.
+        let dark = Inks {
+            dark: true,
+            ..Inks::default()
+        };
+        assert_eq!(
+            text_runs(&[colored], &base, dark)[0].color,
+            Hsla::from(rgb(0xe69783))
+        );
+        let red = Hsla::from(rgb(0xe03e3e));
         let hex = span("a", &[("background_color", "#e03e3e".into())]);
         assert_eq!(
             text_runs(&[hex], &base, Inks::default())[0].background_color,

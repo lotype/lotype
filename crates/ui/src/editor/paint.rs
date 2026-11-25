@@ -9,9 +9,10 @@ use lotype_core::Selection;
 use super::EditorView;
 use crate::text_el::Affinity;
 
-/// The theme's selection, light enough to read the text under it.
+/// The theme's selection, which gpui-component keeps see-through enough to
+/// read the text under it.
 pub(super) fn selection_color(cx: &App) -> Hsla {
-    cx.theme().selection.opacity(0.3)
+    cx.theme().selection
 }
 
 impl EditorView {

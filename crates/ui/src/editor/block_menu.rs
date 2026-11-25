@@ -115,6 +115,7 @@ pub(super) fn swatch_row(
     cx: &mut Context<EditorView>,
 ) -> Div {
     let accent = cx.theme().primary;
+    let dark = cx.theme().mode.is_dark();
     let names = std::iter::once(None).chain(COLOR_NAMES.map(Some));
     let swatches = names.map(|name| {
         let pick = pick.clone();
@@ -125,7 +126,7 @@ pub(super) fn swatch_row(
                 view.selection_changed(window, cx);
             },
         );
-        let fill = name.and_then(|name| color(&Value::Str(name.to_owned()), background));
+        let fill = name.and_then(|name| color(&Value::Str(name.to_owned()), background, dark));
         let mut swatch = div()
             .size(px(20.))
             .rounded_sm()

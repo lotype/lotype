@@ -142,7 +142,8 @@ impl EditorView {
         // type takes colors: code, math and diagrams have their own.
         let painted = |which| {
             let name = doc.block_color(block, which)?;
-            crate::marks::color(&Value::Str(name), which == BlockColor::Background)
+            let dark = cx.theme().mode.is_dark();
+            crate::marks::color(&Value::Str(name), which == BlockColor::Background, dark)
         };
         let (ink, fill) = (painted(BlockColor::Text), painted(BlockColor::Background));
         let mut colored = base.clone();
