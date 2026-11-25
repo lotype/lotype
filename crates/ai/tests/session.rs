@@ -145,11 +145,13 @@ fn an_edit_shows_in_the_copy_while_it_is_still_being_written() {
         seen.iter()
             .any(|text| text.starts_with("Hel") && text.len() < 11)
     );
+    // Signs of Markdown that are not closed yet show as they are written.
     let grown = seen.iter().filter(|text| *text != "one");
+    let plain = |text: &String| text.replace('*', "");
     assert!(
         grown
             .clone()
-            .all(|text| "Hello **there**".starts_with(text.as_str()) || text == "Hello there")
+            .all(|text| "Hello there".starts_with(&plain(text)))
     );
 
     let mut counts = Vec::new();
