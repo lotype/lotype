@@ -8,7 +8,7 @@ use gpui::{
     TextStyle, Window, canvas, div, img, point, prelude::*, px, size,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr};
+use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr, block};
 
 use super::input::Shown;
 use super::{BlockContent, EditorView};
@@ -78,7 +78,7 @@ pub(crate) fn rows(
         let depth = around.len();
         let block_type = doc.block_type(block).unwrap_or_default();
         numbers.resize(depth + 1, None);
-        let number = (block_type == "numbered_list_item").then(|| match numbers[depth] {
+        let number = (block_type == block::NUMBERED_LIST_ITEM).then(|| match numbers[depth] {
             Some(before) => before.saturating_add(1),
             None => match doc.attr(block, attr::START) {
                 Ok(Some(Value::Int(start))) => start,
@@ -87,8 +87,8 @@ pub(crate) fn rows(
         });
         numbers[depth] = number;
         let bar = match block_type.as_str() {
-            "quote" => Some((depth, None)),
-            "alert" => Some((depth, Some(doc.alert_kind(block)))),
+            block::QUOTE => Some((depth, None)),
+            block::ALERT => Some((depth, Some(doc.alert_kind(block)))),
             _ => None,
         };
         let outer = around.last();
@@ -96,7 +96,7 @@ pub(crate) fn rows(
         let chosen = outer
             .and_then(|outer| outer.selected)
             .or(selected.contains(&block).then_some(depth));
-        let quoted = block_type == "quote" || outer.is_some_and(|outer| outer.quoted);
+        let quoted = block_type == block::QUOTE || outer.is_some_and(|outer| outer.quoted);
         if !hidden {
             let outer = around.iter().filter_map(|outer| outer.bar);
             rows.push(Row {
@@ -111,7 +111,7 @@ pub(crate) fn rows(
         }
         let spec = doc.schema().block_spec(&block_type);
         let toggle = spec.is_some_and(|spec| spec.role() == Role::Toggle);
-        let hides = block_type == "table" || toggle && closed.contains(&block);
+        let hides = block_type == block::TABLE || toggle && closed.contains(&block);
         around.push(Around {
             block,
             hides: hidden || hides,
@@ -179,13 +179,13 @@ impl EditorView {
                     cx,
                 ))
             }
-            "divider" => {
+            block::DIVIDER => {
                 let line = div().h(px(1.)).w_full().bg(cx.theme().border);
                 div().h(px(17.)).w_full().flex().items_center().child(line)
             }
             // Where printing starts a new page: dashed, and named, as word
             // processors draw it, so it is not taken for a divider.
-            "page_break" => {
+            block::PAGE_BREAK => {
                 // GPUI draws no dashed border on one side alone.
                 let ink = muted(cx);
                 let dashes = || {
@@ -209,7 +209,7 @@ impl EditorView {
                 let row = div().h(px(17.)).w_full().flex().items_center();
                 row.child(dashes()).child(label).child(dashes())
             }
-            "image" => {
+            block::IMAGE => {
                 let (url, caption) = (
                     doc.text_of(block, attr::URL),
                     doc.text_of(block, attr::CAPTION),
@@ -232,7 +232,7 @@ impl EditorView {
                 let caption = (!caption.is_empty()).then(|| div().text_color(ink).child(caption));
                 div().flex().flex_col().child(image).children(caption)
             }
-            "file" => {
+            block::FILE => {
                 let (url, name) = (
                     doc.text_of(block, attr::URL),
                     doc.text_of(block, attr::NAME),
@@ -242,9 +242,9 @@ impl EditorView {
                     .text_color(cx.theme().link)
                     .child(format!("📎 {name}"))
             }
-            "alert" => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
-            "table" => div().child(self.table_grid(block, base, shown, window, cx)?),
-            "quote" => div()
+            block::ALERT => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
+            block::TABLE => div().child(self.table_grid(block, base, shown, window, cx)?),
+            block::QUOTE => div()
                 .pl(px(INDENT))
                 .child(self.block_text(block, base, shown, window, cx)?),
             _ if doc.role(block) == Role::Code => div()
@@ -317,9 +317,9 @@ impl EditorView {
                 slot.text_color(muted(cx))
                     .child(arrow.on_mouse_down(MouseButton::Left, click))
             }
-            "bullet_list_item" => slot.child("•"),
-            "numbered_list_item" => slot.child(format!("{}.", row.number.unwrap_or(1))),
-            "check_list_item" => {
+            block::BULLET_LIST_ITEM => slot.child("•"),
+            block::NUMBERED_LIST_ITEM => slot.child(format!("{}.", row.number.unwrap_or(1))),
+            block::CHECK_LIST_ITEM => {
                 let checked = self.editor.document().is_checked(block);
                 let mut check = div()
                     .mt(px(4.))
@@ -417,16 +417,16 @@ mod tests {
         let (mut doc, _) = build(blocks![p!["one", bullet!["child"]], p!["two"]]);
         let blocks = doc.blocks();
         let (one, child, two) = (blocks[0], blocks[1], blocks[2]);
-        let quote = doc.insert_block(None, 1, "quote").unwrap();
+        let quote = doc.insert_block(None, 1, block::QUOTE).unwrap();
         let first = doc
-            .insert_block(Some(quote), 0, "numbered_list_item")
+            .insert_block(Some(quote), 0, block::NUMBERED_LIST_ITEM)
             .unwrap();
         let second = doc
-            .insert_block(Some(quote), 1, "numbered_list_item")
+            .insert_block(Some(quote), 1, block::NUMBERED_LIST_ITEM)
             .unwrap();
         doc.set_attr(first, attr::START, 3).unwrap();
-        let toggle = doc.insert_block(None, 2, "toggle_list_item").unwrap();
-        let inside = doc.insert_block(Some(toggle), 0, "paragraph").unwrap();
+        let toggle = doc.insert_block(None, 2, block::TOGGLE_LIST_ITEM).unwrap();
+        let inside = doc.insert_block(Some(toggle), 0, block::PARAGRAPH).unwrap();
 
         let shown = |closed: &HashSet<BlockId>| {
             let rows = rows(&doc, closed, &HashSet::new());

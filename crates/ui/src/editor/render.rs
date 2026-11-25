@@ -8,7 +8,7 @@ use gpui::{
     TextStyle, UnderlineStyle, Window, div, px, rems,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span};
+use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span, block};
 
 use super::EditorView;
 
@@ -53,7 +53,7 @@ impl EditorView {
         let mut style = base.clone();
         let mut line = div();
         match block_type.as_str() {
-            "heading" => {
+            block::HEADING => {
                 let level = doc.heading_level(block);
                 let sizes = [2.0, 1.5, 1.25, 1.125, 1.0];
                 // The text takes its size from the element around it.

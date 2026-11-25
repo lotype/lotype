@@ -4,7 +4,9 @@ use gpui::{
     App, Bounds, Entity, Focusable, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
     white,
 };
-use lotype_core::{Atom, BlockId, Document, Editor, InlineSpec, Pos, Schema, Selection, Value};
+use lotype_core::{
+    Atom, BlockId, Document, Editor, InlineSpec, Pos, Schema, Selection, Value, block,
+};
 use lotype_ui::EditorView;
 
 /// The blocks, each under a heading of its own with how to make it and what
@@ -137,11 +139,11 @@ fn main() {
         // What Markdown cannot say: a toggle reads as a bullet, and a cell
         // is one line.
         let toggle = block_starting(&doc, "Click the arrow");
-        doc.set_block_type(toggle, "toggle_list_item")
+        doc.set_block_type(toggle, block::TOGGLE_LIST_ITEM)
             .expect("a bullet becomes a toggle");
         let table = doc.blocks().into_iter().find(|block| {
             doc.block_type(*block)
-                .is_ok_and(|block_type| block_type == "table")
+                .is_ok_and(|block_type| block_type == block::TABLE)
         });
         let table = table.expect("the tour has a table");
         let last_row = *doc.children(Some(table)).unwrap().last().unwrap();
