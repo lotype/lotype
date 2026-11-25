@@ -23,6 +23,11 @@ use super::popup::Placement;
 /// How long what comes of an answer waits for more, to be taken together.
 const FRAME: Duration = Duration::from_millis(16);
 
+/// How long the light on "Working…" stays on a letter. Each step draws
+/// the window again, so it takes them only while a frame is cheap: eight
+/// frames a second within the caret's budget are under 7% of a core.
+const GLOW: Duration = Duration::from_millis(120);
+
 /// The surface and context that own an AI request.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PromptScope {
@@ -47,6 +52,10 @@ pub(crate) struct Ai {
     flush: Option<Task<()>>,
     /// Reads the answer. Dropping it cancels the request.
     reading: Option<Task<()>>,
+    /// Moves the light on "Working…" while the model answers, and how
+    /// far it has moved.
+    working: Option<Task<()>>,
+    pub(super) glow: usize,
     /// The field to ask in, while the bar is open.
     pub(super) field: Option<PromptField>,
     pub(super) place: Placement,
@@ -230,6 +239,25 @@ impl EditorView {
         }
         self.ai.arrived.clear();
         self.ai.taken = Some(Instant::now());
+        self.ai.working = Some(cx.spawn(async move |view, cx| {
+            loop {
+                cx.background_executor().timer(GLOW).await;
+                let working = view.update(cx, |view, cx| {
+                    let state = view.ai_state();
+                    if !matches!(state, Some(AiState::Thinking | AiState::Writing)) {
+                        return false;
+                    }
+                    if view.frame_is_cheap() {
+                        view.ai.glow = view.ai.glow.wrapping_add(1);
+                        cx.notify();
+                    }
+                    true
+                });
+                if !matches!(working, Ok(true)) {
+                    return;
+                }
+            }
+        }));
         self.ai.reading = Some(cx.spawn(async move |view, cx| {
             let mut stream = provider.stream(request);
             loop {
@@ -319,6 +347,7 @@ impl EditorView {
     /// Shows the document again, and keeps what was said.
     fn ai_close(&mut self) {
         self.ai.reading = None;
+        self.ai.working = None;
         self.ai.flush = None;
         self.ai.arrived.clear();
         self.ai.changes.clear();

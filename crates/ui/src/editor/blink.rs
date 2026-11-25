@@ -68,10 +68,15 @@ impl EditorView {
             && self.composition.is_none()
             && window.is_window_active()
             && self.focus.is_focused(window)
-            && self
-                .blink
-                .taken_as
-                .unwrap_or(self.blink.cost.get() <= BUDGET)
+            && self.frame_is_cheap()
+    }
+
+    /// Whether the last frame was cheap enough for what only moves to draw
+    /// the window again: the caret's blink, and the light on the AI's
+    /// "Working…".
+    pub(super) fn frame_is_cheap(&self) -> bool {
+        let cheap = self.blink.cost.get() <= BUDGET;
+        self.blink.taken_as.unwrap_or(cheap)
     }
 
     /// Whether the caret is lit, for tests of blinking.
@@ -91,6 +96,12 @@ impl EditorView {
     #[cfg(any(test, feature = "test-support"))]
     pub fn rows_laid_out(&self) -> usize {
         self.heights.laid_out_count()
+    }
+
+    /// How far the light on the AI's "Working…" has moved, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn ai_glow(&self) -> usize {
+        self.ai.glow
     }
 
     /// Takes every frame as cheap, so that a test of blinking does not

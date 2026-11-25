@@ -196,7 +196,7 @@ impl EditorView {
     fn ai_line(&self, cx: &App) -> Option<AnyElement> {
         let state = self.ai_state()?;
         let said = match state {
-            AiState::Thinking | AiState::Writing => working(cx).into_any_element(),
+            AiState::Thinking | AiState::Writing => working(self.ai.glow, cx).into_any_element(),
             _ => status(self.ai_status()?, Some(state), cx).into_any_element(),
         };
         let line = div().debug_selector(|| "ai-status".to_owned());

@@ -209,18 +209,31 @@ fn the_label_rides_the_live_caret_while_the_model_writes_text(cx: &mut TestAppCo
     let model = Arc::new(Stalled(doc.document().blocks()[0]));
     let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(model));
     ed.view.update(ed.cx, |view, cx| view.ai_ask("Shout", cx));
-    // The card's mark moves while the model works, so no frame is the last.
-    let frame = |ed: &mut EditorTestContext| {
-        ed.cx.run_until_parked();
-        ed.cx.update(|window, cx| window.simulate_next_frame(cx));
-        ed.cx.run_until_parked();
-    };
-    frame(&mut ed);
+    ed.settle();
     ed.cx.executor().advance_clock(Duration::from_millis(20));
-    frame(&mut ed);
-    assert!(ed.cx.debug_bounds("ai-cursor").is_none() && ed.cx.debug_bounds("ai-stop").is_some());
+    assert!(!shows(&mut ed, "ai-cursor") && shows(&mut ed, "ai-stop"));
     assert_eq!(state(&mut ed), Some(AiState::Writing));
     assert_eq!(first(&mut ed), ("one".into(), Some("ON".into())));
+}
+
+#[gpui::test]
+fn the_light_on_working_moves_only_while_a_frame_is_cheap(cx: &mut TestAppContext) {
+    let doc = editor(blocks![p!["one<a>"]]);
+    let model = Arc::new(Stalled(doc.document().blocks()[0]));
+    let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(model));
+    ed.view.update(ed.cx, |view, cx| {
+        view.take_frames_as_cheap();
+        view.ai_ask("Shout", cx);
+    });
+    let glow = |ed: &mut EditorTestContext| {
+        ed.cx.executor().advance_clock(Duration::from_secs(1));
+        ed.settle();
+        ed.view.update(ed.cx, |view, _| view.ai_glow())
+    };
+    let moved = glow(&mut ed);
+    assert!(moved > 0);
+    ed.view.update(ed.cx, |view, _| view.take_frames_as_dear());
+    assert_eq!(glow(&mut ed), moved);
 }
 
 #[gpui::test]

@@ -2,12 +2,7 @@
 //! the button that sends, what a session says, and the row they sit in. Their colors
 //! are the application's theme's, named here once.
 
-use std::time::Duration;
-
-use gpui::{
-    Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Div, Hsla, Window, div,
-    prelude::*, px,
-};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, Window, div, prelude::*, px};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::{ActiveTheme, Disableable, Sizable, h_flex};
 use lotype_ai::AiState;
@@ -72,28 +67,24 @@ pub(crate) fn status(text: String, state: Option<&AiState>, cx: &App) -> Div {
 /// not every model thinks before it writes.
 pub(crate) const WORKING: &str = "Working…";
 
-/// The AI's mark with a light passing over [`WORKING`], while the model
-/// answers.
-pub(crate) fn working(cx: &App) -> Div {
+/// The AI's mark and [`WORKING`], with a light on the letters `step`
+/// steps along: it passes over the text, three letters wide, and comes
+/// again from before it.
+pub(crate) fn working(step: usize, cx: &App) -> Div {
     let (ink, lit) = (cx.theme().muted_foreground, cx.theme().foreground);
-    let sweep = Animation::new(Duration::from_millis(1600)).repeat();
-    let text = div().with_animation("ai-working", sweep, move |text, at| {
-        // The light is three letters wide, and comes from before the text.
-        let head = at * (WORKING.chars().count() as f32 + 6.) - 3.;
-        let letters = WORKING.chars().enumerate().map(|(index, letter)| {
-            let near = (1. - (index as f32 - head).abs() / 3.).max(0.);
-            div()
-                .text_color(ink.blend(lit.opacity(near)))
-                .child(letter.to_string())
-        });
-        text.child(h_flex().children(letters))
+    let head = (step % (WORKING.chars().count() + 6)) as f32 - 3.;
+    let letters = WORKING.chars().enumerate().map(|(index, letter)| {
+        let near = (1. - (index as f32 - head).abs() / 3.).max(0.);
+        div()
+            .text_color(ink.blend(lit.opacity(near)))
+            .child(letter.to_string())
     });
     h_flex()
         .gap_1p5()
         .text_sm()
         .text_color(ink)
         .child(icon(icons::SPARKLES).size_3p5())
-        .child(text)
+        .child(h_flex().children(letters))
 }
 
 /// A row of a card: what the session says, and what can be done with it.
