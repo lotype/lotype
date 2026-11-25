@@ -3,12 +3,13 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use lotype_core::{BlockId, Document, Editor, Selection};
+use lotype_core::{BlockId, Document, Editor, Selection, Span};
 
 use crate::apply::{self, EditLocation, Effect};
 use crate::selected::TextSelection;
 use crate::{AiTranscript, LlmEvent, LlmProvider, LlmRequest, Message, Op, Role, partial, tools};
 
+mod original;
 mod request;
 
 /// Where a session is.
@@ -108,6 +109,9 @@ pub struct AiSession {
     turn: (Vec<u8>, usize),
     reply: String,
     call: Option<Call>,
+    /// The text of each block the model changed or removed, as it was
+    /// before the first of its edits there.
+    original: HashMap<BlockId, Vec<Span>>,
 }
 
 impl AiSession {
@@ -133,6 +137,7 @@ impl AiSession {
             turn: (snapshot, 0),
             reply: String::new(),
             call: None,
+            original: HashMap::new(),
         })
     }
 
@@ -302,6 +307,7 @@ impl AiSession {
     /// Makes an edit in the copy, as one undo step. `None` where it cannot
     /// be made, or makes nothing.
     fn make(&mut self, op: &Op) -> Option<Effect> {
+        self.keep_original(op);
         let before = self.copy.document().version();
         let mut effect = None;
         let made = self.copy.apply(|doc, _| {
