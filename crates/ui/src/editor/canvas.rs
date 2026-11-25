@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, SharedString,
     TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
 };
-use lotype_core::{BlockId, Document, Pos, Selection, Value};
+use lotype_core::{BlockId, Document, Pos, Role, Selection, Value};
 
 use super::EditorView;
 use super::alert::alert_color;
@@ -108,8 +108,8 @@ pub(crate) fn rows(
                 quoted,
             });
         }
-        let hides =
-            block_type == "table" || block_type == "toggle_list_item" && closed.contains(&block);
+        let toggle = doc.role(block) == Role::Toggle;
+        let hides = block_type == "table" || toggle && closed.contains(&block);
         around.push(Around {
             block,
             hides: hidden || hides,
@@ -229,7 +229,7 @@ impl EditorView {
             "quote" => div()
                 .pl(px(INDENT))
                 .child(self.block_text(block, base, shown, window, cx)?),
-            "code_block" => div()
+            _ if doc.role(block) == Role::Code => div()
                 .w_full()
                 .p_2()
                 .rounded_md()
@@ -280,7 +280,21 @@ impl EditorView {
     fn marker(&self, row: &Row, cx: &mut Context<Self>) -> Option<AnyElement> {
         let block = row.block;
         let slot = div().w(px(INDENT)).flex_none().flex().justify_center();
+        let toggle = self.editor.document().role(block) == Role::Toggle;
         let marker = match row.block_type.as_str() {
+            _ if toggle => {
+                let open = !self.closed.contains(&block);
+                let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    if !view.closed.remove(&block) {
+                        view.close(block);
+                    }
+                    cx.notify();
+                });
+                let arrow = div().cursor_pointer().child(if open { "▾" } else { "▸" });
+                slot.text_color(muted())
+                    .child(arrow.on_mouse_down(MouseButton::Left, click))
+            }
             "bullet_list_item" => slot.child("•"),
             "numbered_list_item" => slot.child(format!("{}.", row.number.unwrap_or(1))),
             "check_list_item" => {
@@ -306,19 +320,6 @@ impl EditorView {
                     cx.notify();
                 });
                 slot.child(check.on_mouse_down(MouseButton::Left, click))
-            }
-            "toggle_list_item" => {
-                let open = !self.closed.contains(&block);
-                let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
-                    cx.stop_propagation();
-                    if !view.closed.remove(&block) {
-                        view.close(block);
-                    }
-                    cx.notify();
-                });
-                let arrow = div().cursor_pointer().child(if open { "▾" } else { "▸" });
-                slot.text_color(muted())
-                    .child(arrow.on_mouse_down(MouseButton::Left, click))
             }
             _ => return None,
         };

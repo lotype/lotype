@@ -249,7 +249,10 @@ impl EditorView {
     /// one, and opens the slash menu in it.
     fn add_below(&mut self, block: BlockId) {
         let doc = self.editor.document();
-        let empty = doc.block_type(block).is_ok_and(|kind| kind == "paragraph")
+        let text = doc.schema().text_block();
+        let empty = doc
+            .block_type(block)
+            .is_ok_and(|kind| text == Some(kind.as_str()))
             && doc.text_len(block).is_ok_and(|len| len == 0)
             && doc
                 .children(Some(block))
@@ -260,7 +263,8 @@ impl EditorView {
         } else {
             self.editor.apply(|doc, _| {
                 let index = doc.index_of(block)? + 1;
-                let paragraph = doc.insert_block(doc.parent(block)?, index, "paragraph")?;
+                let text = doc.text_block()?;
+                let paragraph = doc.insert_block(doc.parent(block)?, index, &text)?;
                 Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
             })
         };

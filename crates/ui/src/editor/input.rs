@@ -131,7 +131,7 @@ impl EditorView {
             && self
                 .editor
                 .apply(|doc, _| {
-                    let paragraph = doc.insert_block(None, 0, "paragraph")?;
+                    let paragraph = doc.insert_block(None, 0, &doc.text_block()?)?;
                     Ok(Some(Selection::caret(Pos::new(paragraph, 0))))
                 })
                 .is_ok()

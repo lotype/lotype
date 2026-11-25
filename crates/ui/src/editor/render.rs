@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
     TextStyle, UnderlineStyle, Window, div, px, rems, rgb,
 };
-use lotype_core::{Atom, BlockId, Content, MAX_HEADING_LEVEL, Selection, Span, Value};
+use lotype_core::{Atom, BlockId, Content, MAX_HEADING_LEVEL, Role, Selection, Span, Value};
 
 use super::EditorView;
 
@@ -65,7 +65,7 @@ impl EditorView {
                 line = line.text_size(rems(sizes[level as usize - 1]));
                 style.font_weight = FontWeight::BOLD;
             }
-            "code_block" => style.font_family = CODE_FONT.into(),
+            _ if doc.role(block) == Role::Code => style.font_family = CODE_FONT.into(),
             _ => {}
         }
         let (spans, composed) = match shown.filter(|shown| shown.block == block) {
@@ -114,8 +114,9 @@ impl EditorView {
             Some(Selection::Text { anchor, head }) => anchor == head && head.block == block,
             _ => false,
         };
+        let text = self.editor.document().schema().text_block();
         let shown = caret
-            && block_type == "paragraph"
+            && text == Some(block_type)
             && self
                 .editor
                 .document()

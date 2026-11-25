@@ -1,7 +1,7 @@
 //! Keys, bound to editor commands by the core's keymap.
 
 use gpui::{Context, KeyDownEvent, Keystroke, Window};
-use lotype_core::{Command, Selection};
+use lotype_core::{Command, Role, Selection};
 
 use super::{EditorView, motion};
 
@@ -158,9 +158,8 @@ impl EditorView {
         // Enter in a toggle goes by whether it is open, which is the view's.
         let toggle = match self.editor.selection() {
             Some(Selection::Text { head, .. }) if command == Command::SplitBlock => {
-                let doc = self.editor.document();
-                let kind = doc.block_type(head.block).unwrap_or_default();
-                (kind == "toggle_list_item").then_some(head.block)
+                let toggle = self.editor.document().role(head.block) == Role::Toggle;
+                toggle.then_some(head.block)
             }
             _ => None,
         };
