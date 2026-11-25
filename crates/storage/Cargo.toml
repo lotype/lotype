@@ -21,6 +21,10 @@ default = ["sqlite"]
 # `SqliteStore`, with SQLite built in.
 sqlite = ["dep:rusqlite", "dep:tokio"]
 
+[[test]]
+name = "sqlite"
+required-features = ["sqlite"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 lotype-core = { workspace = true, features = ["test-support"] }

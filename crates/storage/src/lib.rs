@@ -72,12 +72,13 @@ fn guarded<T>(
 /// in any order. Bytes that are none, or that Loro panics on, are an error.
 pub fn restore<P: AsRef<[u8]>>(parts: impl IntoIterator<Item = P>) -> Result<Document, StoreError> {
     // Blocks of any type are kept, so the schema does not matter here.
-    let doc = Document::new(Schema::new());
-    let import = |doc: &mut Document| {
-        let mut parts = parts.into_iter();
-        parts.try_for_each(|part| doc.import(part.as_ref()))
-    };
-    guarded(doc, import).map(|(doc, ())| doc)
+    let mut doc = Document::new(Schema::new());
+    // Only the import is guarded, not what gives the parts.
+    for part in parts {
+        let bytes = part.as_ref();
+        (doc, ()) = guarded(doc, |doc| doc.import(bytes))?;
+    }
+    Ok(doc)
 }
 
 /// The fewest bytes that hold what the snapshots and updates in `parts`

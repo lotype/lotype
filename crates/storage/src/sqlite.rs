@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::{DocId, DocStore, StoreError, merge};
 
@@ -42,7 +42,9 @@ impl DocStore for SqliteStore {
     async fn load(&self, doc: &DocId) -> Result<Vec<Vec<u8>>, StoreError> {
         let doc = doc.as_str().to_owned();
         self.run(move |db| {
-            let db = db.transaction()?;
+            // To write from the start: another connection to the file that
+            // wrote after a read here would fail the rows' replacement.
+            let db = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let rows: Vec<Vec<u8>> = db
                 .prepare("SELECT bytes FROM lotype_updates WHERE doc = ?1 ORDER BY id")?
                 .query_map([&doc], |row| row.get(0))?
