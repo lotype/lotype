@@ -176,7 +176,8 @@ fn write_selection(out: &mut Vec<u8>, doc: &Document, selection: &Selection) -> 
     let block = |out: &mut Vec<u8>, block: &BlockId| put(out, block.to_string().as_bytes());
     let end = |out: &mut Vec<u8>, pos: &Pos| {
         let text = doc.inline(pos.block).ok()?;
-        let at = text.convert_pos(pos.offset, PosType::Bytes, PosType::Unicode)?;
+        // Not `convert_pos`, which rounds an offset inside a character.
+        let at = crate::text::unicode_offset(&text, pos.offset).ok()?;
         let cursor = text.get_cursor(at, Side::Middle);
         block(out, &pos.block)?;
         out.extend(u32::try_from(pos.offset).ok()?.to_le_bytes());

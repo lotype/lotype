@@ -123,6 +123,13 @@ impl Document {
     /// that arrive out of order take effect when those dependencies arrive.
     ///
     /// Use [`Editor::import`](crate::Editor::import) for a document in an editor.
+    ///
+    /// # Panics
+    ///
+    /// Loro checks the bytes, but an update can be made that it panics on,
+    /// and a document it panicked in panics again when used or dropped. A
+    /// peer that is not trusted is best met through a relay that imports
+    /// first, as `lotype-server` does, and passes on only what it exported.
     pub fn import(&mut self, update: &[u8]) -> Result<()> {
         if self.draft.is_some() {
             return Err(Error::ImportDuringEdit);

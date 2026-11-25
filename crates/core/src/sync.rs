@@ -6,9 +6,14 @@ use crate::{Error, Result, Version};
 /// `lotype-server` is. How it travels is up to the application.
 ///
 /// A peer that connects sends its [`Version`] and gets an `Update` of what
-/// it lacks. After that it sends an `Update` of each of its own changes,
-/// [`Document::export_updates`](crate::Document::export_updates) since the
-/// version it last sent from, and imports the ones it gets.
+/// it lacks. It is sent the other side's `Version` too, unless it may only
+/// read, and answers with an `Update` of what that side lacks: the changes
+/// made while it was away. After that it sends an `Update` of each of its
+/// own changes, [`Document::export_updates`](crate::Document::export_updates)
+/// since the version it last sent from, and imports the ones it gets.
+///
+/// An `Update` is only bytes here. See [`Document::import`](crate::Document::import)
+/// for what one from a peer that is not trusted can do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncMessage {
     /// How much of the document the sender has. The answer is an `Update`
@@ -39,7 +44,9 @@ impl SyncMessage {
         match bytes.split_first() {
             Some((0, body)) => Version::decode(body).map(Self::Version),
             Some((1, body)) => Ok(Self::Update(body.to_vec())),
-            Some((2, body)) => Ok(Self::Presence(body.to_vec())),
+            Some((2, body)) if body.len() <= crate::MAX_PRESENCE_BYTES => {
+                Ok(Self::Presence(body.to_vec()))
+            }
             _ => Err(Error::InvalidUpdate("not a sync message".into())),
         }
     }
