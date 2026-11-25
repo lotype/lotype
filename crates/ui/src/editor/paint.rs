@@ -148,7 +148,9 @@ pub(super) fn caret(view: Entity<EditorView>) -> impl IntoElement {
         if !view.focus.is_focused(window) || view.blink.dark {
             return;
         }
-        let color = window.text_style().color;
+        // The theme's blue, as an accent-colored caret is on macOS, and as
+        // the checked boxes are.
+        let color = cx.theme().blue;
         if let Some(bounds) = view.caret() {
             window.paint_quad(fill(bounds, color));
         }
