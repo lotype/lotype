@@ -80,7 +80,7 @@ What keeps these doors open: `core` has no GPUI or OS dependencies, and the sche
 | `lotype-diagram` | Mermaid diagram blocks | `core`, `bezel-mermaid`, `ui` (feature `gpui`) |
 | `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum`, `tokio` |
 | `lotype-storage` | The `DocStore` trait a server saves through, and one in SQLite (feature `sqlite`, on by default); debounced auto-save and the migrator for legacy Tiptap/BlockNote JSON come with the reference app | `core`, `rusqlite`, `tokio` |
-| `lotype-ai` | Selection prompt, multi-turn chat, LLM provider trait | `core`, `tokio` |
+| `lotype-ai` | A chat with a model about a document: the provider trait, the tools, and the private copy the model edits until its edits are accepted | `core`, `storage` (for `DocId`), `futures-core`, `serde_json` |
 | `app` (binary) | Reference application that wires Tokio and GPUI together | all |
 
 All dependencies point towards `core`. `core` never depends on GPUI, Tokio or any OS API.
@@ -289,33 +289,36 @@ AI edits stay **private until the user accepts them**.
 ### 7.1 Flow
 
 ```text
-main LoroDoc ──fork()──► AI fork (own PeerID, origin "ai"), never synced
-                              │  LLM stream → add/update/delete ops applied incrementally
+main document ──snapshot──► the copy (a document of its own), never synced
+                              │  LLM stream → add/update/delete edits made as they come
                               ▼
-          ui: diff(base, fork) → suggestion overlay + local AI cursor
-                              │  later chat turns keep editing the same fork
-      Accept: main.apply_diff(diff) → a local op, so one undo step; then syncs normally
-      Reject: drop the fork         → main is never touched
+          ui: the copy, with the blocks the edits changed → suggestion overlay
+                              │  later chat turns keep editing the same copy
+      Accept: each edit made again in main, in one `Editor::apply` → one undo step; then syncs normally
+      Reject: drop the session      → main is never touched
 ```
 
-- **Session.** An `AiSession` holds the message history, the fork and `base_frontiers`. The diff is always taken against `base_frontiers`, so repeated revisions produce a single review.
-- **Context.** The model receives `DocumentState`. With a selection, that is the selected blocks plus the whole document. Without one, it is the whole document plus a cursor marker. Block content is sent as Markdown per block, and the tool schema is generated from the `BlockSpec` registry.
-- **Tools.** `add { referenceId, position: before|after, blocks }`, `update { id, block }` and `delete { id }`.
-- **Streaming.** A partial-JSON parser validates each operation against the schema and applies it to the fork. The text reveal is animated in `ui` only, with token coalescing of about 16 ms. Dropping the stream cancels the request.
+- **Session.** An `AiSession` holds what was said, the copy, and the edits made in it, in order. It is a state machine the application drives: `prompt` gives the `LlmRequest` to send, `feed` takes the answer an event at a time, `fail`, `abort` and `retry` are what their names say, and `accept` makes the edits in the document. `run` does the sending and feeding against an `LlmProvider`, on whatever runs futures: the crate needs no runtime.
+- **Context.** The model receives `DocumentState`: every block with its id, how deep it is nested and its own Markdown, without what is nested in it (`Document::markdown_blocks`), and with it the blocks and the text the user selected, or the block the caret is in. It is sent again with every turn, as the copy is then. The system prompt names the Markdown the document's schema takes.
+- **Tools.** `add { referenceId, position: before|after, blocks }`, `update { id, block }` and `delete { id }`, a block being one Markdown block. An update of text stays in its block, which keeps its id and what is nested in it; anything else, as a table, takes the block's place.
+- **Streaming.** A call's arguments are JSON that comes in parts. A reader of our own takes the start of a JSON text and says what is certain of it, and where it stops inside a string (`partial.rs`); a call is read as an edit once it says which block, an id being read only when it is whole, as half of one is another block's. The edit is made in the copy as one undo step, and taken back and made again as more of it comes, so the copy shows text while it is written. A call that is no edit, of no tool, with arguments that are none or for a block that is not there, is counted and left out, and the others are made. The text reveal is animated in `ui` only, with token coalescing of about 16 ms. Dropping the stream cancels the request.
+- **Failure.** A request that fails takes back the call that did not end and leaves the session in `error`; `retry` puts the copy back as it was when the user asked, from a snapshot taken then, and asks again. `abort` keeps the edits that were whole.
+- **Accept.** The edits are not merged into the document: they are made again in it, as it is now, inside one `Editor::apply`. So accepting is a local edit and one undo step, what others did meanwhile stays, and a block the model made is the same block whichever turn changed it later. An edit is left out, and counted, when its block is gone from the document or is no longer what it was when the edit was made in the copy: what is accepted is what the user saw. Loro's `apply_diff` is not used. It would make the blocks of the copy as new nodes inside the undo step, which the trash-node model rules out, since undoing and redoing a node's creation gives a block of another id; and its text changes are positions in the text as it was.
 - **Chat history** is persisted by the consumer, not stored in the document, so it never syncs to collaborators:
   ```rust
   trait AiSessionStore {
-      async fn load(&self, doc_id: &DocId, session_id: &SessionId) -> Result<Option<AiTranscript>>;
-      async fn save(&self, doc_id: &DocId, session_id: &SessionId, transcript: &AiTranscript) -> Result<()>;
+      async fn load(&self, doc: &DocId, session: &SessionId) -> Result<Option<AiTranscript>, StoreError>;
+      async fn save(&self, doc: &DocId, session: &SessionId, transcript: &AiTranscript) -> Result<(), StoreError>;
   }
   ```
+  A transcript is what the user asked and what the model answered, without the documents sent with each request.
 
 ### 7.2 Provider
 
 ```rust
 pub trait LlmProvider: Send + Sync {
     /// Dropping the returned stream cancels the request.
-    fn stream(&self, request: LlmRequest) -> BoxStream<'static, Result<LlmEvent, LlmError>>;
+    fn stream(&self, request: LlmRequest) -> LlmStream; // BoxStream<'static, Result<LlmEvent, LlmError>>
 }
 pub enum LlmEvent { TextDelta(String), ToolCallDelta { id: String, name: String, args_delta: String }, Done }
 ```
@@ -329,10 +332,10 @@ Consumers bring their own provider and API keys.
 | `AiSession`, state machine, multi-turn history | Selection prompt (formatting toolbar, `/ai`) |
 | `DocumentState`, tool schema from `BlockSpec` | Chat panel |
 | Partial-JSON parsing, op validation, applying ops to the fork | Suggestion overlay with Accept / Reject / Retry |
-| Fork, diff, accept, reject | AI cursor and reveal animation |
+| The copy, the blocks changed (`AiSession::changes`), accept, reject | AI cursor and reveal animation |
 | `LlmProvider`, `AiSessionStore`, `MockProvider` (test-support) | `EditorTestContext` flows for AI |
 
-State machine: `closed → user-input → thinking → ai-writing → user-reviewing → closed`, plus `error → retry` and `abort`.
+State machine (`AiState`): `user-input → thinking → writing → reviewing → closed`, plus `error → retry` and `abort`. Reviewing takes another prompt, and an answer with no edits goes back to `user-input`. Rejecting is dropping the session.
 
 **Prior art.** The concepts come from `@blocknote/xl-ai` and `@tiptap/ai-toolkit`. `@blocknote/xl-ai` is licensed GPL-3.0 OR PROPRIETARY, so **none of its code is ported**.
 
@@ -460,7 +463,8 @@ lotype/
     ├── server/src/         # router.rs (the WebSocket and its clients), room.rs, auth.rs; tests/relay.rs, failures.rs
     ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs; planned: debouncer.rs, migrator.rs
     └── ai/src/             # provider.rs, session.rs, store.rs, context.rs, tools.rs,
-                            # stream.rs, review.rs, prompts.rs, test_support/
+                            # partial.rs (JSON still being written), apply.rs (an edit made in a document),
+                            # test_support.rs (MockProvider)
 ```
 
 Root `Cargo.toml` (target state; `members` grows as each crate's milestone starts):
@@ -528,7 +532,8 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | Risk | Plan |
 | :--- | :--- |
 | `gpui-pre` is a third-party GPUI snapshot pinned at `=0.3.12`, and consumers inherit the pin | Accepted for alpha; re-evaluate before a stable release |
-| Accepting AI edits after collaborators have changed main: correctness of `apply_diff` on a changed document is unproven. Importing the fork's updates instead merges correctly, but the result is not undoable | Spike in milestone 6a |
+| A model's edit is left out on accept when its block was changed or removed in the document meanwhile, however small the change | Accepted: what is accepted is what was reviewed. The session says how many were left out; merge the texts when that proves too strict |
+| The copy's undo history holds the edit being written, and each edit that makes a block rebuilds the editor's draft, about 50 ms at 5000 paragraphs, each time more of it comes | Revisit in milestone 6c, with the draft |
 | macOS 26 may be the last macOS release for Intel | Verify; this sets the deployment target and test matrix |
 | No performance baseline from the legacy Tauri app | Measure latency, open time, memory and scroll FPS |
 | `katex-native` is very new (0.1.1) | Fallback: keep `katex-rs` as the parser and write our own display list |
