@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use loro::{ExpandType, StyleConfig, StyleConfigMap};
 
-use crate::{Atom, BlockId, Document, Error, Result, Value, block, mark};
+use crate::{Atom, BlockId, Document, Error, Result, Value, attr, block, mark};
 
 /// What a block holds besides child blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,9 @@ pub struct BlockSpec {
     style: bool,
     top_level: bool,
     role: Role,
+    attrs: Vec<String>,
+    hint: Option<String>,
+    fence: Option<String>,
 }
 
 impl BlockSpec {
@@ -64,7 +67,34 @@ impl BlockSpec {
             style: true,
             top_level: false,
             role: Role::Text,
+            attrs: Vec::new(),
+            hint: None,
+            fence: None,
         }
+    }
+
+    /// The attributes of its own that a block of this type has in
+    /// Markdown, as a heading its level. Reading Markdown sets no others,
+    /// and what replaces a block's Markdown leaves the others as they are.
+    pub fn with_attrs<A: Into<String>>(mut self, attrs: impl IntoIterator<Item = A>) -> Self {
+        self.attrs = attrs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// What blocks of this type are and how they are written, in a few
+    /// words, for whoever is told what a document takes: a model above all.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// A block of this type is written in Markdown as a fenced block
+    /// tagged `tag`, as GitHub writes a diagram: its attributes after the
+    /// tag as `key=value`, and its text inside. A type without this is
+    /// written as its text alone, and Markdown makes none of it.
+    pub fn written_as_fence(mut self, tag: impl Into<String>) -> Self {
+        self.fence = Some(tag.into());
+        self
     }
 
     /// What a block of this type is to editing.
@@ -122,6 +152,21 @@ impl BlockSpec {
     /// What a block of this type is to editing.
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// The attributes of its own that a block of this type has in Markdown.
+    pub fn markdown_attrs(&self) -> &[String] {
+        &self.attrs
+    }
+
+    /// What blocks of this type are and how they are written, where said.
+    pub fn hint(&self) -> Option<&str> {
+        self.hint.as_deref()
+    }
+
+    /// The tag of the fenced block this type is written as in Markdown.
+    pub fn fence(&self) -> Option<&str> {
+        self.fence.as_deref()
     }
 }
 
@@ -214,10 +259,20 @@ impl InlineSpec {
     }
 }
 
+/// `spec` with `hint`, where there is one to give.
+fn described(spec: BlockSpec, hint: &str) -> BlockSpec {
+    match hint {
+        "" => spec,
+        hint => spec.with_hint(hint),
+    }
+}
+
 /// The block types, marks and inline atoms a document accepts.
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     blocks: HashMap<String, BlockSpec>,
+    /// The names of the block types, in the order they were added.
+    order: Vec<String>,
     marks: HashMap<String, MarkSpec>,
     inlines: HashMap<String, InlineSpec>,
     text_block: Option<String>,
@@ -234,33 +289,71 @@ impl Schema {
         use Content::{Inline, None};
 
         let mut schema = Self::new().with_text_block(block::PARAGRAPH);
-        let roles = [
-            (block::PARAGRAPH, Role::Text),
-            (block::QUOTE, Role::Wrapper),
-            (block::BULLET_LIST_ITEM, Role::ListItem),
-            (block::NUMBERED_LIST_ITEM, Role::ListItem),
-            (block::CHECK_LIST_ITEM, Role::ListItem),
-            (block::TOGGLE_LIST_ITEM, Role::Toggle),
+        // Each with how it is written and the attributes Markdown gives it.
+        let texts: [(_, _, _, &[&str]); 7] = [
+            (block::PARAGRAPH, Role::Text, "", &[]),
+            (
+                block::HEADING,
+                Role::Text,
+                "headings (`# Title`)",
+                &[attr::LEVEL],
+            ),
+            (
+                block::BULLET_LIST_ITEM,
+                Role::ListItem,
+                "bullet items (`- item`)",
+                &[],
+            ),
+            (
+                block::NUMBERED_LIST_ITEM,
+                Role::ListItem,
+                "numbered items (`1. item`)",
+                &[attr::START],
+            ),
+            (
+                block::CHECK_LIST_ITEM,
+                Role::ListItem,
+                "tasks (`- [ ] task`)",
+                &[attr::CHECKED],
+            ),
+            (block::TOGGLE_LIST_ITEM, Role::Toggle, "", &[]),
+            (block::QUOTE, Role::Wrapper, "quotes (`> text`)", &[]),
         ];
-        for (name, role) in roles {
-            let spec = BlockSpec::new(name, Inline).with_children().with_role(role);
-            schema = schema.block(spec);
+        for (name, role, hint, attrs) in texts {
+            let spec = BlockSpec::new(name, Inline).with_role(role);
+            let spec = match name {
+                block::HEADING => spec.top_level(),
+                _ => spec.with_children(),
+            };
+            schema = schema.block(described(spec, hint).with_attrs(attrs.iter().copied()));
         }
         let alert = BlockSpec::new(block::ALERT, None).with_children();
-        schema = schema.block(alert.with_role(Role::Wrapper));
-        schema = schema.block(BlockSpec::new(block::HEADING, Inline).top_level());
+        let alert = alert.with_role(Role::Wrapper).with_attrs([attr::KIND]);
+        let hint = "alerts (`> [!NOTE]`, with their text added after them)";
+        schema = schema.block(alert.with_hint(hint));
         let code = BlockSpec::new(block::CODE_BLOCK, Inline).without_style();
-        schema = schema.block(code.with_role(Role::Code));
-        for name in [
-            block::IMAGE,
-            block::FILE,
-            block::DIVIDER,
-            block::PAGE_BREAK,
-            block::TABLE_ROW,
-        ] {
-            schema = schema.block(BlockSpec::new(name, None));
+        let code = code.with_role(Role::Code).with_attrs([attr::LANGUAGE]);
+        schema = schema.block(code.with_hint("fenced code"));
+        schema = schema.block(
+            BlockSpec::new(block::TABLE, None)
+                .with_children()
+                .with_hint("tables"),
+        );
+        let voids: [(_, _, &[&str]); 5] = [
+            (block::DIVIDER, "dividers (`---`)", &[]),
+            (
+                block::IMAGE,
+                "images (`![caption](url)`)",
+                &[attr::URL, attr::CAPTION],
+            ),
+            (block::FILE, "", &[attr::NAME, attr::URL]),
+            (block::PAGE_BREAK, "", &[]),
+            (block::TABLE_ROW, "", &[]),
+        ];
+        for (name, hint, attrs) in voids {
+            let spec = BlockSpec::new(name, None).with_attrs(attrs.iter().copied());
+            schema = schema.block(described(spec, hint));
         }
-        schema = schema.block(BlockSpec::new(block::TABLE, None).with_children());
         schema = schema.block(BlockSpec::new(block::TABLE_CELL, Inline));
         for name in [mark::BOLD, mark::ITALIC, mark::UNDERLINE, mark::STRIKE] {
             schema = schema.mark(MarkSpec::new(name, Expand::After));
@@ -290,8 +383,24 @@ impl Schema {
 
     /// Adds a block type, replacing any existing one with the same name.
     pub fn block(mut self, spec: BlockSpec) -> Self {
-        self.blocks.insert(spec.name.clone(), spec);
+        if self
+            .blocks
+            .insert(spec.name.clone(), spec.clone())
+            .is_none()
+        {
+            self.order.push(spec.name);
+        }
         self
+    }
+
+    /// The block types, in the order they were added.
+    pub fn block_specs(&self) -> impl Iterator<Item = &BlockSpec> {
+        self.order.iter().filter_map(|name| self.blocks.get(name))
+    }
+
+    /// The block type written in Markdown as a fenced block tagged `tag`.
+    pub fn fenced(&self, tag: &str) -> Option<&BlockSpec> {
+        self.block_specs().find(|spec| spec.fence() == Some(tag))
     }
 
     /// Adds a mark, replacing any existing one with the same name.

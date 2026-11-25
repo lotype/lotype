@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
@@ -8,25 +9,28 @@ use crate::{
 };
 
 /// A block to make.
-struct Node {
-    block_type: &'static str,
-    attrs: Vec<(&'static str, Value)>,
-    spans: Vec<Span>,
+pub(super) struct Node {
+    pub(super) block_type: Cow<'static, str>,
+    pub(super) attrs: Vec<(Cow<'static, str>, Value)>,
+    pub(super) spans: Vec<Span>,
     children: Vec<Node>,
+    /// What follows the signs that open a fenced block, where it is one.
+    pub(super) info: Option<String>,
 }
 
 impl Node {
     fn new(block_type: &'static str) -> Self {
         Self {
-            block_type,
+            block_type: block_type.into(),
             attrs: Vec::new(),
             spans: Vec::new(),
             children: Vec::new(),
+            info: None,
         }
     }
 
     fn with(mut self, key: &'static str, value: impl Into<Value>) -> Self {
-        self.attrs.push((key, value.into()));
+        self.attrs.push((key.into(), value.into()));
         self
     }
 }
@@ -53,7 +57,7 @@ struct Leaf {
 }
 
 #[derive(Default)]
-struct Reader {
+pub(super) struct Reader {
     stack: Vec<(Container, Vec<Node>)>,
     leaf: Option<Leaf>,
     /// The values of each mark in [`MARKS`] that is open, innermost last.
@@ -91,7 +95,7 @@ impl Reader {
             let caption: String = node.spans.drain(..).map(|span| span.text).collect();
             node = Node::new(block::IMAGE).with(attr::URL, url.clone());
             if !caption.is_empty() && caption != url {
-                node.attrs.push(("caption", caption.into()));
+                node.attrs.push(("caption".into(), caption.into()));
             }
         }
         self.push(node);
@@ -159,10 +163,11 @@ impl Reader {
             }
             Tag::CodeBlock(kind) => {
                 let mut node = Node::new(block::CODE_BLOCK);
-                if let CodeBlockKind::Fenced(info) = kind
-                    && let Some(language) = info.split_whitespace().next()
-                {
-                    node.attrs.push(("language", language.into()));
+                if let CodeBlockKind::Fenced(info) = kind {
+                    if let Some(language) = info.split_whitespace().next() {
+                        node.attrs.push(("language".into(), language.into()));
+                    }
+                    node.info = Some(info.to_string());
                 }
                 self.open(node);
             }
@@ -316,7 +321,7 @@ impl Reader {
         }
     }
 
-    fn read(mut self, markdown: &str) -> Vec<Node> {
+    pub(super) fn read(mut self, markdown: &str) -> Vec<Node> {
         let options = Options::ENABLE_GFM
             | Options::ENABLE_STRIKETHROUGH
             | Options::ENABLE_TASKLISTS
@@ -384,6 +389,7 @@ impl Document {
         let nodes = Reader::default().read(markdown);
         let mut stack: Vec<_> = nodes.into_iter().rev().map(|n| (top, depth, n)).collect();
         while let Some((parent, depth, mut node)) = stack.pop() {
+            self.unfence(&mut node);
             // A table that cannot be made, for want of room below it or of
             // a type in the schema, is read as what is in it, like any block
             // of a type the schema lacks. So are its rows and cells then:
@@ -391,19 +397,19 @@ impl Document {
             let lacks = |name: &str| self.schema().block_spec(name).is_none();
             let unmade = node.block_type == block::TABLE
                 && (depth + 2 > MAX_DEPTH || lacks(block::TABLE_ROW) || lacks(block::TABLE_CELL));
-            let part = matches!(node.block_type, block::TABLE_ROW | block::TABLE_CELL);
+            let part = matches!(&*node.block_type, block::TABLE_ROW | block::TABLE_CELL);
             // Nor is a heading in another block, where none goes.
             let top_level = |name: &str| {
                 let spec = self.schema().block_spec(name);
                 spec.is_some_and(|spec| spec.is_top_level())
             };
-            let nested = parent.is_some() && top_level(node.block_type);
-            if unmade || part || nested || lacks(node.block_type) {
+            let nested = parent.is_some() && top_level(&node.block_type);
+            if unmade || part || nested || lacks(&node.block_type) {
                 if node.block_type == block::IMAGE {
                     node.spans = image_link(&node.attrs);
                 }
                 // Without its type, its attributes mean nothing.
-                (node.block_type, node.attrs) = (block::PARAGRAPH, Vec::new());
+                (node.block_type, node.attrs) = (block::PARAGRAPH.into(), Vec::new());
                 if node.spans.is_empty() {
                     // It says nothing itself, so what is in it takes its place.
                     let children = node.children.into_iter().rev();
@@ -418,7 +424,7 @@ impl Document {
                 made.extend((parent == top).then_some(table));
                 continue;
             }
-            let holds_text = self.holds_text(node.block_type)?;
+            let holds_text = self.holds_text(&node.block_type)?;
             if !holds_text && !node.spans.is_empty() {
                 // The type holds no text here, so its text goes first inside it.
                 let mut text = Node::new(block::PARAGRAPH);
@@ -426,13 +432,13 @@ impl Document {
                 node.children.insert(0, text);
             }
             let index = next.entry(parent).or_insert(0);
-            let block = self.insert_block(parent, *index, node.block_type)?;
+            let block = self.insert_block(parent, *index, &node.block_type)?;
             *index += 1;
             if parent == top {
                 made.push(block);
             }
             for (key, value) in node.attrs {
-                self.set_attr(block, key, value)?;
+                self.set_attr(block, &key, value)?;
             }
             if holds_text {
                 self.fit_marks(&mut node.spans);
@@ -489,7 +495,7 @@ impl Document {
 }
 
 /// An image as text: its description, linked to its address.
-fn image_link(attrs: &[(&'static str, Value)]) -> Vec<Span> {
+fn image_link(attrs: &[(Cow<'static, str>, Value)]) -> Vec<Span> {
     let text = |wanted| match attrs.iter().find(|(key, _)| *key == wanted) {
         Some((_, Value::Str(text))) => text.clone(),
         _ => String::new(),

@@ -1,6 +1,7 @@
 //! Markdown in and out: CommonMark with GitHub's alerts, task lists and
 //! strikethrough.
 
+mod fence;
 mod read;
 mod write;
 

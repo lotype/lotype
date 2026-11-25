@@ -178,6 +178,7 @@ impl Document {
                 }
                 format!("{} {title}", "#".repeat(level))
             }
+            _ if let Some(fence) = self.fence(block) => fence,
             _ => {
                 // A block of a type unknown here still has its text.
                 let lines = match self.plain_spans(block) {
@@ -191,7 +192,7 @@ impl Document {
     }
 }
 
-fn longest_run(text: &str, of: char) -> usize {
+pub(super) fn longest_run(text: &str, of: char) -> usize {
     let runs = text.split(|c| c != of);
     runs.map(str::len).max().unwrap_or(0)
 }
@@ -203,7 +204,7 @@ struct Open {
 }
 
 /// Rich text as Markdown. A line break in it is a hard break.
-fn inline(spans: &[Span]) -> String {
+pub(super) fn inline(spans: &[Span]) -> String {
     let mut out = String::new();
     let mut open: Vec<Open> = Vec::new();
     // Space between two spans goes outside the marks that end or start there.
