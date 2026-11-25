@@ -3,6 +3,7 @@ mod blink;
 mod block_menu;
 mod canvas;
 mod clipboard;
+mod collab;
 mod input;
 mod keys;
 mod link;
@@ -107,6 +108,8 @@ pub struct EditorView {
     /// Redraws when the focus leaves, which closes the menus, and blinks
     /// the caret again when the focus or the window comes back.
     watches: Vec<Subscription>,
+    /// The other peers in the document, to draw their carets and selections.
+    presence: Option<lotype_core::Presence>,
 }
 
 impl EditorView {
@@ -149,6 +152,7 @@ impl EditorView {
             row_items: Vec::new(),
             measuring: false,
             watches: Vec::new(),
+            presence: None,
         }
     }
 
@@ -393,6 +397,7 @@ impl Render for EditorView {
             // Over the rows, whose colors would hide it, and see-through.
             .child(paint::selection(cx.entity()))
             .child(paint::caret(cx.entity()))
+            .child(collab::cursors(cx.entity()))
             .children(self.slash_menu(window, cx))
             .children(self.toolbar(window, cx))
             .children(self.link_field(window, cx))

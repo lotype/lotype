@@ -4,7 +4,7 @@ use gpui::{
     App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, point, prelude::*,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::Selection;
+use lotype_core::{Pos, Selection};
 
 use super::EditorView;
 use crate::text_el::Affinity;
@@ -17,14 +17,21 @@ pub(super) fn selection_color(cx: &App) -> Hsla {
 
 impl EditorView {
     fn selection_rectangles(&self) -> Vec<Bounds<Pixels>> {
-        let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
-            return Vec::new();
-        };
-        // Text being composed is underlined instead.
-        if anchor == head || self.composition.is_some() {
+        match self.editor.selection() {
+            // Text being composed is underlined instead.
+            Some(Selection::Text { anchor, head }) if self.composition.is_none() => {
+                self.rectangles_between(*anchor, *head)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Where the text from one position to the other was drawn.
+    pub(super) fn rectangles_between(&self, anchor: Pos, head: Pos) -> Vec<Bounds<Pixels>> {
+        if anchor == head {
             return Vec::new();
         }
-        let Ok((from, to)) = self.editor.document().ordered(*anchor, *head) else {
+        let Ok((from, to)) = self.editor.document().ordered(anchor, head) else {
             return Vec::new();
         };
         let first = self.order.iter().position(|block| *block == from.block);
