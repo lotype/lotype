@@ -5,8 +5,9 @@ use std::collections::HashSet;
 
 use gpui::{
     AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, SharedString,
-    TextStyle, Window, canvas, div, img, point, prelude::*, px, rgb, size,
+    TextStyle, Window, canvas, div, img, point, prelude::*, px, size,
 };
+use gpui_component::ActiveTheme;
 use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr};
 
 use super::EditorView;
@@ -24,8 +25,9 @@ fn indent(depth: usize) -> f32 {
     INDENT * depth.min(DEEPEST_INDENT) as f32
 }
 
-/// A quote or an alert around a block: how deep it is, and its colour.
-type Bar = (usize, Hsla);
+/// A quote or an alert around a block: how deep it is, and for an alert
+/// its kind, which its colour is of.
+type Bar = (usize, Option<&'static str>);
 
 /// A block as it is shown.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,8 +88,8 @@ pub(crate) fn rows(
         });
         numbers[depth] = number;
         let bar = match block_type.as_str() {
-            "quote" => Some((depth, quote_color())),
-            "alert" => Some((depth, alert_color(doc, block))),
+            "quote" => Some((depth, None)),
+            "alert" => Some((depth, Some(doc.alert_kind(block)))),
             _ => None,
         };
         let outer = around.last();
@@ -121,12 +123,8 @@ pub(crate) fn rows(
     rows
 }
 
-fn muted() -> Hsla {
-    rgb(0x8a8f98).into()
-}
-
-fn quote_color() -> Hsla {
-    rgb(0xd0d4d9).into()
+fn muted(cx: &App) -> Hsla {
+    cx.theme().muted_foreground
 }
 
 impl EditorView {
@@ -159,21 +157,22 @@ impl EditorView {
         let base = &colored;
         let content = match row.block_type.as_str() {
             "divider" => {
-                let line = div().h(px(1.)).w_full().bg(rgb(0xe1e4e8));
+                let line = div().h(px(1.)).w_full().bg(cx.theme().border);
                 div().h(px(17.)).w_full().flex().items_center().child(line)
             }
             // Where printing starts a new page: dashed, and named, as word
             // processors draw it, so it is not taken for a divider.
             "page_break" => {
                 // GPUI draws no dashed border on one side alone.
+                let ink = muted(cx);
                 let dashes = || {
                     let paint =
-                        |bounds: Bounds<Pixels>, _: (), window: &mut Window, _: &mut App| {
+                        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _: &mut App| {
                             let y = bounds.center().y;
                             let mut x = bounds.left();
                             while x < bounds.right() {
                                 let dash = Bounds::new(point(x, y), size(px(4.), px(1.)));
-                                window.paint_quad(gpui::fill(dash, muted()));
+                                window.paint_quad(gpui::fill(dash, ink));
                                 x += px(8.);
                             }
                         };
@@ -182,7 +181,7 @@ impl EditorView {
                 let label = div()
                     .px_2()
                     .text_size(px(11.))
-                    .text_color(muted())
+                    .text_color(ink)
                     .child("Page break");
                 let row = div().h(px(17.)).w_full().flex().items_center();
                 row.child(dashes()).child(label).child(dashes())
@@ -198,16 +197,16 @@ impl EditorView {
                     caption.clone()
                 };
                 let shown = SharedString::from(label);
+                let (fill, ink) = (cx.theme().muted, muted(cx));
                 let fallback = move || {
-                    let missing = div().p_2().rounded_md().bg(rgb(0xf3f4f6));
+                    let missing = div().p_2().rounded_md().bg(fill);
                     missing
-                        .text_color(muted())
+                        .text_color(ink)
                         .child(shown.clone())
                         .into_any_element()
                 };
                 let image = img(url).max_w_full().with_fallback(fallback);
-                let caption =
-                    (!caption.is_empty()).then(|| div().text_color(muted()).child(caption));
+                let caption = (!caption.is_empty()).then(|| div().text_color(ink).child(caption));
                 div().flex().flex_col().child(image).children(caption)
             }
             "file" => {
@@ -216,7 +215,9 @@ impl EditorView {
                     doc.text_of(block, attr::NAME),
                 );
                 let name = if name.is_empty() { url } else { name };
-                div().text_color(rgb(0x0969da)).child(format!("📎 {name}"))
+                div()
+                    .text_color(cx.theme().link)
+                    .child(format!("📎 {name}"))
             }
             "alert" => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
             "table" => div().child(self.table_grid(block, base, shown, window, cx)?),
@@ -227,14 +228,18 @@ impl EditorView {
                 .w_full()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(0xf3f4f6))
+                .bg(cx.theme().muted)
                 .child(self.block_text(block, base, shown, window, cx)?),
             _ => self.block_text(block, base, shown, window, cx)?,
         };
-        let bars = row.bars.iter().map(|(depth, color)| {
+        let bars = row.bars.iter().map(|(depth, kind)| {
+            let color = match kind {
+                Some(kind) => alert_color(kind, cx),
+                None => cx.theme().border,
+            };
             let left = px(indent(*depth) + 2.);
             let bar = div().absolute().top_0().bottom_0().left(left).w(px(3.));
-            bar.bg(*color)
+            bar.bg(color)
         });
         // Over the block's own colors, as the text selection is.
         // From the selected block's indent, so that it and what is in it
@@ -242,9 +247,9 @@ impl EditorView {
         let selected = row.selected.map(|depth| {
             let overlay = div().absolute().top_0().bottom_0().right_0();
             let overlay = overlay.left(px(indent(depth)));
-            let edge = rgb(0x0969da);
+            let edge = cx.theme().primary;
             overlay
-                .bg(super::paint::selection_color())
+                .bg(super::paint::selection_color(cx))
                 .border_l_2()
                 .border_color(edge)
         });
@@ -256,7 +261,7 @@ impl EditorView {
             .pl(px(indent(row.depth)))
             .children(bars)
             .children(self.side_menu(row.block, indent(row.depth), cx))
-            .children(self.drop_line(row.block, indent(row.depth)))
+            .children(self.drop_line(row.block, indent(row.depth), cx))
             .children(self.marker(row, cx))
             .child(
                 div()
@@ -286,7 +291,7 @@ impl EditorView {
                     cx.notify();
                 });
                 let arrow = div().cursor_pointer().child(if open { "▾" } else { "▸" });
-                slot.text_color(muted())
+                slot.text_color(muted(cx))
                     .child(arrow.on_mouse_down(MouseButton::Left, click))
             }
             "bullet_list_item" => slot.child("•"),
@@ -298,14 +303,18 @@ impl EditorView {
                     .size(px(14.))
                     .rounded_sm()
                     .border_1()
-                    .border_color(muted())
+                    .border_color(muted(cx))
                     .flex()
                     .items_center()
                     .justify_center()
                     .text_size(px(10.))
                     .cursor_pointer();
                 if checked {
-                    check = check.bg(rgb(0x0969da)).text_color(rgb(0xffffff)).child("✓");
+                    let theme = cx.theme();
+                    check = check
+                        .bg(theme.primary)
+                        .text_color(theme.primary_foreground)
+                        .child("✓");
                 }
                 let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
                     cx.stop_propagation();

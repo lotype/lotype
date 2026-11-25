@@ -7,11 +7,11 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, CursorStyle, MouseButton, MouseDownEvent, Pixels,
-    Point, Task, Window, div, prelude::*, px, rgb,
+    AnyElement, App, Bounds, ClickEvent, Context, CursorStyle, MouseButton, MouseDownEvent, Pixels,
+    Point, Task, Window, div, prelude::*, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{Sizable, h_flex};
+use gpui_component::{ActiveTheme, Sizable, h_flex};
 use lotype_core::{BlockId, Pos};
 
 use super::EditorView;
@@ -294,7 +294,7 @@ impl EditorView {
             .on_click(add);
         let handle = div()
             .px_0p5()
-            .text_color(rgb(0x8a8f98))
+            .text_color(cx.theme().muted_foreground)
             .cursor(CursorStyle::OpenHand)
             .debug_selector(|| "side-handle".to_owned())
             .on_mouse_down(MouseButton::Left, hold)
@@ -319,7 +319,7 @@ impl EditorView {
     }
 
     /// The line where a dragged block lands, on the row of `block`.
-    pub(super) fn drop_line(&self, block: BlockId, indent: f32) -> Option<AnyElement> {
+    pub(super) fn drop_line(&self, block: BlockId, indent: f32, cx: &App) -> Option<AnyElement> {
         let (target, after) = self.side_menu.dragged.as_ref()?.target?;
         // After a block is after all that is in it.
         let shown = if after {
@@ -338,7 +338,7 @@ impl EditorView {
             .left(px(indent))
             .right_0()
             .h(px(2.))
-            .bg(rgb(0x0969da));
+            .bg(cx.theme().primary);
         let line = if after {
             line.bottom(px(-1.))
         } else {

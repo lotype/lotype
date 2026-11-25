@@ -6,11 +6,11 @@
 use std::collections::HashSet;
 
 use gpui::{
-    Anchor, AnyElement, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent,
-    SharedString, TextStyle, Window, anchored, deferred, div, point, prelude::*, px, rgb,
+    Anchor, AnyElement, App, ClickEvent, Context, Div, FontWeight, MouseButton, MouseDownEvent,
+    SharedString, TextStyle, Window, anchored, deferred, div, point, prelude::*, px,
 };
 use gpui_component::list::ListItem;
-use gpui_component::{ThemeStyled, v_flex};
+use gpui_component::{ActiveTheme, ThemeStyled, v_flex};
 use lotype_core::{BlockId, Editor, Pos, Selection};
 
 use super::EditorView;
@@ -49,15 +49,17 @@ fn place(editor: &Editor, cell: BlockId) -> Option<(BlockId, usize, usize)> {
 }
 
 /// A bar that adds a row or a column, faint until the mouse is on it.
-fn add_bar(selector: &'static str) -> Div {
+fn add_bar(selector: &'static str, cx: &App) -> Div {
+    let theme = cx.theme();
+    let hover = theme.secondary_hover;
     div()
         .flex()
         .items_center()
         .justify_center()
         .rounded_sm()
-        .bg(rgb(0xf3f4f6))
-        .text_color(rgb(0x8a8f98))
-        .hover(|bar| bar.bg(rgb(0xe5e7eb)))
+        .bg(theme.muted)
+        .text_color(theme.muted_foreground)
+        .hover(move |bar| bar.bg(hover))
         .cursor_pointer()
         .debug_selector(move || selector.to_owned())
         .child(icon(icons::PLUS).size_3())
@@ -94,7 +96,7 @@ impl EditorView {
         };
         let current = self.editor.current_cell();
         let (row_count, column_count) = (rows.len(), columns.len());
-        let line = rgb(0xd0d4d9);
+        let (line, head) = (cx.theme().border, cx.theme().table_head);
         let mut grid = div()
             .flex_1()
             .min_w_0()
@@ -113,8 +115,8 @@ impl EditorView {
                 let td = div().relative().flex_1().min_w_0().px_2().py_1();
                 let td = td.border_r_1().border_b_1().border_color(line);
                 let td = match () {
-                    _ if selected.contains(&cell) => td.bg(selection_color()),
-                    _ if index == 0 => td.bg(rgb(0xf6f8fa)),
+                    _ if selected.contains(&cell) => td.bg(selection_color(cx)),
+                    _ if index == 0 => td.bg(head),
                     _ => td,
                 };
                 let menu = (current == Some(cell)).then(|| self.cell_menu(cell, cx));
@@ -146,9 +148,9 @@ impl EditorView {
         });
         // The bars keep their room while hidden, so the grid does not move.
         let bar = |bar: Div| if hovered { bar } else { bar.invisible() };
-        let column_bar = bar(add_bar("table-add-column").w(px(16.)).ml_1())
+        let column_bar = bar(add_bar("table-add-column", cx).w(px(16.)).ml_1())
             .on_mouse_down(MouseButton::Left, add_column);
-        let row_bar = bar(add_bar("table-add-row").h(px(16.)).mt_1().mr(px(20.)))
+        let row_bar = bar(add_bar("table-add-row", cx).h(px(16.)).mt_1().mr(px(20.)))
             .on_mouse_down(MouseButton::Left, add_row);
         let id = SharedString::from(format!("table-{table}"));
         let table = v_flex()
@@ -168,6 +170,7 @@ impl EditorView {
     /// The button of the menu of the cell with the caret, and the menu
     /// while it is open.
     fn cell_menu(&self, cell: BlockId, cx: &mut Context<Self>) -> AnyElement {
+        let border = cx.theme().border;
         let open = cx.listener(move |view: &mut Self, _: &MouseDownEvent, window, cx| {
             cx.stop_propagation();
             view.press(window, cx);
@@ -179,10 +182,10 @@ impl EditorView {
             .top_1()
             .right_1()
             .rounded_sm()
-            .bg(rgb(0xffffff))
+            .bg(cx.theme().background)
             .border_1()
-            .border_color(rgb(0xd0d4d9))
-            .text_color(rgb(0x8a8f98))
+            .border_color(cx.theme().border)
+            .text_color(cx.theme().muted_foreground)
             .cursor_pointer()
             .debug_selector(|| "table-menu".to_owned())
             .on_mouse_down(MouseButton::Left, open)
@@ -197,7 +200,7 @@ impl EditorView {
                 });
                 // The deletions apart from the insertions.
                 let item = div().when(at == 4, |item| item.mt_1().pt_1().border_t_1());
-                item.border_color(rgb(0xe5e7eb))
+                item.border_color(border)
                     .debug_selector(move || format!("table-menu-{name}"))
                     .child(ListItem::new(name).child(title).on_click(choose))
             });

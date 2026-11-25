@@ -4,10 +4,10 @@
 
 use gpui::{
     AnyElement, ClickEvent, Context, Div, MouseButton, MouseDownEvent, anchored, deferred, div,
-    prelude::*, px, rgb,
+    prelude::*, px,
 };
 use gpui_component::list::ListItem;
-use gpui_component::{ThemeStyled, v_flex};
+use gpui_component::{ActiveTheme, ThemeStyled, v_flex};
 use lotype_core::{BlockColor, BlockId, COLOR_NAMES, Selection, Value};
 
 use super::EditorView;
@@ -66,12 +66,13 @@ impl EditorView {
                 cx.notify();
             }
         });
-        let title = |text: &'static str| {
+        let muted = cx.theme().muted_foreground;
+        let title = move |text: &'static str| {
             div()
                 .px_2()
                 .pt_1()
                 .text_size(px(12.))
-                .text_color(rgb(0x8a8f98))
+                .text_color(muted)
                 .child(text)
         };
         let menu = v_flex()
@@ -113,6 +114,7 @@ pub(super) fn swatch_row(
     pick: impl Fn(&mut EditorView, Option<&'static str>) + Clone + 'static,
     cx: &mut Context<EditorView>,
 ) -> Div {
+    let accent = cx.theme().primary;
     let names = std::iter::once(None).chain(COLOR_NAMES.map(Some));
     let swatches = names.map(|name| {
         let pick = pick.clone();
@@ -128,7 +130,7 @@ pub(super) fn swatch_row(
             .size(px(20.))
             .rounded_sm()
             .border_1()
-            .border_color(rgb(0xd0d4d9))
+            .border_color(cx.theme().border)
             .flex()
             .items_center()
             .justify_center()
@@ -142,7 +144,7 @@ pub(super) fn swatch_row(
             None => swatch.child("A"),
         };
         if current == name {
-            swatch = swatch.border_2().border_color(rgb(0x0969da));
+            swatch = swatch.border_2().border_color(accent);
         }
         swatch
     });

@@ -1,15 +1,17 @@
 //! The selection behind the text, and the caret in front of it.
 
 use gpui::{
-    App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, hsla, point, prelude::*,
+    App, Bounds, Entity, Hsla, IntoElement, Pixels, Window, canvas, fill, point, prelude::*,
 };
+use gpui_component::ActiveTheme;
 use lotype_core::Selection;
 
 use super::EditorView;
 use crate::text_el::Affinity;
 
-pub(super) fn selection_color() -> Hsla {
-    hsla(0.58, 0.9, 0.6, 0.3)
+/// The theme's selection, light enough to read the text under it.
+pub(super) fn selection_color(cx: &App) -> Hsla {
+    cx.theme().selection.opacity(0.3)
 }
 
 impl EditorView {
@@ -66,8 +68,9 @@ impl EditorView {
 /// see-through, so that the text stays readable.
 pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
     let paint = move |_: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
+        let color = selection_color(cx);
         for bounds in view.read(cx).selection_rectangles() {
-            window.paint_quad(fill(bounds, selection_color()));
+            window.paint_quad(fill(bounds, color));
         }
     };
     canvas(|_, _, _| (), paint).absolute().size_full()

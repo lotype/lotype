@@ -5,12 +5,10 @@
 
 use std::collections::BTreeMap;
 
-use gpui::{
-    AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, div, prelude::*, px, rgb,
-};
+use gpui::{AnyElement, ClickEvent, Context, MouseButton, MouseDownEvent, div, prelude::*, px};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::list::ListItem;
-use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Selectable, Sizable, ThemeStyled, h_flex, v_flex};
 use lotype_core::{BlockId, Role, SlashItem, Value, default_block_types, mark};
 
 use super::EditorView;
@@ -147,12 +145,13 @@ impl EditorView {
             Some(Value::Str(color)) => Some(color.clone()),
             _ => None,
         };
-        let title = |text: &'static str| {
+        let muted = cx.theme().muted_foreground;
+        let title = move |text: &'static str| {
             div()
                 .px_2()
                 .pt_1()
                 .text_size(px(12.))
-                .text_color(rgb(0x8a8f98))
+                .text_color(muted)
                 .child(text)
         };
         let mut rows = Vec::new();

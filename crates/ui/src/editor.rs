@@ -257,7 +257,7 @@ impl Render for EditorView {
             .children(None)
             .is_ok_and(|blocks| blocks.is_empty())
         {
-            rows.push(render::empty_document());
+            rows.push(render::empty_document(cx));
         }
         // A block's menu goes with it, deleted or hidden.
         if self

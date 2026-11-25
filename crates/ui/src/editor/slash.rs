@@ -4,9 +4,9 @@
 //! menu's while it shows. gpui-component's popover would take the focus, so
 //! the menu is its list items, placed as `popup` places them.
 
-use gpui::{AnyElement, Context, MouseButton, ScrollHandle, Window, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, MouseButton, ScrollHandle, Window, div, prelude::*, px};
 use gpui_component::list::ListItem;
-use gpui_component::{ThemeStyled, h_flex, v_flex};
+use gpui_component::{ActiveTheme, ThemeStyled, h_flex, v_flex};
 use lotype_core::{BlockId, Command, SlashItem, SlashQuery, filter_slash_items};
 
 use super::EditorView;
@@ -116,7 +116,7 @@ impl EditorView {
         let (_, items) = self.slash_matches()?;
         let at = self.slash.place.get(window)?;
         let highlighted = self.slash.highlighted.min(items.len() - 1);
-        let muted = rgb(0x8a8f98);
+        let muted = cx.theme().muted_foreground;
         let mut rows = Vec::new();
         let mut group = None;
         for (index, item) in items.into_iter().enumerate() {
@@ -130,7 +130,7 @@ impl EditorView {
                 let badge = div()
                     .px_1()
                     .rounded_sm()
-                    .bg(rgb(0xf0f1f3))
+                    .bg(cx.theme().list_active)
                     .text_xs()
                     .text_color(muted);
                 badge.child(keys)
@@ -139,7 +139,7 @@ impl EditorView {
                 .size(px(32.))
                 .flex_none()
                 .rounded_md()
-                .bg(rgb(0xf3f4f6))
+                .bg(cx.theme().muted)
                 .flex()
                 .items_center()
                 .justify_center()

@@ -5,8 +5,9 @@ use std::ops::Range;
 
 use gpui::{
     AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
-    TextStyle, UnderlineStyle, Window, div, px, rems, rgb,
+    TextStyle, UnderlineStyle, Window, div, px, rems,
 };
+use gpui_component::ActiveTheme;
 use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span};
 
 use super::EditorView;
@@ -14,15 +15,15 @@ use super::EditorView;
 /// What an empty paragraph says while the caret is in it.
 const PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
 use super::input::Shown;
-use crate::marks::{CODE_FONT, text_runs};
+use crate::marks::{CODE_FONT, Inks, text_runs};
 use crate::text_el::TextElement;
 
 /// The row of a document with no blocks: where writing starts, as the first
 /// click, key or text makes it a paragraph.
-pub(super) fn empty_document() -> AnyElement {
+pub(super) fn empty_document(cx: &App) -> AnyElement {
     div()
         .py(px(2.))
-        .text_color(rgb(0x8a8f98))
+        .text_color(cx.theme().muted_foreground)
         .debug_selector(|| "empty-document".to_owned())
         .child(PLACEHOLDER)
         .into_any_element()
@@ -66,7 +67,11 @@ impl EditorView {
             Some(shown) => self.composed_spans(shown)?,
             None => (doc.spans(block).ok()?, None),
         };
-        let mut runs = text_runs(&spans, &style);
+        let inks = Inks {
+            link: cx.theme().link,
+            code: cx.theme().muted,
+        };
+        let mut runs = text_runs(&spans, &style, inks);
         // Text being composed is underlined, and is a span of its own.
         let mut at = 0;
         for run in &mut runs {
@@ -96,14 +101,20 @@ impl EditorView {
         self.layouts.insert(block, element.layout().clone());
         self.order.push(block);
         let line = line.relative().child(element);
-        Some(match self.placeholder(block, &block_type, window) {
+        Some(match self.placeholder(block, &block_type, window, cx) {
             Some(placeholder) => line.child(placeholder),
             None => line,
         })
     }
 
     /// What an empty paragraph says while the caret is in it.
-    fn placeholder(&self, block: BlockId, block_type: &str, window: &Window) -> Option<Div> {
+    fn placeholder(
+        &self,
+        block: BlockId,
+        block_type: &str,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Div> {
         let caret = match self.editor.selection() {
             Some(Selection::Text { anchor, head }) => anchor == head && head.block == block,
             _ => false,
@@ -123,7 +134,7 @@ impl EditorView {
             .top_0()
             .left_0()
             .whitespace_nowrap()
-            .text_color(rgb(0x8a8f98))
+            .text_color(cx.theme().muted_foreground)
             .debug_selector(|| "placeholder".to_owned())
             .child(PLACEHOLDER);
         shown.then_some(placeholder)
@@ -149,7 +160,11 @@ impl EditorView {
         }
         let spec = self.editor.document().schema().inline_spec(&atom.name);
         let text = spec.map_or_else(|| atom.name.clone(), |spec| spec.text(atom));
-        let chip = div().px_1().rounded_sm().bg(rgb(0xebeced)).child(text);
+        let chip = div()
+            .px_1()
+            .rounded_sm()
+            .bg(cx.theme().secondary)
+            .child(text);
         chip.into_any_element()
     }
 }

@@ -2,45 +2,54 @@
 //! colour of their kind. A click on the title picks another kind.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, anchored,
-    deferred, div, point, prelude::*, px, rgb,
+    AnyElement, App, ClickEvent, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, anchored,
+    deferred, div, point, prelude::*, px,
 };
 use gpui_component::list::ListItem;
-use gpui_component::{Sizable, ThemeStyled, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex, v_flex};
 use lotype_core::{BlockId, Document, alert};
 
 use super::EditorView;
 use crate::icons::{self, icon};
 
-/// A kind of alert: its name in the document, its title, colour and icon.
-type Kind = (&'static str, &'static str, u32, &'static [u8]);
+/// A kind of alert: its name in the document, its title and icon.
+type Kind = (&'static str, &'static str, &'static [u8]);
 
 /// How an alert of a kind looks, as GitHub draws it.
 fn look(kind: &'static str) -> Kind {
-    let (title, color, svg) = match kind {
-        alert::TIP => ("Tip", 0x1a7f37, icons::TIP),
-        alert::IMPORTANT => ("Important", 0x8250df, icons::IMPORTANT),
-        alert::WARNING => ("Warning", 0x9a6700, icons::WARNING),
-        alert::CAUTION => ("Caution", 0xd1242f, icons::CAUTION),
-        _ => ("Note", 0x0969da, icons::ALERT),
+    let (title, svg) = match kind {
+        alert::TIP => ("Tip", icons::TIP),
+        alert::IMPORTANT => ("Important", icons::IMPORTANT),
+        alert::WARNING => ("Warning", icons::WARNING),
+        alert::CAUTION => ("Caution", icons::CAUTION),
+        _ => ("Note", icons::ALERT),
     };
-    (kind, title, color, svg)
+    (kind, title, svg)
 }
 
 fn kind(doc: &Document, block: BlockId) -> Kind {
     look(doc.alert_kind(block))
 }
 
-/// The colour of the alert's bar and title.
-pub(super) fn alert_color(doc: &Document, block: BlockId) -> Hsla {
-    rgb(kind(doc, block).2).into()
+/// The colour of an alert of `kind`, its bar and its title, from the
+/// theme's colours for what they mean, as GitHub's are.
+pub(super) fn alert_color(kind: &str, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    match kind {
+        alert::TIP => theme.success,
+        alert::IMPORTANT => theme.magenta,
+        alert::WARNING => theme.warning,
+        alert::CAUTION => theme.danger,
+        _ => theme.info,
+    }
 }
 
 impl EditorView {
     /// The alert's title, which opens the menu of kinds, with the menu
     /// while it is open.
     pub(super) fn alert_title(&self, block: BlockId, cx: &mut Context<Self>) -> AnyElement {
-        let (current, title, color, svg) = kind(self.editor.document(), block);
+        let (current, title, svg) = kind(self.editor.document(), block);
+        let color = alert_color(current, cx);
         let toggle = cx.listener(move |view: &mut Self, _: &MouseDownEvent, _, cx| {
             cx.stop_propagation();
             view.alert_menu = Some(block);
@@ -49,14 +58,18 @@ impl EditorView {
         let title = h_flex()
             .gap_1()
             .items_center()
-            .text_color(rgb(color))
+            .text_color(color)
             .font_weight(FontWeight::SEMIBOLD)
             .cursor_pointer()
             .debug_selector(|| "alert-kind".to_owned())
             .on_mouse_down(MouseButton::Left, toggle)
             .child(icon(svg).size_4())
             .child(title)
-            .child(icon(icons::CHEVRON_DOWN).xsmall().text_color(rgb(0x8a8f98)));
+            .child(
+                icon(icons::CHEVRON_DOWN)
+                    .xsmall()
+                    .text_color(cx.theme().muted_foreground),
+            );
         let menu = (self.alert_menu == Some(block)).then(|| self.alert_menu(block, current, cx));
         // The menu hangs from under the title, where this empty line is.
         let under = menu.map(|menu| div().h_0().child(menu));
@@ -67,7 +80,8 @@ impl EditorView {
         let items = alert::KINDS
             .into_iter()
             .map(look)
-            .map(|(name, title, color, svg)| {
+            .map(|(name, title, svg)| {
+                let color = alert_color(name, cx);
                 let choose = cx.listener(move |view: &mut Self, _: &ClickEvent, _, cx| {
                     view.alert_menu = None;
                     view.editor.set_alert_kind(block, name).ok();
@@ -78,7 +92,7 @@ impl EditorView {
                     .gap_2()
                     .text_sm()
                     .items_center()
-                    .child(icon(svg).text_color(rgb(color)))
+                    .child(icon(svg).text_color(color))
                     .child(div().flex_1().child(title))
                     .children((name == current).then(|| icon(icons::CHECK)));
                 div()

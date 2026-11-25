@@ -25,28 +25,34 @@ fn named(name: &str) -> Option<(u32, u32)> {
     })
 }
 
-/// One run per span, styled by its marks on top of `base`.
-pub(crate) fn text_runs(spans: &[Span], base: &TextStyle) -> Vec<TextRun> {
-    let spans = spans.iter().filter(|span| !span.text.is_empty());
-    spans.map(|span| text_run(span, base)).collect()
+/// The colors of links and of inline code, from the theme.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Inks {
+    pub link: Hsla,
+    pub code: Hsla,
 }
 
-fn text_run(span: &Span, base: &TextStyle) -> TextRun {
+/// One run per span, styled by its marks on top of `base`.
+pub(crate) fn text_runs(spans: &[Span], base: &TextStyle, inks: Inks) -> Vec<TextRun> {
+    let spans = spans.iter().filter(|span| !span.text.is_empty());
+    spans.map(|span| text_run(span, base, inks)).collect()
+}
+
+fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
     let mut style = HighlightStyle::default();
     let line = |color| UnderlineStyle {
         color,
         thickness: px(1.),
         wavy: false,
     };
-    let link = Hsla::from(rgb(0x0b6e99));
+    let link = inks.link;
     // Marks come sorted by name, so an explicit color wins over the link's.
     for (name, value) in &span.marks {
         match name.as_str() {
             mark::BACKGROUND_COLOR => style.background_color = color(value, true),
             mark::BOLD => style.font_weight = Some(FontWeight::BOLD),
             mark::CODE => {
-                let code = Hsla::from(rgb(0xebeced));
-                style.background_color.get_or_insert(code);
+                style.background_color.get_or_insert(inks.code);
             }
             mark::ITALIC => style.font_style = Some(FontStyle::Italic),
             mark::LINK => {
@@ -110,7 +116,7 @@ mod tests {
             span("bold", &[("bold", true.into()), ("italic", true.into())]),
             span("x", &[("code", true.into())]),
         ];
-        let runs = text_runs(&spans, &base);
+        let runs = text_runs(&spans, &base, Inks::default());
         assert_eq!(
             runs.iter().map(|run| run.len).collect::<Vec<_>>(),
             [6, 4, 1]
@@ -130,11 +136,18 @@ mod tests {
             "a",
             &[("link", "https://x".into()), ("text_color", "red".into())],
         );
-        assert_eq!(text_runs(&[colored], &base)[0].color, red);
+        assert_eq!(text_runs(&[colored], &base, Inks::default())[0].color, red);
         let hex = span("a", &[("background_color", "#e03e3e".into())]);
-        assert_eq!(text_runs(&[hex], &base)[0].background_color, Some(red));
+        assert_eq!(
+            text_runs(&[hex], &base, Inks::default())[0].background_color,
+            Some(red)
+        );
         for junk in [Value::from("default"), Value::from("#zz"), Value::from(3)] {
-            let run = &text_runs(&[span("a", &[("text_color", junk)])], &base)[0];
+            let run = &text_runs(
+                &[span("a", &[("text_color", junk)])],
+                &base,
+                Inks::default(),
+            )[0];
             assert_eq!(run.color, base.color);
         }
     }

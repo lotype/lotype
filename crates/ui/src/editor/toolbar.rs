@@ -6,11 +6,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    Anchor, AnyElement, Bounds, ClickEvent, Context, Div, MouseButton, Pixels, Window, anchored,
-    canvas, div, point, prelude::*, px, rgb,
+    Anchor, AnyElement, App, Bounds, ClickEvent, Context, Div, MouseButton, Pixels, Window,
+    anchored, canvas, div, point, prelude::*, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{Selectable, Sizable, ThemeStyled, h_flex};
+use gpui_component::{ActiveTheme, Selectable, Sizable, ThemeStyled, h_flex};
 use lotype_core::{Align, BlockId, Pos, Selection, Value, mark};
 
 use super::EditorView;
@@ -85,8 +85,8 @@ pub(super) fn tagged(id: &'static str, button: impl IntoElement) -> Div {
         .child(button)
 }
 
-fn separator() -> Div {
-    div().w(px(1.)).h(px(16.)).mx_1().bg(rgb(0xe1e4e8))
+fn separator(cx: &App) -> Div {
+    div().w(px(1.)).h(px(16.)).mx_1().bg(cx.theme().border)
 }
 
 impl EditorView {
@@ -277,18 +277,25 @@ impl EditorView {
                     }
                 }),
             )
-            .children(
-                block_type
-                    .map(|select| div().flex().items_center().child(select).child(separator())),
-            )
+            .children(block_type.map(|select| {
+                div()
+                    .flex()
+                    .items_center()
+                    .child(select)
+                    .child(separator(cx))
+            }))
             .children(marks)
             .when(!alignments.is_empty(), |bar| {
-                bar.child(separator()).children(alignments)
+                bar.child(separator(cx)).children(alignments)
             })
-            .children(
-                color.map(|color| div().flex().items_center().child(separator()).child(color)),
-            )
-            .child(separator())
+            .children(color.map(|color| {
+                div()
+                    .flex()
+                    .items_center()
+                    .child(separator(cx))
+                    .child(color)
+            }))
+            .child(separator(cx))
             .child(tagged(
                 "nest",
                 button("nest", icons::NEST, "Nest block").on_click(nest),

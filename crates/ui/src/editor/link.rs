@@ -9,7 +9,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Sizable, ThemeStyled, h_flex};
+use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex};
 use lotype_core::mark::LINK;
 use lotype_core::{Pos, Selection, Value};
 
@@ -228,7 +228,7 @@ impl EditorView {
             .items_center()
             .debug_selector(|| "link-toolbar".to_owned())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().px_2().text_color(gpui::rgb(0x0969da)).child(shown))
+            .child(div().px_2().text_color(cx.theme().link).child(shown))
             .child(
                 div()
                     .debug_selector(|| "link-edit".to_owned())
