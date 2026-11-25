@@ -26,8 +26,8 @@ impl Editor {
     }
 
     /// Gives a block one of its colors by name, or takes it off for `None`;
-    /// a type that takes no style gets none, nor does a table or a part of
-    /// one, as [`Editor::set_block_attr`] leaves them.
+    /// a type that takes no style gets none, nor does a row or a cell of a
+    /// table, which no view draws a color of: the table takes it for them.
     pub fn set_block_color(
         &mut self,
         block: BlockId,
@@ -35,7 +35,8 @@ impl Editor {
         name: Option<&str>,
     ) -> Result<()> {
         self.apply(|doc, selection| {
-            if !doc.spec(block)?.takes_style() || doc.is_table_part(block) {
+            let inside_table = doc.is_table_part(block) && doc.block_type(block)? != types::TABLE;
+            if !doc.spec(block)?.takes_style() || inside_table {
                 return Ok(selection.cloned());
             }
             match name {

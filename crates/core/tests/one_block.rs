@@ -133,21 +133,19 @@ fn an_alert_kind_is_one_of_five_and_an_unknown_one_reads_as_a_note() {
 }
 
 #[test]
-fn a_table_and_its_rows_take_no_color() {
-    use lotype_core::BlockKind;
+fn a_table_takes_a_color_and_its_rows_and_cells_none() {
     let mut doc = Document::new(Schema::builtin());
     let table = doc.insert_table(None, 0, 2, 2).unwrap();
     let row = doc.children(Some(table)).unwrap()[0];
+    let cell = doc.cell(row, doc.columns(table).unwrap()[0]).unwrap();
     let mut ed = Editor::new(doc);
-    for block in [table, row] {
+    let red = Some("red".to_owned());
+    for (block, colored) in [(table, red), (row, None), (cell, None)] {
         ed.set_block_color(block, BlockColor::Background, Some("red"))
             .unwrap();
-        assert_eq!(
-            ed.document().attr(block, attr::BACKGROUND_COLOR).unwrap(),
-            None
-        );
+        let color = ed.document().block_color(block, BlockColor::Background);
+        assert_eq!(color, colored);
     }
-    assert_eq!(BlockKind::of(ed.document(), table), None);
 }
 
 #[test]
