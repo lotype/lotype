@@ -111,54 +111,71 @@ impl EditorView {
         texts.collect()
     }
 
+    /// Whether `block` is one of [`Self::ai_struck`], asked of every row
+    /// a frame lays out.
+    fn ai_is_struck(&self, block: BlockId) -> bool {
+        let removed = || self.ai.changes.contains(&Change::Removed(block));
+        let main = self.ai.main.as_ref();
+        main.is_some_and(|main| removed() && main.document().text_len(block).is_ok())
+    }
+
     /// The document that has `block` to show: the one a session works on
     /// for a block it removed, and the one shown for the others.
     pub(super) fn document_of(&self, block: BlockId) -> &Document {
         match &self.ai.main {
-            Some(main) if self.ai_struck().contains(&block) => main.document(),
+            Some(main) if self.ai_is_struck(block) => main.document(),
             _ => self.editor.document(),
         }
     }
 
     /// The text of `block` as a review shows it, where a session changed
     /// it: a removed block's whole text as gone, and a changed block's
-    /// with what went before what came. `None` for the others, and while
-    /// the model still writes.
+    /// with what went before what came. What went is the text the session
+    /// found there, not what others have made of it in the document
+    /// since. `None` for the others, and while the model still writes.
     pub(super) fn ai_review_spans(&self, block: BlockId) -> Option<(Vec<Span>, Marks)> {
-        let main = self.ai.main.as_ref()?.document();
-        if self.ai_struck().contains(&block) {
-            let spans = main.spans(block).ok()?;
-            let len = spans.iter().map(|span| span.text.len()).sum();
-            return Some((spans, vec![(0..len, Mark::Removed)]));
+        let was = self.ai.session.as_ref()?.original_spans(block)?;
+        let text = |spans: &[Span]| spans.iter().map(|span| span.text.as_str()).collect();
+        let old: String = text(was);
+        if self.ai_is_struck(block) {
+            return Some((was.to_vec(), vec![(0..old.len(), Mark::Removed)]));
         }
         let reviewing = self.ai_state() == Some(&AiState::Reviewing);
         if !reviewing || !self.ai.changes.contains(&Change::Updated(block)) {
             return None;
         }
-        let copy = self.editor.document();
-        let text = |doc: &Document| {
-            let spans = doc.spans(block).ok()?;
-            Some(
-                spans
-                    .iter()
-                    .map(|span| span.text.as_str())
-                    .collect::<String>(),
-            )
-        };
-        let (old, new) = (text(main)?, text(copy)?);
+        let is = self.editor.document().spans(block).ok()?;
+        let new: String = text(&is);
         let (mut spans, mut marks, mut at) = (Vec::new(), Marks::new(), 0);
         for part in word_diff(&old, &new) {
             let (from, range, mark) = match part {
-                Diff::Kept(range) => (copy, range, None),
-                Diff::Added(range) => (copy, range, Some(Mark::Added)),
-                Diff::Removed(range) => (main, range, Some(Mark::Removed)),
+                Diff::Kept(range) => (&is[..], range, None),
+                Diff::Added(range) => (&is[..], range, Some(Mark::Added)),
+                Diff::Removed(range) => (was, range, Some(Mark::Removed)),
             };
-            let len = range.len();
-            spans.extend(from.spans_in(block, range).ok()?);
-            marks.extend(mark.map(|mark| (at..at + len, mark)));
-            at += len;
+            marks.extend(mark.map(|mark| (at..at + range.len(), mark)));
+            at += range.len();
+            spans.extend(spans_in(from, range));
         }
         // A change of the block's type or style alone has no words to mark.
         (!marks.is_empty()).then_some((spans, marks))
     }
+}
+
+/// The part of `spans` in `range` of their text, in bytes that end
+/// characters, as a diff of that text gives them.
+fn spans_in(spans: &[Span], range: Range<usize>) -> Vec<Span> {
+    let mut at = 0;
+    let mut part = Vec::new();
+    for span in spans {
+        let end = at + span.text.len();
+        let (from, to) = (range.start.max(at), range.end.min(end));
+        if from < to {
+            let mut cut = span.clone();
+            cut.text = span.text[from - at..to - at].to_owned();
+            part.push(cut);
+        }
+        at = end;
+    }
+    part
 }
