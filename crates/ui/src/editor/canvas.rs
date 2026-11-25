@@ -109,7 +109,8 @@ pub(crate) fn rows(
                 quoted,
             });
         }
-        let toggle = doc.role(block) == Role::Toggle;
+        let spec = doc.schema().block_spec(&block_type);
+        let toggle = spec.is_some_and(|spec| spec.role() == Role::Toggle);
         let hides = block_type == "table" || toggle && closed.contains(&block);
         around.push(Around {
             block,

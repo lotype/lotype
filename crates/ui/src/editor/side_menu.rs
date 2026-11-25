@@ -58,8 +58,8 @@ struct Dragged {
 impl EditorView {
     /// The rows' bounds in the last frame, where they are on the screen.
     fn row_bounds(&self, at: usize) -> Option<Bounds<Pixels>> {
-        // The scroll handle has them before scrolling: the rows come first.
-        let row = self.scroll.bounds_for_item(at)?;
+        // The scroll handle has them before scrolling.
+        let row = self.scroll.bounds_for_item(self.row_item(at)?)?;
         Some(Bounds::new(row.origin + self.scroll.offset(), row.size))
     }
 
@@ -70,17 +70,13 @@ impl EditorView {
         if !self.scroll.bounds().contains(&position) {
             return None;
         }
-        // The rows go down the page in order.
-        let (mut low, mut high) = (0, self.rows.len());
-        while low < high {
-            let middle = (low + high) / 2;
-            match self.row_bounds(middle) {
-                Some(bounds) if bounds.bottom() <= position.y => low = middle + 1,
-                _ => high = middle,
-            }
-        }
+        // The rows the last frame laid out, those in sight among them, go
+        // down the page in order.
+        let laid_out = (0..self.rows.len()).filter_map(|at| Some((at, self.row_bounds(at)?)));
+        let (low, bounds) = laid_out
+            .into_iter()
+            .find(|(_, bounds)| bounds.bottom() > position.y)?;
         let block = *self.rows.get(low)?;
-        let bounds = self.row_bounds(low)?;
         if position.y < bounds.top() {
             return None;
         }

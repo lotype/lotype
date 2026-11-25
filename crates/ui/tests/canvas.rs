@@ -236,14 +236,133 @@ fn the_caret_blinks_once_it_rests_and_only_at_a_caret(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_caret_stays_lit_where_frames_are_dear(cx: &mut TestAppContext) {
-    // Hundreds of blocks laid out each frame cost far more than the budget.
-    let mut many: Vec<_> = (0..500).map(|_| p!["a line of text"]).collect();
-    many[0] = p!["one<a>"];
-    let mut ed = EditorTestContext::new(cx, many);
+    let mut ed = EditorTestContext::new(cx, blocks![p!["one<a>"]]);
+    ed.view.update(ed.cx, |view, _| view.take_frames_as_dear());
     ed.cx.update(|window, _| window.activate_window());
     ed.type_text("x");
     ed.cx
         .executor()
         .advance_clock(std::time::Duration::from_millis(510));
     assert!(ed.view.update(ed.cx, |view, _| view.caret_lit()));
+}
+
+#[gpui::test]
+fn a_frame_lays_out_the_rows_near_the_view_only(cx: &mut TestAppContext) {
+    let mut many: Vec<_> = (0..3000).map(|_| p!["a line of text"]).collect();
+    many[0] = p!["one<a>"];
+    let mut ed = EditorTestContext::new(cx, many);
+    ed.settle();
+    let laid_out = ed.view.update(ed.cx, |view, _| view.rows_laid_out());
+    assert!(laid_out < 300, "{laid_out} of 3000 rows laid out");
+    // The keys still go through the whole document, and type at its end.
+    ed.keys("cmd-down");
+    ed.settle();
+    ed.type_text("!");
+    let last = block_at(&mut ed, 2999);
+    let text = ed.editor(|editor| editor.document().text(last).unwrap());
+    assert_eq!(text, "a line of text!");
+    let height = ed.cx.update(|window, _| window.viewport_size().height);
+    let caret = ed.view.update(ed.cx, |view, _| {
+        view.caret_bounds(Pos::new(last, 15)).unwrap()
+    });
+    assert!(
+        caret.top() >= px(0.) && caret.bottom() <= height,
+        "{caret:?}"
+    );
+    // Select all and delete reaches every block, laid out or not.
+    ed.keys("cmd-a backspace");
+    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 1);
+}
+
+#[gpui::test]
+fn a_row_the_view_cannot_draw_asks_for_no_more_frames(cx: &mut TestAppContext) {
+    use lotype_core::{BlockSpec, Content, Document, Editor, Schema};
+    use lotype_ui::EditorView;
+    let build = |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin().block(BlockSpec::new("embed", Content::None));
+        let mut doc = Document::new(schema);
+        doc.insert_block(None, 0, "embed").unwrap();
+        let text = doc.insert_block(None, 1, "paragraph").unwrap();
+        let mut editor = Editor::new(doc);
+        let caret = lotype_core::Selection::caret(Pos::new(text, 0));
+        editor.set_selection(Some(caret)).unwrap();
+        EditorView::new(editor, cx)
+    };
+    let mut ed = EditorTestContext::with_view(cx, build);
+    // It would panic if every frame asked for another.
+    ed.settle();
+}
+
+/// Scrolls the view by `by` pixels, down for a positive one.
+fn scroll(ed: &mut EditorTestContext, by: f32) {
+    let event = gpui::ScrollEvent {
+        position: gpui::point(px(300.), px(300.)),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-by))),
+        ..Default::default()
+    };
+    ed.cx.simulate_event(event);
+    ed.settle();
+}
+
+#[gpui::test]
+fn down_from_a_caret_out_of_sight_goes_past_a_block_without_text(cx: &mut TestAppContext) {
+    let mut many: Vec<_> = (0..2000).map(|_| p!["line"]).collect();
+    many[0] = p!["one<a>"];
+    many[1] = lotype_core::divider![];
+    let mut ed = EditorTestContext::new(cx, many);
+    ed.settle();
+    scroll(&mut ed, 20_000.);
+    ed.keys("down");
+    let head = ed.editor(|editor| match editor.selection() {
+        Some(lotype_core::Selection::Text { head, .. }) => head.block,
+        _ => panic!("a caret"),
+    });
+    assert_eq!(head, block_at(&mut ed, 2));
+}
+
+#[gpui::test]
+fn scrolling_up_moves_the_text_by_as_much_as_the_wheel(cx: &mut TestAppContext) {
+    let long = "a paragraph long enough to wrap over more than one line in the window ".repeat(4);
+    let many: Vec<_> = (0..2000)
+        .map(|at| {
+            if at % 3 == 0 {
+                p![long.as_str()]
+            } else {
+                p!["line"]
+            }
+        })
+        .collect();
+    let mut ed = EditorTestContext::new(cx, many);
+    let last = block_at(&mut ed, 1999);
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let caret = lotype_core::Selection::caret(Pos::new(last, 0));
+            editor.set_selection(Some(caret)).unwrap();
+        });
+    });
+    ed.keys("cmd-down");
+    ed.settle();
+    for _ in 0..6 {
+        // A block in sight, and where it is.
+        let (block, before) = ed.view.update(ed.cx, |view, _| {
+            let doc = view.editor().document();
+            let blocks = doc.blocks();
+            let shown = blocks.iter().rev().find_map(|block| {
+                let bounds = view.text_bounds(*block)?;
+                (bounds.top() > px(200.) && bounds.bottom() < px(600.))
+                    .then_some((*block, bounds.top()))
+            });
+            shown.expect("a block in sight")
+        });
+        scroll(&mut ed, -100.);
+        let after = ed
+            .view
+            .update(ed.cx, |view, _| view.text_bounds(block).unwrap().top());
+        // To the pixel, which rounding the heights may take one off.
+        let moved = after - before;
+        assert!(
+            (moved - px(100.)).abs() <= px(1.),
+            "the text moved by {moved:?}"
+        );
+    }
 }

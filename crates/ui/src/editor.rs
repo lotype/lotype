@@ -16,6 +16,7 @@ mod slash;
 mod table;
 mod toolbar;
 mod toolbar_menus;
+mod visible;
 
 pub use alert::{AlertLook, Shade};
 
@@ -57,7 +58,7 @@ pub struct EditorView {
     /// Where each block's text was laid out in the last frame.
     layouts: HashMap<BlockId, TextLayout>,
     /// The blocks laid out, in document order.
-    order: Vec<BlockId>,
+    order: Rc<Vec<BlockId>>,
     composition: Option<Composition>,
     keymap: Vec<KeyBinding>,
     /// Where moving up or down last took the cursor, and the x position
@@ -93,6 +94,15 @@ pub struct EditorView {
     /// Where a drag with the mouse started.
     drag_anchor: Option<Pos>,
     blink: blink::Blink,
+    /// How tall the rows were when last laid out.
+    heights: visible::Heights,
+    /// The rows and the reading order, kept while nothing they come of changes.
+    shape: visible::Shape,
+    /// Where each row is among the scroll's children, for one laid out.
+    row_items: Vec<Option<usize>>,
+    /// Rows are being laid out apart, to measure them: their text is not
+    /// one the keys or the mouse find.
+    measuring: bool,
     /// Redraws when the focus leaves, which closes the menus, and blinks
     /// the caret again when the focus or the window comes back.
     watches: Vec<Subscription>,
@@ -108,7 +118,7 @@ impl EditorView {
             editor,
             focus: cx.focus_handle(),
             layouts: HashMap::new(),
-            order: Vec::new(),
+            order: Rc::default(),
             composition: None,
             keymap: default_keymap(),
             goal: None,
@@ -132,6 +142,10 @@ impl EditorView {
             table_menu: None,
             drag_anchor: None,
             blink: blink::Blink::default(),
+            heights: visible::Heights::default(),
+            shape: visible::Shape::default(),
+            row_items: Vec::new(),
+            measuring: false,
             watches: Vec::new(),
         }
     }
@@ -267,7 +281,7 @@ impl Render for EditorView {
         self.place_side_menu();
         self.place_links();
         self.layouts.clear();
-        self.order.clear();
+        self.measure_rows();
         let base = window.text_style();
         let shown = self.shown();
         self.open_around_selection();
@@ -277,14 +291,59 @@ impl Render for EditorView {
         };
         // The rows of the frame before stay whole while these are made, for
         // what a row draws by the rows around it, as where a block lands.
-        let (mut rows, mut blocks) = (Vec::new(), Vec::new());
-        for row in canvas::rows(self.editor.document(), &self.closed, &selected) {
-            if let Some(element) = self.row_element(&row, &base, shown.as_ref(), window, cx) {
-                blocks.push(row.block);
-                rows.push(element);
+        let all = self.shape(selected);
+        let candidates: Vec<BlockId> = all.iter().map(|row| row.block).collect();
+        // Rows far from the view lay out nothing: those next to each other
+        // are one space as tall as they are.
+        let plan = self.plan_rows(&candidates, window);
+        let (mut rows, mut blocks, mut items) = (Vec::new(), Vec::new(), Vec::new());
+        let mut space = Pixels::ZERO;
+        let spacer = |height| div().h(height).w_full().flex_none().into_any_element();
+        for (row, plan) in all.iter().zip(plan) {
+            match plan {
+                visible::Plan::Lay => {}
+                visible::Plan::Space(height) => {
+                    space += height;
+                    blocks.push(row.block);
+                    items.push(None);
+                    continue;
+                }
+                visible::Plan::Measure(height) => {
+                    // Out of the column, unseen, and with no text the keys
+                    // or the mouse would find.
+                    space += height;
+                    blocks.push(row.block);
+                    items.push(None);
+                    self.measuring = true;
+                    let element = self.row_element(row, &base, shown.as_ref(), window, cx);
+                    self.measuring = false;
+                    match element {
+                        Some(element) => {
+                            let apart = div().absolute().top_0().left_0().right_0().invisible();
+                            self.measuring(row.block, rows.len());
+                            rows.push(apart.child(element).into_any_element());
+                        }
+                        None => self.undrawn(row.block),
+                    }
+                    continue;
+                }
             }
+            let Some(element) = self.row_element(row, &base, shown.as_ref(), window, cx) else {
+                self.undrawn(row.block);
+                continue;
+            };
+            if space > Pixels::ZERO {
+                rows.push(spacer(std::mem::replace(&mut space, Pixels::ZERO)));
+            }
+            blocks.push(row.block);
+            items.push(Some(rows.len()));
+            rows.push(element);
+        }
+        if space > Pixels::ZERO {
+            rows.push(spacer(space));
         }
         self.rows = blocks;
+        self.row_items = items;
         if self
             .editor
             .document()

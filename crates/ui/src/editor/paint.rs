@@ -96,7 +96,8 @@ fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
                 .or(blocks.last().copied());
             let at = head.and_then(|head| view.rows.iter().position(|row| *row == head));
             // The scroll handle has the rows where they are before scrolling.
-            let row = at.and_then(|at| scroll.bounds_for_item(at));
+            let item = at.and_then(|at| view.row_item(at));
+            let row = item.and_then(|item| scroll.bounds_for_item(item));
             row.map(|row| {
                 Bounds::new(
                     row.origin + point(Pixels::ZERO, scroll.offset().y),

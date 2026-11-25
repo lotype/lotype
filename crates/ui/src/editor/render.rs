@@ -99,8 +99,9 @@ impl EditorView {
         }
         let text: String = spans.iter().map(|span| span.text.as_str()).collect();
         let element = TextElement::new(text.into(), runs, atoms).align(align);
-        self.layouts.insert(block, element.layout().clone());
-        self.order.push(block);
+        if !self.measuring {
+            self.layouts.insert(block, element.layout().clone());
+        }
         let line = line.relative().child(element);
         Some(match self.placeholder(block, &block_type, window, cx) {
             Some(placeholder) => line.child(placeholder),
