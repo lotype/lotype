@@ -2,6 +2,9 @@
 
 use serde_json::{Map, Number, Value};
 
+/// Maximum number of nested JSON containers read from a tool argument.
+const MAX_NESTING: usize = 32;
+
 /// A step into a value: an object's key or an array's index.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Seg {
@@ -79,6 +82,7 @@ impl Reader<'_> {
                 self.whole = false;
                 Ok(None)
             }
+            Some('{' | '[') if self.path.len() >= MAX_NESTING => Err(Malformed),
             Some('{') => self.object(),
             Some('[') => self.array(),
             Some('"') => {
@@ -317,5 +321,16 @@ mod tests {
         ] {
             assert_eq!(read(text), Err(Malformed), "{text}");
         }
+    }
+
+    #[test]
+    fn container_depth_is_bounded_for_both_complete_and_partial_json() {
+        let open = "[".repeat(MAX_NESTING);
+        let close = "]".repeat(MAX_NESTING);
+        assert!(read(&format!("{open}null{close}")).unwrap().unwrap().whole);
+        assert!(!read(&open).unwrap().unwrap().whole);
+        assert_eq!(read(&format!("{open}[")), Err(Malformed));
+        let object = r#"{"value":"#.repeat(MAX_NESTING);
+        assert_eq!(read(&format!("{object}{{")), Err(Malformed));
     }
 }

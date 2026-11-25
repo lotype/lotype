@@ -266,7 +266,13 @@ impl AiSession {
         };
         let args = partial::read(&call.args);
         let op = match args {
-            Ok(Some(args)) if args.whole || !whole => tools::read(&call.name, &args).ok(),
+            Ok(Some(args))
+                if !whole
+                    || (args.whole
+                        && serde_json::from_str::<serde_json::Value>(&call.args).is_ok()) =>
+            {
+                tools::read(&call.name, &args).ok()
+            }
             _ => None,
         };
         // Nothing to read yet, or nothing new: what was made stays.
