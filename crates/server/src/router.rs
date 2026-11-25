@@ -9,7 +9,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use lotype_core::{Presence, SyncMessage};
+use lotype_core::{Presence, SyncMessage, SyncParts};
 
 use crate::room::{Room, Rooms};
 use crate::{Access, Authorizer, DocId, DocStore};
@@ -17,6 +17,14 @@ use crate::{Access, Authorizer, DocId, DocStore};
 /// A client that takes no message for this long is gone, whatever its
 /// connection says.
 const SEND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// An update goes in messages of no more than this, as [`SyncMessage::parts`]
+/// cuts it: a client's WebSocket takes only so much in one.
+const PART: usize = 1 << 20;
+
+/// And one that comes in parts is no longer than this together, the most
+/// one message can be.
+const MAX_UPDATE: usize = 64 << 20;
 
 struct Relay<A, S> {
     authorizer: A,
@@ -86,26 +94,46 @@ async fn send(socket: &mut WebSocket, message: Message) -> bool {
     matches!(sent.await, Ok(Ok(())))
 }
 
+/// Sends an encoded message, a long update in parts.
+async fn send_sync(socket: &mut WebSocket, encoded: &[u8]) -> bool {
+    for part in SyncMessage::parts(encoded, PART) {
+        if !send(socket, Message::Binary(part.into())).await {
+            return false;
+        }
+    }
+    true
+}
+
+/// Runs work on a document where it holds up no other task: a large one
+/// takes a while to import or to export.
+async fn apart<T: Send + 'static>(
+    room: &Arc<Room>,
+    work: impl FnOnce(&Room) -> Result<T, u16> + Send + 'static,
+) -> Result<T, u16> {
+    let room = Arc::clone(room);
+    let done = tokio::task::spawn_blocking(move || work(&room)).await;
+    done.unwrap_or(Err(close_code::ERROR))
+}
+
 impl Client {
     /// Talks to the client until it leaves or is closed.
     async fn serve(&self, mut socket: WebSocket, store: &impl DocStore) {
-        let binary = |message: SyncMessage| Message::Binary(message.encode().into());
         // Listening before the greeting, so nothing falls between them.
         let mut relayed = self.room.relay.subscribe();
-        let present = self.room.present();
-        let mut greeting: Vec<_> = present.into_iter().map(Message::Binary).collect();
+        let mut greeting = self.room.present();
         // The answer to the version is an update, which is not for a reader to send.
         if self.access == Access::Write {
             let _stored = self.room.stored.lock().await;
             if let Ok(version) = self.room.version() {
-                greeting.push(binary(SyncMessage::Version(version)));
+                greeting.push(SyncMessage::Version(version).encode().into());
             }
         }
         for message in greeting {
-            if !send(&mut socket, message).await {
+            if !send_sync(&mut socket, &message).await {
                 return;
             }
         }
+        let mut parts = SyncParts::default();
         let code = loop {
             if self.room.failed() {
                 break close_code::ERROR;
@@ -118,9 +146,9 @@ impl Client {
                         Some(Ok(Message::Text(_))) => break close_code::UNSUPPORTED,
                         Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                     };
-                    match self.receive(&bytes, store).await {
+                    match self.receive(&bytes, &mut parts, store).await {
                         Ok(Some(answer)) => {
-                            if !send(&mut socket, binary(answer)).await {
+                            if !send_sync(&mut socket, &answer.encode()).await {
                                 return;
                             }
                         }
@@ -130,7 +158,7 @@ impl Client {
                 }
                 message = relayed.recv() => match message {
                     Ok((from, bytes)) if from != self.id && !self.room.failed() => {
-                        if !send(&mut socket, Message::Binary(bytes)).await {
+                        if !send_sync(&mut socket, &bytes).await {
                             return;
                         }
                     }
@@ -151,21 +179,30 @@ impl Client {
     async fn receive(
         &self,
         bytes: &[u8],
+        parts: &mut SyncParts,
         store: &impl DocStore,
     ) -> Result<Option<SyncMessage>, u16> {
         let room = &self.room;
-        match SyncMessage::decode(bytes).map_err(|_| close_code::POLICY)? {
+        let message = SyncMessage::decode(bytes).map_err(|_| close_code::POLICY)?;
+        // Before its parts are kept: a reader's are never an update.
+        let update = matches!(message, SyncMessage::Update(_) | SyncMessage::Part(_));
+        if update && self.access != Access::Write {
+            return Err(close_code::POLICY);
+        }
+        let message = parts.join(message, MAX_UPDATE);
+        let Some(message) = message.map_err(|_| close_code::POLICY)? else {
+            return Ok(None);
+        };
+        match message {
             SyncMessage::Version(version) => {
                 let _stored = room.stored.lock().await;
-                let updates = room.updates_since(&version)?;
+                let updates = apart(room, move |room| room.updates_since(&version)).await?;
                 return Ok(Some(SyncMessage::Update(updates)));
             }
             SyncMessage::Update(update) => {
-                if self.access != Access::Write {
-                    return Err(close_code::POLICY);
-                }
                 let _stored = room.stored.lock().await;
-                let (brought, valid) = room.import(&update, self.id)?;
+                let id = self.id;
+                let (brought, valid) = apart(room, move |room| room.import(&update, id)).await?;
                 if let Some((has, brought)) = brought {
                     if store.append_update(&self.doc, &brought).await.is_err() {
                         room.fail();
@@ -178,6 +215,8 @@ impl Client {
                     return Err(close_code::POLICY);
                 }
             }
+            // Joined with their end above.
+            SyncMessage::Part(_) => {}
             SyncMessage::Presence(mut presence) => {
                 // Under the client's number, whoever it says it is.
                 let own = Presence::readdress(&mut presence, self.id);

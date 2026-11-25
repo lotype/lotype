@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use lotype_core::test_support::outline;
-use lotype_core::{Document, Presence, Schema, SyncMessage, Version};
+use lotype_core::{Document, Presence, Schema, SyncMessage, SyncParts, Version};
 use lotype_server::{Access, AuthError, Authorizer, DocId, DocStore, router};
 use lotype_storage::SqliteStore;
 use tokio::net::TcpStream;
@@ -82,6 +82,9 @@ pub struct Peer {
     pub sent: Version,
     /// The relay's versions, as it asked for what it lacks.
     pub asked: Vec<Version>,
+    parts: SyncParts,
+    /// The longest message the relay sent.
+    pub longest: usize,
     pub updates: usize,
 }
 
@@ -95,6 +98,8 @@ impl Peer {
             presence: Presence::new(),
             socket,
             asked: Vec::new(),
+            parts: SyncParts::default(),
+            longest: 0,
             updates: 0,
         };
         peer.send(SyncMessage::Version(peer.doc.version())).await;
@@ -127,7 +132,11 @@ impl Peer {
             let waited = tokio::time::timeout(Duration::from_secs(5), self.socket.next());
             match waited.await.expect("a message in time") {
                 Some(Ok(Message::Binary(bytes))) => {
-                    return Ok(SyncMessage::decode(&bytes).unwrap());
+                    self.longest = self.longest.max(bytes.len());
+                    let message = SyncMessage::decode(&bytes).unwrap();
+                    if let Some(whole) = self.parts.join(message, usize::MAX).unwrap() {
+                        return Ok(whole);
+                    }
                 }
                 Some(Ok(Message::Close(frame))) => return Err(frame.map(|f| f.code.into())),
                 Some(Ok(_)) => {}
@@ -151,6 +160,8 @@ impl Peer {
                     self.updates += 1;
                 }
                 SyncMessage::Presence(presence) => self.presence.apply(&presence).unwrap(),
+                // Put together before it comes here.
+                SyncMessage::Part(_) => {}
             }
         }
     }

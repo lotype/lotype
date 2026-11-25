@@ -181,3 +181,35 @@ async fn what_is_no_message_closes_the_client() {
         assert_eq!(peer.closed().await, Some(code));
     }
 }
+
+#[tokio::test]
+async fn a_large_document_comes_and_goes_in_parts() {
+    let store = store();
+    let address = relay(store.clone()).await;
+    // More than two messages' worth, as the relay cuts them.
+    let line = "lorem ipsum dolor sit amet ".repeat(40);
+    let text: String = (0..2_400).map(|at| format!("{at} {line}\n\n")).collect();
+    let mut doc = empty();
+    doc.insert_markdown(None, 0, &text).unwrap();
+    let mut writer = Peer::connect(address, "writer", empty()).await;
+    writer.doc = doc;
+    // The peer cuts what it sends too, and the relay puts it together.
+    let update = writer.doc.export_updates(&writer.sent).unwrap();
+    assert!(update.len() > 2 << 20);
+    for part in SyncMessage::parts(&SyncMessage::Update(update).encode(), 1 << 20) {
+        writer
+            .socket
+            .send(Message::Binary(part.into()))
+            .await
+            .unwrap();
+    }
+    writer.sent = writer.doc.version();
+    writer.settle().await;
+
+    let mut reader = Peer::connect(address, "reader", empty()).await;
+    let version = writer.doc.version();
+    reader.until(|reader| reader.doc.version() == version).await;
+    assert_eq!(reader.text(), writer.text());
+    assert!(reader.longest <= 1 << 20, "{} bytes in one", reader.longest);
+    assert_eq!(stored(&store).await, writer.text());
+}

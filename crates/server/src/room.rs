@@ -186,7 +186,10 @@ impl Rooms {
         if let Some(room) = slot.upgrade().filter(|room| !room.failed()) {
             return Ok(room);
         }
-        let room = Arc::new(Room::new(store.load(doc).await?)?);
+        // Apart from the other tasks: a large document takes a while.
+        let stored = store.load(doc).await?;
+        let room = tokio::task::spawn_blocking(|| Room::new(stored)).await??;
+        let room = Arc::new(room);
         *slot = Arc::downgrade(&room);
         Ok(room)
     }

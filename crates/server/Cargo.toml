@@ -15,7 +15,7 @@ categories.workspace = true
 axum = { version = "0.8.9", default-features = false, features = ["ws"] }
 lotype-core.workspace = true
 lotype-storage.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
