@@ -9,4 +9,4 @@ mod marks;
 pub mod test_support;
 mod text_el;
 
-pub use editor::EditorView;
+pub use editor::{BlockContent, EditorView};

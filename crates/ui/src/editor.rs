@@ -27,7 +27,8 @@ use gpui::{
     Pixels, Render, ScrollHandle, Subscription, Window, canvas, div, prelude::*,
 };
 use lotype_core::{
-    Atom, BlockId, Editor, KeyBinding, Pos, SlashItem, default_keymap, default_slash_items,
+    Atom, BlockId, Document, Editor, KeyBinding, Pos, SlashItem, default_keymap,
+    default_slash_items,
 };
 
 use crate::text_el::{Affinity, TextLayout};
@@ -35,6 +36,17 @@ use input::Composition;
 
 /// Draws an atom of one type.
 type AtomView = Rc<dyn Fn(&Atom, &mut Window, &mut App) -> AnyElement>;
+type BlockView = Rc<dyn Fn(BlockContent, &mut Window, &mut App) -> AnyElement>;
+
+/// What a view of a block of its own type draws from.
+pub struct BlockContent<'a> {
+    pub block: BlockId,
+    /// The document, to read the block's attributes from.
+    pub document: &'a Document,
+    /// The block's text, which the editor lays out and edits, for a type
+    /// that holds text: the view puts it where the text goes.
+    pub text: Option<AnyElement>,
+}
 
 /// A GPUI view of an [`Editor`]: the text of its blocks, with their marks.
 pub struct EditorView {
@@ -54,6 +66,7 @@ pub struct EditorView {
     /// The side of a soft wrap the caret is on, while it stays where it was put.
     side: Option<(Pos, Affinity)>,
     atom_views: HashMap<String, AtomView>,
+    block_views: HashMap<String, BlockView>,
     /// Toggle list items whose children are hidden.
     closed: HashSet<BlockId>,
     scroll: ScrollHandle,
@@ -98,6 +111,7 @@ impl EditorView {
             dragging: false,
             side: None,
             atom_views: HashMap::new(),
+            block_views: HashMap::new(),
             closed: HashSet::new(),
             scroll: ScrollHandle::new(),
             reveal: Rc::default(),
@@ -159,6 +173,21 @@ impl EditorView {
         view: impl Fn(&Atom, &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.atom_views.insert(name.to_owned(), Rc::new(view));
+        self
+    }
+
+    /// Draws blocks of `block_type` with `view`, which gets the block's
+    /// text, laid out and edited by the editor, to put where it goes. It
+    /// draws a type of the application's own, or one of the built-in ones
+    /// otherwise; the editor still draws the block's colors, indent,
+    /// markers, side menu and selection around it.
+    pub fn with_block_view(
+        mut self,
+        block_type: &str,
+        view: impl Fn(BlockContent, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.block_views
+            .insert(block_type.to_owned(), Rc::new(view));
         self
     }
 

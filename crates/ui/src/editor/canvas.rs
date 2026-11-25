@@ -10,9 +10,9 @@ use gpui::{
 use gpui_component::ActiveTheme;
 use lotype_core::{BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr};
 
-use super::EditorView;
 use super::alert::alert_color;
 use super::input::Shown;
+use super::{BlockContent, EditorView};
 
 /// How far each level of nesting moves a block to the right.
 const INDENT: f32 = 24.;
@@ -155,7 +155,29 @@ impl EditorView {
             colored.font_style = FontStyle::Italic;
         }
         let base = &colored;
+        let custom = self.block_views.get(&row.block_type).cloned();
         let content = match row.block_type.as_str() {
+            _ if let Some(view) = custom => {
+                // A type only a peer knows holds no text here.
+                let holds = self.editor.document().text_len(block).is_ok();
+                let text = match holds {
+                    true => Some(
+                        self.block_text(block, base, shown, window, cx)?
+                            .into_any_element(),
+                    ),
+                    false => None,
+                };
+                let document = self.editor.document();
+                div().child(view(
+                    BlockContent {
+                        block,
+                        document,
+                        text,
+                    },
+                    window,
+                    cx,
+                ))
+            }
             "divider" => {
                 let line = div().h(px(1.)).w_full().bg(cx.theme().border);
                 div().h(px(17.)).w_full().flex().items_center().child(line)

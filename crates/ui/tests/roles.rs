@@ -40,3 +40,49 @@ fn a_toggle_of_a_schema_of_its_own_opens_closes_and_writes_in_it(cx: &mut TestAp
             .is_none()
     );
 }
+
+#[gpui::test]
+fn a_block_of_an_applications_own_type_is_drawn_by_its_view(cx: &mut TestAppContext) {
+    use gpui::{InteractiveElement, IntoElement, ParentElement, Styled, div};
+    use lotype_ui::BlockContent;
+    let build = |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin()
+            .block(BlockSpec::new("callout", Content::Inline))
+            .block(BlockSpec::new("embed", Content::None));
+        let mut doc = Document::new(schema);
+        let callout = doc.insert_block(None, 0, "callout").unwrap();
+        doc.insert_text(callout, 0, "hi").unwrap();
+        let embed = doc.insert_block(None, 1, "embed").unwrap();
+        doc.set_attr(embed, "src", "https://x.y").unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(callout, 2))))
+            .unwrap();
+        EditorView::new(editor, cx)
+            .with_block_view("callout", |content: BlockContent, _, _| {
+                let text = content.text.expect("a callout holds text");
+                div()
+                    .debug_selector(|| "callout-view".to_owned())
+                    .flex()
+                    .child("💡")
+                    .child(text)
+                    .into_any_element()
+            })
+            .with_block_view("embed", |content: BlockContent, _, _| {
+                assert!(content.text.is_none());
+                let src = content.document.text_of(content.block, "src");
+                div()
+                    .debug_selector(|| "embed-view".to_owned())
+                    .child(src)
+                    .into_any_element()
+            })
+    };
+    let mut ed = EditorTestContext::with_view(cx, build);
+    ed.settle();
+    assert!(ed.cx.debug_bounds("callout-view").is_some());
+    assert!(ed.cx.debug_bounds("embed-view").is_some());
+    // The text in it is the editor's: typed into, with the caret in it.
+    ed.type_text("!");
+    let shown = ed.editor(|e| outline(e.document(), e.selection()));
+    assert!(shown.starts_with("callout \"hi!<a>\""), "{shown}");
+}
