@@ -49,7 +49,7 @@ pub use selection::{Pos, Selection};
 pub use suggestion::{
     SlashItem, SlashQuery, default_block_types, default_slash_items, filter_slash_items,
 };
-pub use sync::SyncMessage;
+pub use sync::{SyncMessage, SyncParts};
 pub use table::ColumnId;
 pub use text::Span;
 pub use value::Value;

@@ -1,7 +1,7 @@
 use lotype_core::test_support::{build, editor};
 use lotype_core::{
-    Document, MAX_PRESENCE_BYTES, Pos, Presence, Schema, Selection, SyncMessage, Version, blocks,
-    divider, p,
+    Document, MAX_PRESENCE_BYTES, Pos, Presence, Schema, Selection, SyncMessage, SyncParts,
+    Version, blocks, divider, p,
 };
 
 /// Another peer that starts from `doc` as it is now.
@@ -19,12 +19,47 @@ fn a_message_reads_back_as_it_was_written() {
         SyncMessage::Version(Version::default()),
         SyncMessage::Update(doc.export_snapshot().unwrap()),
         SyncMessage::Presence(vec![1, 2, 3]),
+        SyncMessage::Part(vec![4, 5]),
     ] {
         assert_eq!(SyncMessage::decode(&message.encode()).unwrap(), message);
     }
-    for bytes in [&b""[..], &[3], &[0, 0xff, 0xff, 0xff, 0xff, 0xff]] {
+    for bytes in [&b""[..], &[4], &[0, 0xff, 0xff, 0xff, 0xff, 0xff]] {
         assert!(SyncMessage::decode(bytes).is_err());
     }
+}
+
+#[test]
+fn a_long_update_goes_in_parts_and_comes_together() {
+    let update: Vec<u8> = (0..=255).cycle().take(1000).collect();
+    let encoded = SyncMessage::Update(update.clone()).encode();
+    for limit in [2, 7, 100, 1000, 1001, 5000] {
+        let parts = SyncMessage::parts(&encoded, limit);
+        assert!(parts.iter().all(|part| part.len() <= limit));
+        assert_eq!(parts.len() == 1, limit > 1000);
+        let mut joined = SyncParts::default();
+        let mut whole = None;
+        for part in &parts {
+            assert!(whole.is_none());
+            // Another message between the parts is itself.
+            let presence = SyncMessage::Presence(vec![9]);
+            assert_eq!(joined.join(presence.clone(), 5000).unwrap(), Some(presence));
+            whole = joined
+                .join(SyncMessage::decode(part).unwrap(), 5000)
+                .unwrap();
+        }
+        assert_eq!(whole, Some(SyncMessage::Update(update.clone())));
+    }
+    // What is no update is never cut, and parts without end are refused.
+    let presence = SyncMessage::Presence(vec![1; 50]).encode();
+    assert_eq!(SyncMessage::parts(&presence, 10), [presence]);
+    let mut joined = SyncParts::default();
+    assert_eq!(
+        joined.join(SyncMessage::Part(vec![0; 60]), 100).unwrap(),
+        None
+    );
+    assert!(joined.join(SyncMessage::Part(vec![0; 60]), 100).is_err());
+    let end = SyncMessage::Update(vec![7]);
+    assert_eq!(joined.join(end.clone(), 100).unwrap(), Some(end));
 }
 
 /// A presence as a relay passes it on: under the number of its client.

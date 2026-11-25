@@ -23,6 +23,10 @@ pub enum SyncMessage {
     Update(Vec<u8>),
     /// Who is in the document, for [`Presence::apply`](crate::Presence::apply).
     Presence(Vec<u8>),
+    /// The start, or more, of an update too long for one message of the
+    /// transport: more parts follow, and then the `Update` that is its end.
+    /// [`SyncParts`] puts them together.
+    Part(Vec<u8>),
 }
 
 impl SyncMessage {
@@ -32,6 +36,7 @@ impl SyncMessage {
             Self::Version(version) => (0, version.encode()),
             Self::Update(bytes) => (1, bytes.clone()),
             Self::Presence(bytes) => (2, bytes.clone()),
+            Self::Part(bytes) => (3, bytes.clone()),
         };
         let mut message = Vec::with_capacity(body.len() + 1);
         message.push(tag);
@@ -47,7 +52,52 @@ impl SyncMessage {
             Some((2, body)) if body.len() <= crate::MAX_PRESENCE_BYTES => {
                 Ok(Self::Presence(body.to_vec()))
             }
+            Some((3, body)) => Ok(Self::Part(body.to_vec())),
             _ => Err(Error::InvalidUpdate("not a sync message".into())),
+        }
+    }
+
+    /// An encoded message as a transport takes it that carries no more
+    /// than `limit` bytes in one: an update longer than that is cut into
+    /// parts, the last of them an `Update`. Any other message is as it was.
+    pub fn parts(encoded: &[u8], limit: usize) -> Vec<Vec<u8>> {
+        let update = encoded.split_first().filter(|(tag, _)| **tag == 1);
+        let Some((_, body)) = update.filter(|_| encoded.len() > limit && limit > 1) else {
+            return vec![encoded.to_vec()];
+        };
+        let count = body.len().div_ceil(limit - 1);
+        let parts = body.chunks(limit - 1).enumerate();
+        let tagged =
+            parts.map(|(at, part)| [&[if at + 1 == count { 1 } else { 3 }], part].concat());
+        tagged.collect()
+    }
+}
+
+/// Puts an update that came in parts together again.
+#[derive(Debug, Default)]
+pub struct SyncParts(Vec<u8>);
+
+impl SyncParts {
+    /// Takes a message as it came. Gives it back, an `Update` with the
+    /// parts before it, or `None` for a part, which is kept for its end.
+    /// Parts of more than `limit` bytes together are an error, and
+    /// forgotten: a peer could send them without end.
+    pub fn join(&mut self, message: SyncMessage, limit: usize) -> Result<Option<SyncMessage>> {
+        match message {
+            SyncMessage::Part(part) => {
+                self.0.extend(part);
+                if self.0.len() > limit {
+                    self.0 = Vec::new();
+                    return Err(Error::InvalidUpdate("an update without end".into()));
+                }
+                Ok(None)
+            }
+            SyncMessage::Update(end) if !self.0.is_empty() => {
+                let mut update = std::mem::take(&mut self.0);
+                update.extend(end);
+                Ok(Some(SyncMessage::Update(update)))
+            }
+            whole => Ok(Some(whole)),
         }
     }
 }
