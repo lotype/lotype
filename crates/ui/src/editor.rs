@@ -17,6 +17,8 @@ mod table;
 mod toolbar;
 mod toolbar_menus;
 
+pub use alert::{AlertLook, Shade};
+
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -83,6 +85,8 @@ pub struct EditorView {
     side_menu: side_menu::SideMenu,
     /// The alert whose menu of kinds is open.
     alert_menu: Option<BlockId>,
+    /// How the application draws alerts of a kind, instead of as GitHub does.
+    alert_looks: HashMap<&'static str, alert::AlertLook>,
     /// The table the mouse is over, and the cell whose menu is open.
     table_hover: Option<BlockId>,
     table_menu: Option<BlockId>,
@@ -123,6 +127,7 @@ impl EditorView {
             links: link::Links::default(),
             side_menu: side_menu::SideMenu::default(),
             alert_menu: None,
+            alert_looks: HashMap::new(),
             table_hover: None,
             table_menu: None,
             drag_anchor: None,
