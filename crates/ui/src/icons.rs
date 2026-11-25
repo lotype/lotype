@@ -78,3 +78,14 @@ pub(crate) fn entry(key: &str) -> Option<&'static [u8]> {
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_built_in_entry_of_the_core_has_an_icon() {
+        let items = lotype_core::default_slash_items();
+        for item in items.iter().chain(&lotype_core::default_block_types()) {
+            assert!(super::entry(&item.key).is_some(), "{}", item.key);
+        }
+    }
+}
