@@ -9,6 +9,7 @@ use crate::{Atom, BlockId, Document, Error, Result, Value, block, mark};
 pub enum Content {
     /// Rich text.
     Inline,
+    /// No text: only child blocks, or nothing.
     None,
 }
 
@@ -42,6 +43,7 @@ impl Role {
 }
 
 #[derive(Debug, Clone)]
+/// A type of block: what it holds and how editing treats it.
 pub struct BlockSpec {
     name: String,
     content: Content,
@@ -52,6 +54,8 @@ pub struct BlockSpec {
 }
 
 impl BlockSpec {
+    /// A type named `name` holding `content`, with no children, a style of its own and the role
+    /// of text.
     pub fn new(name: impl Into<String>, content: Content) -> Self {
         Self {
             name: name.into(),
@@ -69,6 +73,7 @@ impl BlockSpec {
         self
     }
 
+    /// A block of this type takes child blocks.
     pub fn with_children(mut self) -> Self {
         self.children = true;
         self
@@ -88,14 +93,17 @@ impl BlockSpec {
         self
     }
 
+    /// The type's name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// What a block of this type holds besides child blocks.
     pub fn content(&self) -> Content {
         self.content
     }
 
+    /// Whether a block of this type takes child blocks.
     pub fn allows_children(&self) -> bool {
         self.children
     }
@@ -106,10 +114,12 @@ impl BlockSpec {
         self.style
     }
 
+    /// Whether a block of this type is never in another block.
     pub fn is_top_level(&self) -> bool {
         self.top_level
     }
 
+    /// What a block of this type is to editing.
     pub fn role(&self) -> Role {
         self.role
     }
@@ -122,13 +132,18 @@ pub const MAX_HEADING_LEVEL: i64 = 5;
 /// Whether a mark grows when text is typed at its edges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expand {
+    /// Text typed right before the mark gets it.
     Before,
+    /// Text typed right after the mark gets it.
     After,
+    /// Text typed on either side of the mark gets it.
     Both,
+    /// Text typed next to the mark does not get it.
     None,
 }
 
 #[derive(Debug, Clone)]
+/// A mark: what text can carry, as bold or a link.
 pub struct MarkSpec {
     name: String,
     expand: Expand,
@@ -136,6 +151,7 @@ pub struct MarkSpec {
 }
 
 impl MarkSpec {
+    /// A mark named `name`, on or off, growing over typed text as `expand` says.
     pub fn new(name: impl Into<String>, expand: Expand) -> Self {
         Self {
             name: name.into(),
@@ -150,10 +166,12 @@ impl MarkSpec {
         self
     }
 
+    /// The mark's name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Whether text typed at the mark's edges gets it.
     pub fn expand(&self) -> Expand {
         self.expand
     }
@@ -185,10 +203,12 @@ impl InlineSpec {
         Self { name, text }
     }
 
+    /// The atom type's name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// `atom` as plain text, for the clipboard and Markdown.
     pub fn text(&self, atom: &Atom) -> String {
         (self.text)(atom)
     }
@@ -204,6 +224,7 @@ pub struct Schema {
 }
 
 impl Schema {
+    /// A schema with no block types, marks or atoms.
     pub fn new() -> Self {
         Self::default()
     }
@@ -285,14 +306,17 @@ impl Schema {
         self
     }
 
+    /// The atom type named `name`, where the schema has it.
     pub fn inline_spec(&self, name: &str) -> Option<&InlineSpec> {
         self.inlines.get(name)
     }
 
+    /// The block type named `name`, where the schema has it.
     pub fn block_spec(&self, name: &str) -> Option<&BlockSpec> {
         self.blocks.get(name)
     }
 
+    /// The mark named `name`, where the schema has it.
     pub fn mark_spec(&self, name: &str) -> Option<&MarkSpec> {
         self.marks.get(name)
     }

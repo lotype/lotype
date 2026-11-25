@@ -535,7 +535,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 
 - **File size:** aim for 500 lines or fewer; up to 600 is tolerated; above 600 fails CI. Split into new modules as features grow.
 - **Structure:** modular, with one responsibility per module. YAGNI: no abstractions, options or traits until they are needed.
-- **Comments:** only where they explain *why*. `///` becomes public rustdoc, so keep it short and do not restate the signature. Code blocks in `///` run as doctests, so include only real examples that compile.
+- **Comments:** only where they explain *why*. `///` becomes public rustdoc, so keep it short and do not restate the signature. Code blocks in `///` run as doctests, so include only real examples that compile. Every public item has one: both crates warn on `missing_docs`, which CI's `-D warnings` makes an error.
 - **Tests:** pure Rust. Fixtures only when needed, kept next to the code they test.
 - **Language:** English for all code, identifiers, comments and repository docs.
 - **Commits:** Conventional Commits, enforced by `committed` 1.1.12 (`committed.toml`) through the `.githooks/commit-msg` hook locally and the `commits` CI job. Setup is in [CONTRIBUTING.md](CONTRIBUTING.md).

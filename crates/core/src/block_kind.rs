@@ -8,31 +8,47 @@ use crate::{BlockId, Command, Document, Editor, Result, Value};
 /// A built-in block type, with what makes a block of it what it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockKind {
+    /// Text, where typing starts.
     Paragraph,
     /// A heading of a level, 1 to [`MAX_HEADING_LEVEL`]; another is brought
     /// into that range.
     Heading(i64),
+    /// A quote, its own text and the blocks in it.
     Quote,
     /// One of GitHub's alerts, of a kind in [`alert::KINDS`].
     Alert(&'static str),
+    /// An item of a bulleted list.
     BulletListItem,
+    /// An item of a numbered list, counted along its siblings.
     NumberedListItem,
+    /// An item of a check list.
     CheckListItem {
+        /// Whether it is checked.
         checked: bool,
     },
+    /// A list item whose blocks a view shows or hides.
     ToggleListItem,
+    /// Code, typed as it is.
     CodeBlock {
         /// The language, as Markdown names it after the fence.
         language: Option<String>,
     },
+    /// A horizontal rule.
     Divider,
+    /// Where printing and export start a new page.
     PageBreak,
+    /// An image.
     Image {
+        /// Where it is.
         url: String,
+        /// What it shows, for a reader who cannot see it.
         caption: String,
     },
+    /// A file, as a link to it.
     File {
+        /// Where it is.
         url: String,
+        /// The name shown for it.
         name: String,
     },
 }

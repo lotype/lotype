@@ -16,6 +16,7 @@ pub mod block {
     pub const QUOTE: &str = "quote";
     /// One of GitHub's alerts, of a kind in [`attr::KIND`](crate::attr::KIND).
     pub const ALERT: &str = "alert";
+    /// An item of a bulleted list.
     pub const BULLET_LIST_ITEM: &str = "bullet_list_item";
     /// An item of a numbered list, the first with a start in
     /// [`attr::START`](crate::attr::START) where it is no 1.
@@ -26,6 +27,7 @@ pub mod block {
     pub const TOGGLE_LIST_ITEM: &str = "toggle_list_item";
     /// Code, of a language in [`attr::LANGUAGE`](crate::attr::LANGUAGE).
     pub const CODE_BLOCK: &str = "code_block";
+    /// A horizontal rule.
     pub const DIVIDER: &str = "divider";
     /// Where printing and export start a new page.
     pub const PAGE_BREAK: &str = "page_break";
@@ -70,10 +72,15 @@ pub mod attr {
 /// The kinds of an alert, and how GitHub draws them, as GitHub Flavored
 /// Markdown's stylesheet has them.
 pub mod alert {
+    /// Information the reader should notice.
     pub const NOTE: &str = "note";
+    /// Advice to do something better or more easily.
     pub const TIP: &str = "tip";
+    /// Information the reader needs to succeed.
     pub const IMPORTANT: &str = "important";
+    /// Something that needs attention now, to avoid a problem.
     pub const WARNING: &str = "warning";
+    /// A risk or a bad outcome of an action.
     pub const CAUTION: &str = "caution";
     /// All of them, the note first, which a kind no one knows is read as.
     pub const KINDS: [&str; 5] = [NOTE, TIP, IMPORTANT, WARNING, CAUTION];
@@ -82,8 +89,11 @@ pub mod alert {
     /// the light and in the dark color scheme, as hex.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Color {
+        /// The Primer token's name, as GitHub's stylesheet has it.
         pub token: &'static str,
+        /// Its value in the light color scheme, as `#rrggbb`.
         pub light: &'static str,
+        /// Its value in the dark color scheme, as `#rrggbb`.
         pub dark: &'static str,
     }
 
@@ -91,9 +101,13 @@ pub mod alert {
     /// bar on its left, and that of its title and icon.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Style {
+        /// The kind, one of [`KINDS`].
         pub kind: &'static str,
+        /// The title GitHub gives an alert of the kind.
         pub title: &'static str,
+        /// The color of the bar on the alert's left.
         pub border: Color,
+        /// The color of the alert's title and icon.
         pub color: Color,
     }
 
@@ -153,9 +167,13 @@ pub const COLOR_NAMES: [&str; 9] = [
 
 /// The names of the built-in marks.
 pub mod mark {
+    /// Bold text, on or off.
     pub const BOLD: &str = "bold";
+    /// Italic text, on or off.
     pub const ITALIC: &str = "italic";
+    /// Underlined text, on or off.
     pub const UNDERLINE: &str = "underline";
+    /// Struck-through text, on or off.
     pub const STRIKE: &str = "strike";
     /// Inline code: text as typed, as in a code block.
     pub const CODE: &str = "code";
@@ -179,8 +197,11 @@ pub(crate) const BLOCK_STYLE: [&str; 3] = [
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Align {
     #[default]
+    /// Lines start at the left edge, where they go anyway.
     Left,
+    /// Lines are centred.
     Center,
+    /// Lines end at the right edge.
     Right,
 }
 
@@ -198,7 +219,9 @@ impl Align {
 /// Which of a block's two colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockColor {
+    /// The color of the block's text.
     Text,
+    /// The color behind the block's text.
     Background,
 }
 

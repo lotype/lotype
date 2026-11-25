@@ -8,12 +8,18 @@ pub enum Command {
     ToggleMark(String),
     /// Turns the selected blocks into this type, with these attributes only.
     SetBlock {
+        /// The name of the block type.
         block_type: String,
+        /// The attributes the blocks get, and only those.
         attrs: Vec<(String, Value)>,
     },
+    /// Nests the selected blocks under the block before them, as Tab does.
     Indent,
+    /// Moves the selected blocks out of their parent, as Shift-Tab does.
     Outdent,
+    /// Takes back the last step.
     Undo,
+    /// Does again the last step undo took back.
     Redo,
     /// Enter.
     SplitBlock,
@@ -26,10 +32,13 @@ pub enum Command {
 }
 
 impl Command {
+    /// Toggles the mark `name`.
     pub fn toggle_mark(name: &str) -> Self {
         Self::ToggleMark(name.to_owned())
     }
 
+    /// Turns the selected blocks into `block_type`, with no attributes; add some with
+    /// [`Command::with`].
     pub fn set_block(block_type: &str) -> Self {
         let (block_type, attrs) = (block_type.to_owned(), Vec::new());
         Self::SetBlock { block_type, attrs }
@@ -49,7 +58,9 @@ impl Command {
 /// Control elsewhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBinding {
+    /// The key, as ProseMirror names it: `Mod-b`, `Shift-Enter`, `Mod-Alt-1`.
     pub key: String,
+    /// What the key does.
     pub command: Command,
 }
 

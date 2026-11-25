@@ -61,6 +61,7 @@ struct Step {
 }
 
 impl Editor {
+    /// An editor of `doc`, with nothing selected and no history.
     pub fn new(doc: Document) -> Self {
         let (seen, _watching) = changes::watch(&doc);
         Self {
@@ -108,10 +109,12 @@ impl Editor {
         error.into()
     }
 
+    /// The document being edited.
     pub fn document(&self) -> &Document {
         &self.doc
     }
 
+    /// What is selected: text, whole blocks or table cells, or nothing.
     pub fn selection(&self) -> Option<&Selection> {
         self.selection.as_ref()
     }
@@ -412,6 +415,7 @@ impl Editor {
         !self.undo_steps.is_empty()
     }
 
+    /// Whether there is a step that undo took back to do again.
     pub fn can_redo(&self) -> bool {
         !self.redo_steps.is_empty()
     }

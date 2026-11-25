@@ -3,29 +3,44 @@ use crate::{BlockId, Document, Result};
 /// A place in a block's text. `offset` is in UTF-8 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pos {
+    /// The block the position is in.
     pub block: BlockId,
+    /// How far into the block's text, in bytes, on a character boundary.
     pub offset: usize,
 }
 
 impl Pos {
+    /// The position `offset` bytes into `block`'s text.
     pub fn new(block: BlockId, offset: usize) -> Self {
         Self { block, offset }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// What is selected in a document.
 pub enum Selection {
     /// `anchor` is where the selection started and `head` is where the cursor is.
     /// They may be in different blocks and in either order.
-    Text { anchor: Pos, head: Pos },
+    Text {
+        /// Where the selection started, which stays as it grows.
+        anchor: Pos,
+        /// Where the caret is, which keys and the mouse move.
+        head: Pos,
+    },
     /// Whole blocks, including their descendants.
     Blocks(Vec<BlockId>),
     /// The cells of one table from `anchor` to `head`: those in their rows
     /// and the rows between, and in their columns and the columns between.
-    Cells { anchor: BlockId, head: BlockId },
+    Cells {
+        /// The cell the selection started in.
+        anchor: BlockId,
+        /// The cell it ends in, which keys and the mouse move.
+        head: BlockId,
+    },
 }
 
 impl Selection {
+    /// A caret at `pos`: text selected from there to there.
     pub fn caret(pos: Pos) -> Self {
         Self::Text {
             anchor: pos,
@@ -48,6 +63,8 @@ impl Document {
         self.check_offset(pos.block, pos.offset)
     }
 
+    /// Checks that `selection` is one the document has: its positions in blocks with text, on
+    /// character boundaries, its blocks there, its cells in one table.
     pub fn check_selection(&self, selection: &Selection) -> Result<()> {
         match selection {
             Selection::Text { anchor, head } => {

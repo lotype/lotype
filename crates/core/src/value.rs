@@ -4,8 +4,11 @@ use loro::LoroValue;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Value {
+    /// On or off.
     Bool(bool),
+    /// A whole number.
     Int(i64),
+    /// Text.
     Str(String),
 }
 

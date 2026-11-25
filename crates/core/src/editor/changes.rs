@@ -26,6 +26,7 @@ pub struct Changes {
 }
 
 impl Changes {
+    /// Whether nothing changed.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty() && !self.structure && !self.replaced
     }

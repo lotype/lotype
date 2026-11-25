@@ -22,16 +22,20 @@ const TYPE: &str = "$type";
 /// An atom's type and attributes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Atom {
+    /// The atom's type, one of the schema's [`InlineSpec`](crate::InlineSpec)s.
     pub name: String,
+    /// Its attributes: scalars only.
     pub attrs: BTreeMap<String, Value>,
 }
 
 impl Atom {
+    /// An atom of type `name`, with no attributes.
     pub fn new(name: impl Into<String>) -> Self {
         let (name, attrs) = (name.into(), BTreeMap::new());
         Self { name, attrs }
     }
 
+    /// With `key` set to `value`.
     pub fn attr(mut self, key: &str, value: impl Into<Value>) -> Self {
         self.attrs.insert(key.to_owned(), value.into());
         self

@@ -2,16 +2,22 @@ use std::fmt;
 
 use loro::{LoroError, LoroTreeError};
 
+/// The result of an operation on a document or an editor.
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 #[non_exhaustive]
+/// What went wrong in an operation on a document or an editor.
 pub enum Error {
+    /// No block type of the schema has the name here.
     UnknownBlockType(String),
+    /// No mark of the schema has the name here.
     UnknownMark(String),
+    /// No atom type of the schema has the name here.
     UnknownAtom(String),
     /// The mark requires a string or integer value.
     MarkValueRequired(String),
+    /// The block is not in the document, or was removed.
     BlockNotFound,
     /// The text is not a block id as [`BlockId`](crate::BlockId) prints it.
     InvalidBlockId(String),
@@ -29,20 +35,27 @@ pub enum Error {
     TextNotAllowed(String),
     /// The block would end up nested deeper than [`MAX_DEPTH`](crate::MAX_DEPTH).
     TooDeep,
+    /// An index past the end of what it indexes.
     OutOfBounds {
+        /// The index asked for.
         index: usize,
+        /// How many there are.
         len: usize,
     },
     /// A range whose start is after its end.
     InvalidRange {
+        /// Where the range starts.
         start: usize,
+        /// Where it ends.
         end: usize,
     },
     /// A text offset falls inside a UTF-8 character.
     NotCharBoundary(usize),
     /// Attribute keys starting with `$` are reserved.
     ReservedAttr(String),
+    /// A block cannot go inside itself.
     CyclicMove,
+    /// The operation needs a selection of another kind, or one where there is none.
     NoSelection,
     /// The block is no table, or no row of one.
     NotATable,
@@ -57,6 +70,7 @@ pub enum Error {
     ExportDuringEdit,
     /// Starting an editor edit on a document that is already a draft.
     NestedEdit,
+    /// Loro failed in a way the document cannot recover from; the edit was rolled back.
     Internal(Box<dyn std::error::Error + Send + Sync>),
 }
 

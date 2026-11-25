@@ -12,13 +12,17 @@ use crate::{
 pub struct SlashItem {
     /// A stable name, for a view to pick an icon or a translation by.
     pub key: String,
+    /// The title the menu shows, in English.
     pub title: String,
     /// What the block is for, in a few words under the title.
     pub subtext: String,
+    /// The group the entry is shown under.
     pub group: String,
     /// Other words that find the item.
     pub aliases: Vec<String>,
+    /// The block type the entry makes.
     pub block_type: String,
+    /// The attributes the block starts with.
     pub attrs: Vec<(String, Value)>,
 }
 
@@ -235,6 +239,7 @@ pub fn filter_slash_items<'a>(items: &'a [SlashItem], query: &str) -> Vec<&'a Sl
 /// A slash and what was typed after it, up to the caret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashQuery {
+    /// The block the slash is in.
     pub block: BlockId,
     /// From the slash to the caret, in bytes.
     pub range: Range<usize>,

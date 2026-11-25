@@ -101,6 +101,7 @@ impl Document {
         Ok(())
     }
 
+    /// Takes the mark `name` off the text between two positions, across blocks.
     pub fn unmark_range(&mut self, a: Pos, b: Pos, name: &str) -> Result<()> {
         self.mark_spec(name)?;
         for (block, range) in self.segments(a, b)? {

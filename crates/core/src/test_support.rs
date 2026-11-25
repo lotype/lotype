@@ -12,6 +12,7 @@ const ANCHOR: &str = "<a>";
 const HEAD: &str = "<b>";
 
 #[derive(Debug, Clone)]
+/// A block to build: its type, attributes, text and children.
 pub struct BlockNode {
     block_type: String,
     attrs: Vec<(String, Value)>,
@@ -20,6 +21,7 @@ pub struct BlockNode {
 }
 
 impl BlockNode {
+    /// With the attribute `key` set to `value`.
     pub fn attr(mut self, key: &str, value: impl Into<Value>) -> Self {
         self.attrs.push((key.to_owned(), value.into()));
         self
@@ -27,11 +29,17 @@ impl BlockNode {
 }
 
 #[derive(Debug, Clone)]
+/// Text to build in a block, with marks.
 pub enum InlineNode {
+    /// Text, with the `<a>` and `<b>` markers of the selection's ends in it.
     Text(String),
+    /// Text with a mark.
     Marked {
+        /// The mark's name.
         name: String,
+        /// The mark's value.
         value: Value,
+        /// What the mark is on.
         content: Vec<InlineNode>,
     },
 }
@@ -39,7 +47,9 @@ pub enum InlineNode {
 /// What a block builder accepts: text, marked text, or a child block.
 #[derive(Debug, Clone)]
 pub enum Item {
+    /// Text in the block.
     Inline(InlineNode),
+    /// A child block.
     Block(BlockNode),
 }
 
@@ -61,6 +71,7 @@ impl From<BlockNode> for Item {
     }
 }
 
+/// A block of `block_type` with `items`: text, and child blocks.
 pub fn block(block_type: &str, items: Vec<Item>) -> BlockNode {
     let mut node = BlockNode {
         block_type: block_type.to_owned(),
@@ -77,6 +88,7 @@ pub fn block(block_type: &str, items: Vec<Item>) -> BlockNode {
     node
 }
 
+/// Text with the mark `name` of `value` on `items`.
 pub fn marked(name: &str, value: impl Into<Value>, items: Vec<Item>) -> InlineNode {
     let content = items.into_iter().map(|item| match item {
         Item::Inline(inline) => inline,
@@ -101,11 +113,13 @@ macro_rules! __items {
     ($($item:expr),* $(,)?) => { ::std::vec![$($crate::test_support::Item::from($item)),*] };
 }
 
+/// A paragraph of the items given: text, marked text and child blocks.
 #[macro_export]
 macro_rules! p {
     ($($item:tt)*) => { $crate::test_support::block("paragraph", $crate::__items![$($item)*]) };
 }
 
+/// A level-1 heading of the items given.
 #[macro_export]
 macro_rules! h1 {
     ($($item:tt)*) => {
@@ -113,6 +127,7 @@ macro_rules! h1 {
     };
 }
 
+/// A bullet list item of the items given.
 #[macro_export]
 macro_rules! bullet {
     ($($item:tt)*) => {
@@ -120,6 +135,7 @@ macro_rules! bullet {
     };
 }
 
+/// A divider.
 #[macro_export]
 macro_rules! divider {
     () => {
@@ -127,11 +143,13 @@ macro_rules! divider {
     };
 }
 
+/// Bold text of the items given.
 #[macro_export]
 macro_rules! b {
     ($($item:tt)*) => { $crate::test_support::marked("bold", true, $crate::__items![$($item)*]) };
 }
 
+/// Italic text of the items given.
 #[macro_export]
 macro_rules! i {
     ($($item:tt)*) => { $crate::test_support::marked("italic", true, $crate::__items![$($item)*]) };

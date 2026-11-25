@@ -63,6 +63,8 @@ impl Anchored {
 
 /// Exchanging changes with other peers, as bytes. How they travel is up to the application.
 impl Document {
+    /// How much of its history the document has, for a peer to ask for what it lacks with
+    /// [`Document::export_updates`].
     pub fn version(&self) -> Version {
         self.commit_change();
         Version(self.doc.oplog_vv())

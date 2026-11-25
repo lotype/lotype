@@ -1,6 +1,7 @@
 //! Headless WYSIWYM document engine with realtime collaboration, built on Loro.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod atom;
 mod attrs;

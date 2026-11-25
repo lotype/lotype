@@ -11,12 +11,16 @@ use crate::{Atom, BlockId, Content, Document, Error, MarkSpec, OBJECT, Pos, Resu
 /// A run of text with the same marks, or an atom, whose text is [`OBJECT`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Span {
+    /// The text, with an atom's U+FFFC for an atom.
     pub text: String,
+    /// The marks on it, by name.
     pub marks: BTreeMap<String, Value>,
+    /// The atom it is, for an atom's character.
     pub atom: Option<Atom>,
 }
 
 impl Span {
+    /// Text with `marks`, and no atom.
     pub fn new(text: impl Into<String>, marks: BTreeMap<String, Value>) -> Self {
         let text = text.into();
         Self {
@@ -39,18 +43,22 @@ impl Span {
 
 /// Rich text. Offsets are UTF-8 bytes and must fall on character boundaries.
 impl Document {
+    /// `block`'s text, an atom as U+FFFC.
     pub fn text(&self, block: BlockId) -> Result<String> {
         Ok(self.inline(block)?.to_string())
     }
 
+    /// How long `block`'s text is, in bytes.
     pub fn text_len(&self, block: BlockId) -> Result<usize> {
         Ok(self.inline(block)?.len_utf8())
     }
 
+    /// `block`'s text as spans: runs of text with the same marks, and atoms.
     pub fn spans(&self, block: BlockId) -> Result<Vec<Span>> {
         Ok(to_spans(self.inline(block)?.to_delta()))
     }
 
+    /// The spans of the text of `block` in `range`, in bytes.
     pub fn spans_in(&self, block: BlockId, range: Range<usize>) -> Result<Vec<Span>> {
         let text = self.inline(block)?;
         let range = unicode_range(&text, range)?;
@@ -58,6 +66,7 @@ impl Document {
         Ok(to_spans(delta))
     }
 
+    /// Inserts `content` into `block`'s text at `offset`, with no marks.
     pub fn insert_text(&mut self, block: BlockId, offset: usize, content: &str) -> Result<()> {
         let text = self.editable(block)?;
         let index = unicode_offset(&text, offset)?;
@@ -154,6 +163,7 @@ impl Document {
         Ok(())
     }
 
+    /// Deletes the text of `block` in `range`, in bytes.
     pub fn delete_text(&mut self, block: BlockId, range: Range<usize>) -> Result<()> {
         let text = self.inline(block)?;
         let indices = unicode_range(&text, range.clone())?;
@@ -164,6 +174,7 @@ impl Document {
         Ok(())
     }
 
+    /// Puts the mark `name` with `value` on the text of `block` in `range`.
     pub fn mark(
         &mut self,
         block: BlockId,
@@ -185,6 +196,7 @@ impl Document {
         Ok(())
     }
 
+    /// Takes the mark `name` off the text of `block` in `range`.
     pub fn unmark(&mut self, block: BlockId, range: Range<usize>, name: &str) -> Result<()> {
         self.mark_spec(name)?;
         let text = self.inline(block)?;

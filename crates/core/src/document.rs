@@ -70,6 +70,7 @@ pub struct Document {
 }
 
 impl Document {
+    /// An empty document of `schema`'s blocks, marks and atoms.
     pub fn new(schema: Schema) -> Self {
         Self::from_loro(LoroDoc::new(), schema)
     }
@@ -91,6 +92,7 @@ impl Document {
         }
     }
 
+    /// The block types, marks and atoms the document takes.
     pub fn schema(&self) -> &Schema {
         &self.schema
     }
@@ -137,10 +139,14 @@ impl Document {
         }
     }
 
+    /// Whether `block` is in the document, removed by no one.
     pub fn contains(&self, block: BlockId) -> bool {
         self.depth(block).is_ok()
     }
 
+    /// Inserts an empty block of `block_type` at `index` among the children of `parent`, or at
+    /// the top level for `None`. The parent must take children, a heading goes in no block, and
+    /// the block must not end up deeper than [`MAX_DEPTH`].
     pub fn insert_block(
         &mut self,
         parent: Option<BlockId>,
@@ -257,6 +263,7 @@ impl Document {
         Ok(())
     }
 
+    /// The name of `block`'s type, `table_cell` for a cell.
     pub fn block_type(&self, block: BlockId) -> Result<String> {
         if block.1.is_some() {
             return self.depth(block).map(|_| CELL.to_owned());
@@ -295,12 +302,14 @@ impl Document {
         Ok(())
     }
 
+    /// `block`'s attribute `key`, where it has one.
     pub fn attr(&self, block: BlockId, key: &str) -> Result<Option<Value>> {
         let value = self.meta(block)?.get(attr_key(key)?);
         let value = value.and_then(|v| v.into_value().ok());
         Ok(value.as_ref().and_then(Value::from_loro))
     }
 
+    /// All of `block`'s attributes, by key.
     pub fn attrs(&self, block: BlockId) -> Result<BTreeMap<String, Value>> {
         let mut attrs = BTreeMap::new();
         self.meta(block)?.for_each(|key, value| {
@@ -314,6 +323,8 @@ impl Document {
         Ok(attrs)
     }
 
+    /// Sets `block`'s attribute `key` to `value`. Keys starting with `$` are the document's
+    /// own.
     pub fn set_attr(&mut self, block: BlockId, key: &str, value: impl Into<Value>) -> Result<()> {
         let value = value.into();
         self.meta(block)?.insert(attr_key(key)?, value.to_loro())?;
@@ -324,6 +335,7 @@ impl Document {
         Ok(())
     }
 
+    /// Takes `block`'s attribute `key` off.
     pub fn remove_attr(&mut self, block: BlockId, key: &str) -> Result<()> {
         self.meta(block)?.delete(attr_key(key)?)?;
         self.record(|| {
