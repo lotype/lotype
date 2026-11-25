@@ -90,12 +90,16 @@ fn holds_text(doc: &Document, row: &Row) -> bool {
     spec.is_some_and(|spec| spec.content() == Content::Inline)
 }
 
+/// What the rows are made of: the document as it was, the toggles closed,
+/// the blocks selected, and those a session removed that are still shown.
+type MadeOf = (Version, HashSet<BlockId>, HashSet<BlockId>, Vec<BlockId>);
+
 /// The rows and the reading order of the document as it was, the toggles
 /// closed and the blocks selected: a frame where none of them changed, as
 /// most are, reads none of the blocks again.
 #[derive(Default)]
 pub(crate) struct Shape {
-    made_of: Option<(Version, HashSet<BlockId>, HashSet<BlockId>)>,
+    made_of: Option<MadeOf>,
     rows: Rc<Vec<Row>>,
     order: Rc<Vec<BlockId>>,
     /// Whether keys put the caret in each row: it holds text, or is a table.
@@ -108,9 +112,17 @@ impl EditorView {
     /// selected blocks changed.
     pub(super) fn shape(&mut self, selected: HashSet<BlockId>) -> Rc<Vec<Row>> {
         let doc = self.editor.document();
-        let now = (doc.version(), self.closed.clone(), selected);
+        let now = (
+            doc.version(),
+            self.closed.clone(),
+            selected,
+            self.ai_struck(),
+        );
         if self.shape.made_of.as_ref() != Some(&now) {
-            let rows = canvas::rows(doc, &self.closed, &now.2);
+            let mut rows = canvas::rows(doc, &self.closed, &now.2);
+            if let Some(main) = &self.ai.main {
+                super::ai_review::restore_removed(&mut rows, main.document(), &now.3);
+            }
             self.shape.order = Rc::new(reading_order(doc, &rows));
             let texty = rows
                 .iter()

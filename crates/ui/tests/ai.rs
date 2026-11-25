@@ -224,14 +224,41 @@ fn the_label_rides_the_live_caret_while_the_model_writes_text(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn the_ai_cursor_marks_a_preview_emptied_by_the_model(cx: &mut TestAppContext) {
+fn a_block_the_model_removed_stays_struck_out_where_it_was(cx: &mut TestAppContext) {
+    let (mut ed, _) = with_model(
+        cx,
+        blocks![p!["one<a>"], p!["two"], p!["three"]],
+        |blocks| {
+            let args = format!(r#"{{"id": "{}"}}"#, blocks[1]);
+            vec![tool_call("1", "delete", &args, 5)]
+        },
+    );
+    let blocks = ed.editor(|editor| editor.document().blocks());
+    ask(&mut ed, "Remove the middle");
+    assert_eq!(state(&mut ed), Some(AiState::Reviewing));
+    let (left, rows) = ed.view.update(ed.cx, |view, _| {
+        let left = view.ai_document().unwrap().blocks().len();
+        let tops = blocks
+            .iter()
+            .map(|block| view.text_bounds(*block).unwrap().top());
+        (left, tops.collect::<Vec<_>>())
+    });
+    assert!(left == 2 && rows[0] < rows[1] && rows[1] < rows[2]);
+    click(&mut ed, "ai-accept");
+    ed.assert(blocks![p!["one<a>"], p!["three"]]);
+}
+
+#[gpui::test]
+fn the_ai_cursor_marks_what_the_model_removed_from_an_emptied_preview(cx: &mut TestAppContext) {
     let (mut ed, _) = with_model(cx, blocks![p!["one<a>"]], |blocks| {
         let args = format!(r#"{{"id": "{}"}}"#, blocks[0]);
         vec![tool_call("1", "delete", &args, 5)]
     });
     ask(&mut ed, "Remove everything");
     assert_eq!(state(&mut ed), Some(AiState::Reviewing));
-    assert!(shows(&mut ed, "empty-document") && shows(&mut ed, "ai-cursor"));
+    assert!(!shows(&mut ed, "empty-document") && shows(&mut ed, "ai-cursor"));
+    click(&mut ed, "ai-accept");
+    assert!(shows(&mut ed, "empty-document") && !shows(&mut ed, "ai-cursor"));
 }
 
 #[gpui::test]

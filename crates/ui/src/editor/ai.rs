@@ -6,6 +6,7 @@
 //! the document's editor is put aside, and goes on taking the changes of
 //! other peers. Accepting makes the edits in it and shows it again.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,7 @@ use gpui::{Context, Task, Window};
 use lotype_ai::{
     Accepted, AiSession, AiState, AiTranscript, Change, LlmError, LlmEvent, LlmProvider,
 };
-use lotype_core::{Document, Editor, Selection};
+use lotype_core::{BlockId, Document, Editor, Selection};
 
 use super::EditorView;
 use super::ai_prompt::PromptField;
@@ -51,6 +52,9 @@ pub(crate) struct Ai {
     pub(super) place: Placement,
     /// The blocks the session changed, as of the last frame.
     pub(super) changes: Vec<Change>,
+    /// Those of them this frame shows the changed words of, which need
+    /// no tint over the whole block.
+    pub(super) diffed: HashSet<BlockId>,
     /// The slash menu's entry asked for the bar, which the next frame opens.
     pub(super) wanted: bool,
 }

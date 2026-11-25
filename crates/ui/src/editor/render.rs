@@ -39,12 +39,13 @@ impl EditorView {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Div> {
-        let doc = self.editor.document();
+        let doc = self.document_of(block);
         let block_type = doc.block_type(block).ok()?;
         let spec = doc.schema().block_spec(&block_type)?;
         if spec.content() != Content::Inline {
             return None;
         }
+        let review = self.ai_review_spans(block);
         // Where the lines go in their room, for a type that takes a style.
         let align = match doc.alignment(block) {
             Align::Left => 0.,
@@ -64,9 +65,13 @@ impl EditorView {
             _ if doc.role(block) == Role::Code => style.font_family = CODE_FONT.into(),
             _ => {}
         }
-        let (spans, composed) = match shown.filter(|shown| shown.block == block) {
-            Some(shown) => self.composed_spans(shown)?,
-            None => (doc.spans(block).ok()?, None),
+        let (spans, composed, marks) = match (shown.filter(|shown| shown.block == block), review) {
+            (Some(shown), _) => {
+                let (spans, composed) = self.composed_spans(shown)?;
+                (spans, composed, None)
+            }
+            (None, Some((spans, marks))) => (spans, None, Some(marks)),
+            (None, None) => (doc.spans(block).ok()?, None, None),
         };
         let inks = Inks {
             link: cx.theme().link,
@@ -87,6 +92,9 @@ impl EditorView {
             }
             at += run.len;
         }
+        if let Some(marks) = &marks {
+            super::ai_review::mark_runs(&mut runs, marks, cx);
+        }
         let mut atoms = Vec::new();
         let mut at = 0;
         for span in &spans {
@@ -102,6 +110,9 @@ impl EditorView {
         let element = TextElement::new(text.into(), runs, atoms).align(align);
         if !self.measuring {
             self.layouts.insert(block, element.layout().clone());
+            if marks.is_some() {
+                self.ai.diffed.insert(block);
+            }
         }
         let line = line.relative().child(element);
         Some(match self.placeholder(block, &block_type, window, cx) {

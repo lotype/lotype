@@ -87,7 +87,7 @@ impl EditorView {
     }
 
     /// What the session says, in a line: what the model is doing, that
-    /// its edits wait for review and how many blocks they removed, which
+    /// its edits wait for review and how many blocks they removed that
     /// the view does not show, or its answer where it made no edits.
     pub(crate) fn ai_status(&self) -> Option<String> {
         match self.ai_state() {
@@ -101,9 +101,10 @@ impl EditorView {
             Some(AiState::Thinking | AiState::Writing) => Some(WORKING.to_owned()),
             Some(AiState::Error(error)) => Some(error.clone()),
             Some(AiState::Reviewing) => {
+                // Removed blocks with text are shown struck through.
                 let removed = self.ai.changes.iter();
                 let removed = removed.filter(|change| matches!(change, Change::Removed(_)));
-                Some(match removed.count() {
+                Some(match removed.count() - self.ai_struck().len() {
                     0 => "Review the changes".to_owned(),
                     1 => "Review the changes · 1 block removed".to_owned(),
                     more => format!("Review the changes · {more} blocks removed"),
@@ -369,16 +370,21 @@ pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
         if editor.ai.session.is_none() {
             return;
         }
-        let (added, updated) = (cx.theme().green, cx.theme().blue);
+        let (added, updated) = (super::ai_review::added_ink(cx), cx.theme().blue);
         let tint = |color: Hsla| color.opacity(0.12);
         // shortcut: only blocks with text are marked, and removed blocks
-        // are counted in the bar; draw both when reviews ask for more.
+        // without text are counted in the card; draw both when reviews ask
+        // for more.
         for change in &editor.ai.changes {
             let (block, color) = match change {
                 Change::Added(block) => (*block, added),
                 Change::Updated(block) => (*block, updated),
                 Change::Removed(_) => continue,
             };
+            // Where the words that changed are marked, the block is not.
+            if editor.ai.diffed.contains(&block) {
+                continue;
+            }
             if let Some(bounds) = editor.text_bounds(block) {
                 window.paint_quad(fill(bounds, tint(color)));
             }

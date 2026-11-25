@@ -2,6 +2,7 @@ mod ai;
 mod ai_bar;
 mod ai_controls;
 mod ai_prompt;
+mod ai_review;
 mod alert;
 mod blink;
 mod block_menu;
@@ -304,6 +305,7 @@ impl Render for EditorView {
         self.place_ai_prompt();
         self.ai_refocus_field(window, cx);
         self.layouts.clear();
+        self.ai.diffed.clear();
         self.measure_rows();
         let base = window.text_style();
         let shown = self.shown();
@@ -331,6 +333,10 @@ impl Render for EditorView {
             && self.ai_writing_block() != Some(block)
         {
             ai_cursor_blocks.insert(block);
+        }
+        // Nothing is left but what the model removed, which is shown.
+        if let (Some(EditLocation::Removal(None)), Some(first)) = (ai_cursor, all.first()) {
+            ai_cursor_blocks.insert(first.block);
         }
         // Rows far from the view lay out nothing: those next to each other
         // are one space as tall as they are.
@@ -387,12 +393,8 @@ impl Render for EditorView {
         }
         self.rows = blocks;
         self.row_items = items;
-        if self
-            .editor
-            .document()
-            .children(None)
-            .is_ok_and(|blocks| blocks.is_empty())
-        {
+        let blank = self.editor.document().children(None);
+        if blank.is_ok_and(|blocks| blocks.is_empty()) && all.is_empty() {
             let empty = render::empty_document(self.has_ai(), cx);
             rows.push(if ai_cursor == Some(EditLocation::Removal(None)) {
                 div()
