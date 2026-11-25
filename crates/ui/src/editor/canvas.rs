@@ -330,11 +330,13 @@ impl EditorView {
                     .justify_center()
                     .text_size(px(10.))
                     .cursor_pointer();
+                // Checked, in the theme's blue, as a task list is.
                 if checked {
                     let theme = cx.theme();
                     check = check
-                        .bg(theme.primary)
-                        .text_color(theme.primary_foreground)
+                        .bg(theme.blue)
+                        .border_color(theme.blue)
+                        .text_color(theme.background)
                         .child("✓");
                 }
                 let click = cx.listener(move |view: &mut Self, _: &gpui::MouseDownEvent, _, cx| {
