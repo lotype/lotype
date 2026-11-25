@@ -257,10 +257,12 @@ fn removal_at(doc: &Document, parent: Option<BlockId>, index: usize) -> Result<E
 
 /// A parsed update, ready to apply without moving or discarding untargeted blocks.
 enum Update {
+    /// The block itself with another type, attributes or text: the text
+    /// stays as it is where the block holds none.
     Text {
         kind: String,
         attrs: BTreeMap<String, Value>,
-        spans: Vec<Span>,
+        spans: Option<Vec<Span>>,
     },
     Clear,
     Replace(Box<Document>),
@@ -298,9 +300,21 @@ impl Update {
                 return Ok(Some(Self::Text {
                     kind: new_kind,
                     attrs: new.attrs(*one)?,
-                    spans,
+                    spans: Some(spans),
                 }));
             }
+        }
+        // A block without text that stays of its type is not made again:
+        // it keeps its place, what is in it, and what Markdown says
+        // nothing of.
+        if let [one] = top.as_slice()
+            && doc.text_len(block).is_err()
+            && kind != block::TABLE
+            && new.block_type(*one)? == kind
+            && new.children(Some(*one))?.is_empty()
+        {
+            let (attrs, spans) = (new.attrs(*one)?, None);
+            return Ok(Some(Self::Text { kind, attrs, spans }));
         }
         if !children.is_empty() {
             if kind != block::TABLE {
@@ -337,15 +351,20 @@ impl Update {
     ) -> Result<(Vec<BlockId>, EditLocation)> {
         match self {
             Self::Text { kind, attrs, spans } => {
-                if doc.block_type(block)? != kind {
+                // Markdown says some of a block's attributes, as a heading's
+                // level: those it no longer says go. The others, as colors
+                // and alignment, it never said, and they stay.
+                let was = doc.block_type(block)?;
+                let said = doc.schema().block_spec(&was);
+                let said = said.map_or_else(Vec::new, |spec| spec.markdown_attrs().to_vec());
+                if was != kind {
                     doc.set_block_type(block, &kind)?;
                 }
-                for key in doc
-                    .attrs(block)?
-                    .keys()
-                    .filter(|key| !attrs.contains_key(*key))
-                {
-                    doc.remove_attr(block, key)?;
+                let has = doc.attrs(block)?;
+                for key in said.iter().filter(|key| !attrs.contains_key(*key)) {
+                    if has.contains_key(key) {
+                        doc.remove_attr(block, key)?;
+                    }
                 }
                 for (key, value) in attrs {
                     doc.set_attr(block, &key, value)?;
@@ -353,7 +372,9 @@ impl Update {
                 // shortcut: all of the text again where any of it changed, so a
                 // peer's caret in it goes to its start; replace only what
                 // differs when that is seen to matter.
-                if doc.spans(block)? != spans {
+                if let Some(spans) = spans
+                    && doc.spans(block)? != spans
+                {
                     doc.delete_text(block, 0..doc.text_len(block)?)?;
                     doc.insert_spans(block, 0, &spans)?;
                 }
