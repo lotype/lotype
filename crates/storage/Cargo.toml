@@ -1,0 +1,26 @@
+[package]
+name = "lotype-storage"
+description = "Where lotype documents are kept: the store a server saves to, and one in SQLite."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+lotype-core.workspace = true
+rusqlite = { version = "0.43.0", features = ["bundled"], optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
+
+[features]
+default = ["sqlite"]
+# `SqliteStore`, with SQLite built in.
+sqlite = ["dep:rusqlite", "dep:tokio"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+lotype-core = { workspace = true, features = ["test-support"] }
