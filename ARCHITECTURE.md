@@ -24,10 +24,10 @@ Status: **alpha**. License: **MIT OR Apache-2.0**.
 
 | | |
 | :--- | :--- |
-| **Product** | An SDK published as crates on crates.io. The in-house editor is the first consumer. |
+| **Product** | An SDK intended for crates.io; the alpha workspace is not published yet. The in-house editor is the intended first consumer. |
 | **First-release consumers** | Rust/GPUI applications on macOS |
-| **First-release platform** | macOS only: Intel (`x86_64`) and Apple Silicon (`aarch64`), shipped as a universal binary |
-| **First-release features** | Realtime collaboration, cross-block text selection, nested blocks, tables (no merged cells), AI (selection prompt + multi-turn chat panel) |
+| **First-release platform** | macOS only: Intel (`x86_64`) and Apple Silicon (`aarch64`). The reference app is planned as a universal binary. |
+| **First-release features** | Realtime collaboration, cross-block text selection, nested blocks, tables (no merged cells), AI (inline writing, selection suggestions, and whole-document chat) |
 | **Out of scope** | Windows, Linux, iOS, Swift consumers, video and audio blocks |
 
 ### 1.1 Why native
@@ -70,41 +70,40 @@ What keeps these doors open: `core` has no GPUI or OS dependencies, and the sche
 
 ## 2. Crates
 
-| Crate | Role | Depends on |
+Workspace members today:
+
+| Crate | Role | Main dependencies |
 | :--- | :--- | :--- |
-| `lotype` | Umbrella crate; re-exports behind feature flags | all |
 | `lotype-core` | Block tree, schema, commands, selection, local undo, sync updates, awareness, Markdown | `loro`, `pulldown-cmark` |
-| `lotype-ui` | GPUI editor and built-in blocks | `core`, `gpui-component` |
-| `lotype-code` | Syntax highlighting for code blocks | `core`, `ui` (feature `gpui`) |
-| `lotype-math` | LaTeX blocks and inline math | `core`, `katex-rs`, `katex-native`, `ui` (feature `gpui`) |
-| `lotype-diagram` | Mermaid diagram blocks | `core`, `bezel-mermaid`, `ui` (feature `gpui`) |
+| `lotype-ui` | GPUI editor and built-in block views | `core`, `ai`, `gpui-pre`, `gpui-component` |
 | `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum`, `tokio` |
 | `lotype-storage` | The `DocStore` trait a server saves through, and one in SQLite (feature `sqlite`, on by default); debounced auto-save and the migrator for legacy Tiptap/BlockNote JSON come with the reference app | `core`, `rusqlite`, `tokio` |
 | `lotype-ai` | A chat with a model about a document: the provider trait, the tools, and the private copy the model edits until its edits are accepted | `core`, `storage` (for `DocId`), `futures-core`, `serde_json` |
-| `app` (binary) | Reference application that wires Tokio and GPUI together | all |
+
+Planned and not yet workspace members:
+
+| Crate | Role | Milestone |
+| :--- | :--- | :--- |
+| `app` (binary) | Reference application that wires Tokio and GPUI together | 7 |
+| `lotype` | Umbrella crate with feature-gated re-exports | Unassigned |
+| `lotype-code` | Syntax highlighting for code blocks | Unassigned |
+| `lotype-math` | LaTeX blocks and inline math | Unassigned |
+| `lotype-diagram` | Mermaid diagram blocks | Unassigned |
 
 All dependencies point towards `core`. `core` never depends on GPUI, Tokio or any OS API.
 
 ```mermaid
 flowchart TD
-    APP["app (reference binary)"]
     UI["lotype-ui<br/>GPUI • gpui-component"]
-    BLOCKS["lotype-code • math • diagram<br/>BlockSpec + BlockView (feature gpui)"]
     SERVER["lotype-server<br/>Axum WebSocket"]
-    STORAGE["lotype-storage<br/>SQLite • migrator"]
-    AI["lotype-ai<br/>LlmProvider • Loro fork/diff"]
+    STORAGE["lotype-storage<br/>DocStore • optional SQLite"]
+    AI["lotype-ai<br/>LlmProvider • private draft • replay"]
     CORE["lotype-core<br/>Loro • WYSIWYM • collaboration"]
 
-    APP --> UI & BLOCKS & STORAGE
-    APP -.-> SERVER & AI
-    UI --> CORE
-    BLOCKS --> CORE
-    BLOCKS -. "feature gpui" .-> UI
+    UI --> CORE & AI
     SERVER --> CORE & STORAGE
     STORAGE --> CORE
-    AI --> CORE
-    AI -. "async_channel (tokens)" .-> UI
-    STORAGE -. "async_channel (save status)" .-> UI
+    AI --> CORE & STORAGE
 ```
 
 ---
@@ -195,7 +194,8 @@ Design decisions:
 - **Text.** A block's text is `text_el`, an element of our own: GPUI's `StyledText` holds no elements inside its text, and draws a caret at a soft wrap only at the end of the upper line. Each span is one `TextRun` styled by its marks (`marks.rs`). Text between atoms is shaped whole with `shape_line`; each atom is an element, measured before layout (`layout_as_root`) and drawn in place of its character. Lines break greedily, never inside a grapheme, after spaces, around CJK characters, and, for a word wider than the line, between graphemes; each line walks its graphemes once and stops at the first that does not fit, and x positions come from a sorted table of glyph and atom edges, so a paragraph, even one long word, lays out in near-linear time; space at a line's end hangs past the edge, and an atom sticks to the words around it (`text_el/wrap.rs`). An atom is centred on the text, as CSS's `vertical-align: middle` puts it, and a taller one makes its line taller and pushes that line's text down. A probe of the text's own size, without a width, gets the last layout's size, as GPUI's own text answers it. Geometry answers `None` until the text is laid out, where GPUI's `TextLayout` panics (`text_el/geometry.rs`). Font size comes from the element around the text, so a heading sets it on a wrapping `div`. The view paints no background: that is the application's. `EditorView::with_block_view` draws blocks of a type with the application's own view, as `with_atom_view` draws atoms: the view gets a `BlockContent` with the block, the document to read its attributes from and, for a type that holds text, the text the editor lays out and edits, to put where it goes, so that caret, selection, typing and IME stay the editor's; the editor still draws the block's colors, indent, markers, side menu and selection around it. Every color it draws with comes from the gpui-component theme the application sets, so that it follows light and dark: rules and bars from `border`, quiet text from `muted_foreground`, code, chips and empty images on `muted`, the selection from `selection`, which gpui-component keeps see-through, edges and drop lines in `primary`, a checked box and the caret in the theme's `blue`, links in `link`, table headings on `table_head`, and an alert as GitHub Flavored Markdown's stylesheet draws it: `alert::STYLES` in the core gives each kind its title and its two Primer tokens, the bar's (`--borderColor-*-emphasis`) and the title's (`--fgColor-*`), each with its light and dark value, and the view takes the one of the theme's mode. An application draws a kind its own way with `EditorView::with_alert_look`, an `AlertLook` of a title and two `Shade`s, each a light and a dark color; the kinds it does not give stay GitHub's. The named colors a document gives its text and blocks are BlockNote's (`defaultColors.ts`), its light or its dark set by the theme's mode.
 - **Canvas.** The blocks are one column of rows in document order, each indented by how deep it is nested, up to 16 levels so that deeper text keeps its room, so nesting needs no element per level (`editor/canvas.rs`). The column is a virtual list (`editor/visible.rs`): a frame lays out the rows within a view's height above and below the view, and those the selection's ends are in and next to, where keys take the caret; the rows between the others are one space each run of them, as tall as they were when last laid out, or as the rows measured are on average before they are, and a frame that lays out a row of no known height asks for the next. Heights are forgotten when the width changes. The rows and the blocks with text in reading order, which keys, select all and Tab go through whether laid out or not, are made again only when the document's version, the closed toggles or the selected blocks change, so a frame where none of them did reads none of the blocks. The first row in sight keeps its place: where rows above it change height, the view scrolls by as much in the same frame, and a row above the view laid out for the first time is laid out apart, out of the column, as wide as the column and unseen, to be measured for the next frame, so that scrolling up into rows never laid out does not jump; a row in sight, or one the selection is in, is always laid out in the column, where it is drawn and where the caret is found. After a frame brings the caret into sight while rows near it are first measured, the next two bring it there again, and no more, so that a scroll away from it is not pulled back. A row the view draws nothing for takes no room. The rows the selection's ends are in are laid out with every row up to the nearest with text on each side, so that keys find where the caret goes next. In a release build on the test platform a frame costs about 4 ms at 300 or 3,000 paragraphs and 8 ms at 20,000, where it cost 13 ms, 147 ms and about a second; a keystroke, which makes the rows again, about 11 ms at 3,000 and 44 ms at 20,000. A list item has its marker in a slot before its text: a bullet, its number counted along its numbered siblings from the first one's `start`, a box that checks it as an undo step, or an arrow that opens and closes a toggle. Whether a toggle is open is the view's own state, not the document's, and a toggle opens when the selection goes into it; Enter in an open toggle writes in it, the text after the caret going into a paragraph as its first block, and in a closed one starts another toggle after it and keeps what it hides (`Editor::split_toggle`); closing one moves a selection inside it to the end of its text. Quotes and alerts draw a bar on every row inside them; the text of a quote and of everything in it is italic; and an alert's title, icon and colour are those of its kind on GitHub (Note, Tip, Important, Warning, Caution), or a note's for a kind GitHub lacks; a click on the title opens a menu of the five kinds, and picking one sets the alert's `kind` as one undo step (`editor/alert.rs`). Code blocks have a background, a divider is a rule, a page break, where printing and export start a new page, a dashed rule named "Page break" as word processors draw it, an image is drawn from its `url` with its caption, or its caption or address where it does not load, and a file is its name. A table is a grid of its cells, its first row the headings, in a header's weight and fill (`editor/table.rs`); a cell holds text as a block does, a click puts the caret in the cell under it, anywhere in its row's height, up and down go from row to row in the column, select all selects the blocks where the text starts or ends in a cell, Tab and Shift-Tab go to the next and the cell before, Tab in the last cell starts a row, and Enter goes to the cell below, as in a spreadsheet, or from the last row into a new paragraph after the table, as Enter at the end of a block starts the next one. While the mouse is over a table, a bar below it adds a row and one on its right a column; they keep their room while hidden, so the grid does not move. The cell with the caret has a button for a menu that inserts a row above or below or a column left or right, and deletes the row or the column, its right edge under the button so that it opens over the table. A drag, Shift and a click, or Shift and an arrow past the edge of a cell's text, from one cell into another selects the cells between as `Selection::Cells`, painted as a selection, and Shift and an arrow then move the cell it ends in a cell at a time, within the table; Escape in a cell's text does nothing; Backspace and Delete empty them, and the table stays, copy and cut put them on the clipboard as a table of just those cells (`Document::slice_cells`) and, for other applications and for a paste into a cell or code, as rows of tab-separated text (`Document::to_plain_text`), and any other key goes on from the cell the selection ends in, as from a caret there, Escape only going back to it. The bars, the menu and its button take the focus and end a composition, as a click in the text does. The view draws rows and columns that two peers added at the same time where they meet, with the cell between them. The caret blinks again when the focus or the window comes back. An empty paragraph with the caret in it, while the editor has the focus and nothing is being composed, says "Type '/' for blocks, Space for AI, or just write"; Space there opens the AI prompt where the view has a model, and is a space where it has none. A document with no blocks, new or emptied by a peer, shows the same words where its first block would be, and the first click, key or text there makes that block a paragraph with the caret in it, so that the document changes only once someone writes. The view scrolls, and a change of the selection or the text scrolls the caret, or the head of a range, into sight once it is laid out.
 - **Collaborators.** `EditorView::with_presence` takes a `Presence`, of which the application keeps a clone to feed what the peers send, and each frame draws every other peer's selected text in its color, see-through, its caret, and over the caret its name on that color, up to 24 characters and none that would break the line (`editor/collab.rs`). A peer's selected blocks and cells are not drawn yet.
-- **AI.** `EditorView::with_ai` gives the view a model (`lotype-ai`'s `LlmProvider`). A bar at the foot of the editor has a field to ask in, opened by an AI button in the formatting toolbar, an entry of the slash menu, or Space in an empty paragraph; `AiPanel` is a chat on the same editor, for an application to put next to it, with what was said in this session and those before. Asking opens an `AiSession` on the document and its selection. While one is open the view shows the session's copy instead of the document, in an editor of its own that follows the copy by its updates, and that nothing writes in but the model: keys, text and the mouse do nothing there but scroll. The document's editor is put aside meanwhile, is what `EditorView::editor` gives and `update_editor` changes, and goes on taking the changes of other peers. The blocks the model added are tinted green and those it changed blue, a caret shows where it is writing, and the bar says what it is doing, what it said, and how many blocks it removed; Stop, Retry, Accept and Reject are in the bar and the panel alike. What comes of an answer is taken a frame's worth at a time, so text is revealed at that pace and not a token at a time. Accepting makes the edits in the document as one undo step and shows it again, as rejecting does without them; an answer with no edits closes the session by itself and leaves the bar open to ask more (`editor/ai.rs`, `editor/ai_bar.rs`, `ai_panel.rs`).
+- **AI.** `EditorView::with_ai` enables three entry points that share a single conversation history. Space in an empty paragraph or `/ai` opens a prompt next to that row. The formatting toolbar's Sparkles button opens a menu for selected text, hanging from the bar: spelling, clarity, and shortening presets over a field for a custom prompt. Every field has a Send button that Enter also presses. `AiPanel` shows the shared history and has a separate multiline composer for the whole document: Enter sends, Shift+Enter inserts a line break, and the current selection is not included in chat requests.
+- **AI review.** Only one surface owns the active session. The view shows its private, read-only copy while the main editor continues receiving peer updates. The edits are shown where they are (`editor/ai_review.rs`): in a changed block the words that went are struck through next to those that came, by `lotype_ai::word_diff`, once the model is done; a removed block with text stays struck through where the document has it; an added block is tinted green, and a block whose type or style alone changed blue. An AI cursor marks the active edit. `AiPanel` is a card of two tiers: what the session says with Stop, Retry, Accept or Reject on top, and the composer below. The prompt in the editor is placed under what the session changed: its field, which grows with the text, next to Send, which goes to a row of its own below once the text is more than a line; then one row with no field, a light passing over “Working…” for as long as the model answers, “Review the changes” or the failure, each with its buttons. The action a session waits for is filled with the theme's blue; the buttons and their colors are named once in `editor/ai_controls.rs`. Accept replays the reviewed edits as one undo step; Reject discards the copy. Text-only replies stay visible on the surface that sent the request (`editor/ai.rs`, `editor/ai_prompt.rs`, `editor/ai_bar.rs`, `editor/ai_controls.rs`, `editor/ai_review.rs`, `ai_panel.rs`).
 - **Atoms.** `EditorView::with_atom_view` draws atoms of one type with an element of the application's; any other atom is a chip with the plain text its `InlineSpec` gives it (`editor/render.rs`).
 - **Taken from `gpui-component`:** `menu`, `popover`, `virtual_list`, `command`, `toolbar`, `tooltip`, `clipboard`, `highlighter`, along with its theme: `EditorView::new` sets gpui-component up unless the application did. Its popover and popup menu take the focus when they open, so a menu the user goes on typing under, such as the slash menu, is gpui-component's list items and popover style placed with GPUI's own `anchored` and `deferred`.
 - **Written in-house:** `text_el`, the block text element. gpui-component's `Input` stores text in a `ropey::Rope`, so it serves only as a reference for implementing IME. gpui-base 0.10 lays out text with inline objects too, but privately, tied to its theme, and measures a paragraph with objects again every frame.
@@ -211,27 +211,27 @@ Design decisions:
 
 ### 5.1 Blocks
 
-Blocks are split into crates the same way BlockNote splits its packages. Every block crate exposes a GPUI-free `BlockSpec` and a `BlockView` behind the `gpui` feature, so block logic still runs in Linux CI.
+Built-in `BlockSpec`s live in `lotype-core`, and their GPUI views live in `lotype-ui`. The planned renderer crates follow the BlockNote package split: GPUI-free specs with an optional `BlockView` behind the `gpui` feature.
 
 | Crate | Contents | Renderer |
 | :--- | :--- | :--- |
 | `lotype-ui` | Blocks: Paragraph, Heading, Quote, Alert, Bullet/Numbered/Check/Toggle list, Code (plain), Table, Image, File, Divider, PageBreak<br/>Styles: bold, italic, underline, strike, code, text color, background color<br/>Inline: text, link | `text_el` |
-| `lotype-code` | Syntax highlighting | gpui-component `highlighter` |
-| `lotype-math` | Block and inline LaTeX | `katex-rs` + `katex-native` |
-| `lotype-diagram` | Mermaid diagrams | `bezel-mermaid` |
+| `lotype-code` (planned) | Syntax highlighting | gpui-component `highlighter` |
+| `lotype-math` (planned) | Block and inline LaTeX | `katex-rs` + `katex-native` |
+| `lotype-diagram` (planned) | Mermaid diagrams | `bezel-mermaid` |
 
-Math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `LoroText`, and their specs are built `without_style()`, as the code block's is. They can be edited collaboratively, and the renderer can be swapped without migrating documents.
+In the planned design, math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `LoroText` and use `without_style()`, as the existing plain code block does. This keeps collaborative edits on the source and lets the renderer change without a migration.
 
-**Alert.** GFM alerts (`> [!NOTE]`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`) map to `pulldown-cmark`'s `BlockQuoteKind`. An alert is a container block. The migrator converts legacy `callout` blocks to `alert`.
+**Alert.** GFM alerts (`> [!NOTE]`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`) map to `pulldown-cmark`'s `BlockQuoteKind`. An alert is a container block. The planned migrator will convert legacy `callout` blocks to `alert`.
 
-**Diagrams: `bezel-mermaid` 0.2.29.** MIT licensed. It is a Rust port of Pele 1.6.0, follows Mermaid 12.1.0, and supports 33 diagram types.
+**Proposed diagrams: `bezel-mermaid` 0.2.29.** MIT licensed. It is a Rust port of Pele 1.6.0, follows Mermaid 12.1.0, and supports 33 diagram types.
 - `render(source, &options, &host)` returns `Drawing { svg, width, height, links }`.
-- `Host::width` is implemented with GPUI's text system, so labels are measured with the editor's font.
-- The SVG is shown via `gpui::Image::from_bytes(ImageFormat::Svg, ..)` and rasterized by `resvg` at 2×.
+- The planned `Host::width` implementation uses GPUI's text system, so labels are measured with the editor's font.
+- The planned view displays the SVG via `gpui::Image::from_bytes(ImageFormat::Svg, ..)`, rasterized by `resvg` at 2×.
 - The fonts loaded into `resvg` must match the fonts `Host` measures with, or labels may be clipped. Because the output is raster, zooming requires re-rendering.
 - `flowmaid` was rejected because it is GPL-3.0.
 
-**Math: `katex-rs` 0.3.0 + `katex-native` 0.1.1.**
+**Proposed math: `katex-rs` 0.3.0 + `katex-native` 0.1.1.**
 - `katex-rs` uses KaTeX's grammar, the same one BlockNote documents use, so legacy formulas stay valid.
 - `katex_native::layout(&ctx, tex, display)` returns a display list (`Layout { width, height, depth, items }`) that GPUI draws natively:
   - text uses KaTeX fonts loaded via `TextSystem::add_fonts`;
@@ -260,14 +260,16 @@ trait DocStore {     // lotype-storage, which has one in SQLite
 
 `DocStore` lives in `lotype-storage` so that its SQLite store need not depend on the server; the server re-exports it, and takes `lotype-storage` without its `sqlite` feature. `load` gives everything stored of a document, as snapshots and updates to import in any order, so a store can be as plain as a list of what was appended. `lotype_storage::merge` makes the fewest of them: one snapshot, and after it the changes that wait for changes not stored yet (`Document::export_waiting`), which are in no snapshot. `SqliteStore` keeps every update as a row and makes a document's rows that whenever it is loaded, in one transaction; rows that do not merge fail the load and stay as they are. `lotype_storage::restore` makes the document of such parts, for the server and for `merge`.
 
-**Protocol.** A client opens a WebSocket at `/{document id}` with `Authorization: Bearer <token>`; a missing or refused token is answered `401` before the upgrade. A browser cannot set that header on a WebSocket, so a page cannot open one with a user's credentials. Messages are `lotype_core::SyncMessage`s, one per binary frame:
+**Protocol.** A client opens a WebSocket at `/{document id}` with `Authorization: Bearer <token>`; a missing or refused token is answered `401` before the upgrade. A browser cannot set that header on a WebSocket, so a page cannot open one with a user's credentials. Each binary WebSocket message carries one `lotype_core::SyncMessage`:
 
 | Message | From a client | From the server |
 | :--- | :--- | :--- |
 | `Version` | "Send me what I lack": answered with an `Update` | The same, to writers only, when they connect |
 | `Update` | A change, or the answer to `Version` | The answer to `Version`, and the other clients' changes |
-| `Part` | More of an update of over 1 MiB, before the `Update` that ends it; up to 64 MiB together | The same, for any update it sends |
+| `Part` | A chunk of an update before the final `Update` | The relay splits large updates into messages of at most 1 MiB |
 | `Presence` | The client's own state, or its leaving | Everyone's when the client connects, then the others' as they send it or leave, each under the number of its client |
+
+The relay's 64 MiB multipart receive limit applies only to buffered `Part` payloads. `SyncParts::join` does not yet count the final `Update` against that limit. The relay does not apply this cap on outbound updates either; 64 MiB is not an end-to-end limit.
 
 **The relay.** A document with clients connected is a *room*: the document in memory, what each client last said of itself, and a channel between its clients. The first client loads it from the store, clients of other documents not waiting, and the last to leave drops it. Clients are untrusted, so the server imports each update into the room's document before anything else, which is how it knows the bytes are an update and what a client lacks; that, exporting and loading run where they hold up no other task. What an update brought the room is exported from the room's document, appended to the store and only then passed to the other clients, and until it is stored the room neither takes another update nor says what it has, to a client that asks or to one that connects: never the client's bytes, so the store and the clients get what Loro wrote, with everything that came into the document at that point, as an earlier update that waited for this one; when something did wait, the client that sent the update gets it too, and otherwise every client but that one. An update that brought nothing is dropped, which also ends any echo between clients. The server **closes a client that sends an update with `Read` access**, one that sends what is no message, and one whose update or presence does not read (close code 1008). A presence goes on under the number of the client that sent it, a client that disconnects is taken out for the others at once, and one that comes is told of those heard of within `PRESENCE_TIMEOUT`. A client more than 1024 messages behind the others is closed (1013), one that takes no message for 30 seconds is dropped, and both get what they lack when they connect again.
 
@@ -281,10 +283,7 @@ Access is what the `Authorizer` said when the client connected; to take it back,
 
 ## 7. AI (`lotype-ai`)
 
-There are two entry points:
-
-- a **prompt on a text selection**, opened from the formatting toolbar or `/ai`;
-- a **multi-turn chat panel** that works on the whole document.
+There are three entry points into one conversation: **inline writing** at the caret (Space in an empty paragraph or `/ai`), **selection suggestions** from the formatting toolbar, and a **whole-document composer** in `AiPanel`. Selection suggestions can edit only the text ranges captured by the editor. Chat requests do not attach the live caret or selection; previous turns contribute conversation text, not their old document or selection snapshots.
 
 AI edits stay **private until the user accepts them**.
 
@@ -302,13 +301,14 @@ main document ──snapshot──► the copy (a document of its own), never sy
 
 - **Session.** An `AiSession` holds what was said, the copy, and the edits made in it, in order. It is a state machine the application drives: `prompt` gives the `LlmRequest` to send, `feed` takes the answer an event at a time, `fail`, `abort` and `retry` are what their names say, and `accept` makes the edits in the document. `run` does the sending and feeding against an `LlmProvider`, on whatever runs futures: the crate needs no runtime.
 - **Context.** The model receives `DocumentState`: every block with its id, how deep it is nested and its own Markdown, without what is nested in it (`Document::markdown_blocks`), and with it the blocks and the text the user selected, or the block the caret is in. It is sent again with every turn, as the copy is then. The system prompt names the Markdown the document's schema takes.
-- **Tools.** `add { referenceId, position: before|after, blocks }`, `update { id, block }` and `delete { id }`, a block being one Markdown block. An update of text stays in its block, which keeps its id and what is nested in it; anything else, as a table, takes the block's place. An update cannot promote a nested block to a top-level-only type or discard ordinary children. A table's rows and cells are part of the table and can be replaced with it.
-- **Streaming.** A call's arguments are JSON that comes in parts. A reader of our own takes the start of a JSON text and says what is certain of it, and where it stops inside a string (`partial.rs`); a call is read as an edit once it says which block, an id being read only when it is whole, as half of one is another block's. The edit is made in the copy as one undo step, and taken back and made again as more of it comes, so the copy shows text while it is written. A call that is no edit, of no tool, with arguments that are none or for a block that is not there, is counted and left out, and the others are made. The text reveal is animated in `ui` only, with token coalescing of about 16 ms. Dropping the stream cancels the request.
-- **AI cursor.** The preview labels the latest edit `AI` and keeps the label through review (`AiSession::edit_location`). For collaborators, `AiSession::active_anchor` reports a shared block only while the model writes. Insertions and edits to draft-only blocks use the shared block that introduced them; for a deletion peers see the original block until accept. Hidden rows use their visible ancestor. Neither label takes over scrolling.
+- **Document tools.** Inline writing and whole-document chat use `add { referenceId, position: before|after, blocks }`, `update { id, block }` and `delete { id }`, a block being one Markdown block. An update of text stays in its block, which keeps its id and what is nested in it; anything else, as a table, takes the block's place. An update cannot promote a nested block to a top-level-only type or discard ordinary children. A table's rows and cells are part of the table and can be replaced with it.
+- **Selection tool.** `AiSession::for_selection` exposes only `replace_selected_text { id, text }`. The session supplies the allowed fragments in `editableText` and binds each ID to a byte range; the model cannot supply offsets or edit other blocks or their structure. A selection across blocks is edited one fragment at a time. Table cells and fragments containing inline atoms are not editable in this mode. At Accept, a concurrently changed block is skipped rather than applying a stale range.
+- **Streaming.** A call's arguments are JSON that comes in parts. The partial reader (`partial.rs`) limits nesting to 32 containers and reads only what is certain; it requires a complete block ID before previewing an edit. Completed arguments also pass strict JSON validation before the edit is retained. The preview replaces each in-flight edit with the latest version, using undo. Calls that cannot be applied are counted and left out. The UI coalesces tokens in roughly 16 ms batches. Dropping the stream cancels the request.
+- **AI cursor.** While the model writes text, a caret follows the end of what it wrote under a Sparkles `AI` tag, like a peer's name tag. Otherwise the same label sits in the gutter of the latest edit and stays through review (`AiSession::edit_location`). For collaborators, `AiSession::active_anchor` reports a shared block only while the model writes. Insertions and edits to draft-only blocks use the shared block that introduced them; for a deletion peers see the original block until accept. Hidden rows use their visible ancestor. Neither label takes over scrolling.
 - **Sharing presence.** Build the sending view with `EditorView::with_presence_publisher` and queue its `SyncMessage::Presence` packets over the application's existing connection, instead of publishing that connection's presence manually. The optional AI block travels alongside the human selection, never as a second peer or a document update. The view refreshes presence every 10 seconds and clears the AI block when streaming stops, fails, or enters review. Receiving views use `with_presence` as before: apply the bytes and notify the view. The relay forwards AI presence over the same connection without a separate WebSocket subprotocol.
 - **Failure.** A request that fails takes back the call that did not end and leaves the session in `error`; `retry` puts the copy back as it was when the user asked, from a snapshot taken then, and asks again. `abort` keeps the edits that were whole.
 - **Accept.** The edits are not merged into the document: they are made again in it, as it is now, inside one `Editor::apply`. So accepting is a local edit and one undo step, what others did meanwhile stays, and a block the model made is the same block whichever turn changed it later. An edit is skipped and counted if its target is gone, its insertion context changed, or any block the edit would change or remove no longer matches the preview. For a deletion that includes the descendants and the rich contents of any table cells. Loro's `apply_diff` is not used. It would make the blocks of the copy as new nodes inside the undo step, which the trash-node model rules out, since undoing and redoing a node's creation gives a block of another id; and its text changes are positions in the text as it was.
-- **Chat history** is persisted by the consumer, not stored in the document, so it never syncs to collaborators:
+- **Chat history** is kept in memory on `EditorView` and shared by all three entry points. The consumer can persist it separately; it is not stored in the document or synced to collaborators:
   ```rust
   trait AiSessionStore {
       async fn load(&self, doc: &DocId, session: &SessionId) -> Result<Option<AiTranscript>, StoreError>;
@@ -333,8 +333,8 @@ Consumers bring their own provider and API keys.
 
 | `lotype-ai` (no GPUI, runs in Linux CI) | `lotype-ui` |
 | :--- | :--- |
-| `AiSession`, state machine, multi-turn history | The prompt bar (formatting toolbar, `/ai`, Space in an empty paragraph) |
-| `DocumentState`, tool schema from `BlockSpec` | Chat panel |
+| `AiSession`, state machine, multi-turn history | Inline writing prompt and formatting toolbar suggestions |
+| `DocumentState`, tool schemas for document edits and range-bound selection replacement | Whole-document chat composer and thread |
 | Partial-JSON parsing, op validation, applying ops to the fork | Suggestion overlay with Accept / Reject / Retry |
 | The copy, the blocks changed (`AiSession::changes`), accept, reject | AI cursor and reveal animation |
 | `LlmProvider`, `AiSessionStore`, `MockProvider` (test-support) | `EditorTestContext` flows for AI |
@@ -347,22 +347,22 @@ State machine (`AiState`): `user-input → thinking → writing → reviewing �
 
 ## 8. Testing
 
-**Tools:** `cargo test`, `insta` (snapshots of the document tree and Markdown), `proptest` (collaboration convergence).
+**Tools:** `cargo test`, `proptest` for collaboration convergence, and Criterion for core benchmarks. Tests compare document trees and Markdown directly rather than using `insta`.
 
 | Layer | What is tested | How |
 | :--- | :--- | :--- |
-| Core unit | Commands, split/merge, marks, undo | `cargo test` + `insta` |
+| Core | Commands, split/merge, marks, undo, Markdown | `cargo test`; document builders and explicit assertions |
 | Convergence | N peers apply random ops and sync in random order; they must end identical and keep schema invariants | `proptest` |
-| Fixtures (only when needed) | Markdown, legacy JSON, Mermaid, LaTeX, stored in `crates/<crate>/tests/fixtures/<scope>/` | `cargo test` + `insta` |
+| Fixtures | External input kept when needed under `crates/<crate>/tests/fixtures/<scope>/`; legacy JSON, Mermaid and LaTeX fixtures are not yet present | `cargo test` |
 | UI headless | Typing, shortcuts, cross-block mouse selection, menus. IME is driven by calling `EntityInputHandler` directly, because `simulate_input` only sends keystrokes | `#[gpui::test]` + `VisualTestContext` |
-| Visual regression | Canvas screenshots compared with references | `capture_screenshot` (local only) |
+| Visual regression (planned) | Comparing canvas screenshots against references | Local only; no screenshot comparison suite yet |
 | Collaboration E2E | In-process Axum server with two WebSocket clients | `tokio::test` |
 | Performance | What a keystroke, a command and a long paste cost in a large document (`crates/core/benches/large.rs`); keystroke-to-paint latency, opening 10k blocks, scrolling and memory are not measured yet | criterion; frame timing by hand until the reference app |
-| Manual | Japanese/Chinese/Korean IME, dictation, VoiceOver, on Intel and Apple Silicon | Release checklist |
+| Manual (pending release verification) | Japanese/Chinese/Korean IME, dictation, VoiceOver, on Intel and Apple Silicon | Release checklist |
 
 All tests are pure Rust. The local, gitignored `porting/` directory is reading material only and is never used as a test oracle.
 
-### 8.1 `test-support` (shipped in the first release)
+### 8.1 `test-support`
 
 The test helpers are public, gated behind `#[cfg(any(test, feature = "test-support"))]`, so SDK consumers can test their own blocks:
 
@@ -372,36 +372,37 @@ The test helpers are public, gated behind `#[cfg(any(test, feature = "test-suppo
   ed.toggle_mark("italic")?;
   assert_editor(&ed, blocks![p!["Hello <a>", i!["wor", b!["ld"]], "<b>"], h1!["Title"]]);
   ```
-- **Collaboration helpers:** `peers(..)`, `sync(&a, &b)`, `assert_converged!`, and an exported proptest strategy `arb_ops::<MyBlock>()`.
-- **Spec checks:** `assert_spec_roundtrip::<MyBlock>(markdown)`.
 - **`EditorTestContext`** in ui wraps `VisualTestContext`, uses the same markers, and adds `ime_compose(..)` / `ime_commit()`.
 - **`MockProvider`** in ai: a scripted, deterministic LLM stream.
 
+The convergence tests use internal helpers and strategies. The SDK does not export collaboration helpers such as `assert_converged!` or `arb_ops`, or a spec round-trip helper such as `assert_spec_roundtrip`.
+
 ### 8.2 CI
 
-CI runs from alpha onwards, on a Linux runner. `core`, `storage`, `server`, `ai` and the block specs do not depend on GPUI, so CI also guards the architecture boundary: if GPUI code leaks into them, the build fails. UI tests run locally on macOS.
+CI runs on Linux. `core`, `storage`, `server` and `ai` do not depend on GPUI. UI tests run locally on macOS.
 
 ```text
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --workspace --exclude lotype-ui --all-targets -- -D warnings
 cargo test   --workspace --exclude lotype-ui
 find crates -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 600 { print; bad = 1 } END { exit bad }'
 ```
 
-Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Upgrading the toolchain means changing that one file. `lotype-ui` is excluded because its tests need macOS; run `cargo clippy` and `cargo test` for the whole workspace locally before pushing. The binary crate will be excluded the same way. A second job runs `cargo check --workspace --exclude lotype-ui` on Rust 1.90 to back the declared MSRV. A third runs `cargo deny check` against `deny.toml`: RustSec advisories, a license allow-list with nothing copyleft that would bind applications using the SDK, and crates.io as the only source. `cargo-semver-checks` and `cargo publish --dry-run` will be added before the first crate is published.
+Local builds and CI use the same toolchain, pinned in `rust-toolchain.toml` (Rust 1.100.0, with rustfmt and clippy); CI installs it with `rustup toolchain install`. Run `cargo clippy` and `cargo test` for the whole workspace locally before pushing. Separate CI jobs check commit messages with `committed`, check non-UI crates on Rust 1.90, and run `cargo deny check` against `deny.toml` for advisories, licenses, and dependency sources. `cargo-semver-checks` and `cargo publish --dry-run` are planned before the first crate is published.
 
 ---
 
 ## 9. Workspace layout
 
+Selected paths in the current workspace:
+
 ```text
 lotype/
 ├── Cargo.toml
 ├── ARCHITECTURE.md
-├── assets/                 # Fonts, SVG icons, GPUI themes
+├── assets/                 # Project branding
 ├── porting/                # Local-only reading material (gitignored): JS packages + Rust sources
 └── crates/
-    ├── app/                # Reference binary: main.rs, wiring.rs
     ├── core/src/
     │   ├── schema.rs       # BlockSpec / MarkSpec registry, built-in blocks and marks
     │   ├── document.rs     # LoroDoc wrapper: block tree, types, attributes
@@ -432,23 +433,25 @@ lotype/
     │   ├── presence.rs     # Presence: the other peers and their selections
     │   ├── value.rs, error.rs
     │   ├── test_support.rs # [feature "test-support"]
-    │   │   # planned:
-    │   ├── normalize.rs    # Read-time schema tolerance
     ├── ui/src/
     │   ├── editor.rs       # EditorView: the blocks' text
     │   ├── editor/canvas.rs # Blocks as indented rows, list markers, bars
     │   ├── editor/render.rs # A block's text and atoms as an element
     │   ├── editor/ai.rs    # A session with a model: asking, the copy shown, accept and reject
-    │   ├── editor/ai_bar.rs # The bar to ask in, the marks on changed blocks
-    │   ├── ai_panel.rs     # AiPanel: a chat on an editor's document
+    │   ├── editor/ai_prompt.rs # Contextual prompt entry points and anchor
+    │   ├── editor/ai_bar.rs # Contextual card, selection menu and marks
+    │   ├── editor/ai_review.rs # Changed words and removed blocks shown in place
+    │   ├── editor/ai_controls.rs # Session actions, Send button and their theme colors
+    │   ├── ai_panel.rs     # Whole-document chat composer and thread
     │   ├── editor/clipboard.rs # Copy, cut and paste
-    │   ├── editor/collab.rs # The other peers' carets, selections and names
+    │   ├── editor/collab.rs # Human selections, AI cursors and presence publishing
     │   ├── editor/input.rs # Typing and IME composition
     │   ├── editor/keys.rs  # Keys to core commands
     │   ├── editor/motion.rs # Cursor movement, hit-testing, the mouse
     │   ├── editor/paint.rs # Selection and caret
     │   ├── editor/blink.rs # The caret's blinking, within a frame budget
     │   ├── editor/selection.rs # Whole blocks as the selection
+    │   ├── editor/visible.rs # Row virtualization and height tracking
     │   ├── editor/slash.rs # The slash menu
     │   ├── editor/toolbar.rs # The formatting toolbar
     │   ├── editor/toolbar_menus.rs # Its block type and color dropdowns
@@ -460,62 +463,30 @@ lotype/
     │   ├── marks.rs        # Text runs from marks
     │   ├── text_el.rs      # The block text element; wrap.rs, geometry.rs
     │   ├── test_support.rs # EditorTestContext [feature "test-support"]
-    │   │   # planned:
-    │   ├── editor/         # actions.rs, block_view.rs
-    ├── code/               # lotype-code
-    ├── math/               # lotype-math
-    ├── diagram/            # lotype-diagram
+    ├── ui/assets/icons/    # Lucide SVG icons
+    ├── ui/examples/editor.rs # Local editor demo, not the reference app
     ├── server/src/         # router.rs (the WebSocket and its clients), room.rs, auth.rs; tests/relay.rs, failures.rs
-    ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs; planned: debouncer.rs, migrator.rs
+    ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs
     └── ai/src/             # provider.rs, session.rs, store.rs, context.rs, tools.rs,
                             # partial.rs (JSON still being written), apply.rs (an edit made in a document),
+                            # diff.rs (what changed in a text, by word),
                             # test_support.rs (MockProvider)
 ```
 
-Root `Cargo.toml` (target state; `members` grows as each crate's milestone starts):
+Current workspace membership in `Cargo.toml`:
 
 ```toml
 [workspace]
 resolver = "3"
-members = [
-    "crates/app",
-    "crates/core",
-    "crates/ui",
-    "crates/code",
-    "crates/math",
-    "crates/diagram",
-    "crates/server",
-    "crates/storage",
-    "crates/ai",
-]
-exclude = ["porting"]       # local reference crate (porting/rust-ref) must not join the workspace
-
-[workspace.package]
-version = "0.1.0-alpha.0"
-edition = "2024"
-rust-version = "1.90"
-license = "MIT OR Apache-2.0"
-description = "A native Rust block-based document SDK: WYSIWYM engine with realtime collaboration (Loro) and a GPUI WYSIWYG editor."
-homepage = "https://lotype.dev"
-documentation = "https://docs.lotype.dev"
-repository = "https://github.com/lotype/lotype"
-keywords = ["editor", "wysiwyg", "wysiwym", "gpui", "crdt"]
-categories = ["text-editors", "gui", "asynchronous"]
-
-[workspace.dependencies]
-loro = "1.19.0"
-gpui-component = "0.10.0"   # pulls in gpui-pre = "=0.3.12"
-pulldown-cmark = "0.13.6"
-bezel-mermaid = "0.2.29"
-katex-rs = "0.3.0"
-katex-native = "0.1.1"
+members = ["crates/ai", "crates/core", "crates/server", "crates/storage", "crates/ui"]
+exclude = ["porting"]
 ```
 
 ---
 
 ## 10. Milestones
 
-There is a single release. Work is ordered so the riskiest parts that can be tested without UI come first.
+The numbered roadmap tracks the first release. The implementation through 6c is in the workspace; manual release checks are still pending. Milestone 7 is planned. The umbrella and renderer crates in [§2](#2-crates) are not yet assigned to a milestone.
 
 | # | Milestone | Verified by |
 | :--- | :--- | :--- |
@@ -525,8 +496,8 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | 4 | ui: canvas, cross-block selection, menus, toolbar, side menu, nested blocks | `#[gpui::test]` |
 | 5 | server + storage: WebSocket relay, `Authorizer`, `DocStore`, collaborator cursors | `tokio::test` E2E |
 | 6 | ui: tables | `#[gpui::test]` + convergence |
-| 6a | ai headless: session, tools, partial streaming, fork/diff/accept/reject, plus the concurrent-accept spike. Can start after milestone 2 | `MockProvider` (CI) |
-| 6b | ui: selection prompt, chat panel, review overlay | `EditorTestContext` + `MockProvider` |
+| 6a | ai headless: session, tools, partial streaming, private draft, replay on accept, and conflict checks | `MockProvider` and acceptance regression tests (CI) |
+| 6b | ui: inline writing prompt, selection suggestions, whole-document chat, read-only review, and AI cursor shared through presence | `EditorTestContext` + `MockProvider`; relay E2E for AI presence |
 | 6c | performance: what editing a large document costs, measured and held to limits; a run of blocks placed without reading its siblings; the relay's imports and exports off the runtime's threads; and what a client lacks sent in parts | `cargo bench -p lotype-core` against the limits below; E2E for a large document |
 | 7 | Reference app as a universal macOS binary: with it the client that connects an editor to the relay, debounced auto-save, the migrator for legacy JSON, and a peer's selected blocks and cells drawn | Manual checklist |
 
@@ -539,7 +510,7 @@ There is a single release. Work is ordered so the riskiest parts that can be tes
 | Risk | Plan |
 | :--- | :--- |
 | `gpui-pre` is a third-party GPUI snapshot pinned at `=0.3.12`, and consumers inherit the pin | Accepted for alpha; re-evaluate before a stable release |
-| The AI cursor labels the latest edit, but review tints cover only added or changed text; removed content is counted, not drawn | Draw removed blocks where they were and tint blocks without text when reviews ask for more |
+| A review strikes through removed blocks with text, but not what was in them; removed blocks without text are counted, not drawn; a peer's caret in a block whose changed words are shown is off by the struck text before it | Draw a removed block's children and blocks without text, and map peers' offsets, when reviews ask for more |
 | The view reads a provider's answer where it runs, on GPUI's executor: a stream that needs Tokio fails there | Said in `with_ai`: such a provider reads its stream on its own runtime and passes the events on through a channel, as the reference app will |
 | A model's edit is left out on accept when its block was changed or removed in the document meanwhile, however small the change | Accepted: what is accepted is what was reviewed. The session says how many were left out; merge the texts when that proves too strict |
 | The copy's undo history holds the edit being written, and each edit that makes a block rebuilds the editor's draft, about 50 ms at 5000 paragraphs, each time more of it comes | Open with the draft, above |
