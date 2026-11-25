@@ -383,12 +383,9 @@ impl Schema {
 
     /// Adds a block type, replacing any existing one with the same name.
     pub fn block(mut self, spec: BlockSpec) -> Self {
-        if self
-            .blocks
-            .insert(spec.name.clone(), spec.clone())
-            .is_none()
-        {
-            self.order.push(spec.name);
+        let name = spec.name.clone();
+        if self.blocks.insert(name.clone(), spec).is_none() {
+            self.order.push(name);
         }
         self
     }
