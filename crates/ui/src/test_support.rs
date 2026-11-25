@@ -8,8 +8,11 @@ use lotype_core::test_support::{BlockNode, assert_editor};
 
 use crate::EditorView;
 
+/// An editor view in a test window, with keys, typing and IME to drive it.
 pub struct EditorTestContext<'a> {
+    /// The view.
     pub view: Entity<EditorView>,
+    /// The window's test context, for the mouse and anything else.
     pub cx: &'a mut VisualTestContext,
 }
 

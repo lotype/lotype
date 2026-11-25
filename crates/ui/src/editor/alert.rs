@@ -28,7 +28,9 @@ fn icon_of(kind: &str) -> &'static [u8] {
 /// A color in the light and in the dark color scheme.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shade {
+    /// The color in the light color scheme.
     pub light: Hsla,
+    /// The color in the dark color scheme.
     pub dark: Hsla,
 }
 
@@ -60,8 +62,11 @@ impl Shade {
 /// gives its own with [`EditorView::with_alert_look`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlertLook {
+    /// The title shown at the alert's top.
     pub title: SharedString,
+    /// The color of the bar on its left.
     pub bar: Shade,
+    /// The color of its title and icon.
     pub color: Shade,
 }
 

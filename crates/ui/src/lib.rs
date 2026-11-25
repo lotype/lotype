@@ -1,6 +1,7 @@
 //! GPUI editor for lotype documents.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod editor;
 mod icons;

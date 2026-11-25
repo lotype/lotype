@@ -43,6 +43,7 @@ type BlockView = Rc<dyn Fn(BlockContent, &mut Window, &mut App) -> AnyElement>;
 
 /// What a view of a block of its own type draws from.
 pub struct BlockContent<'a> {
+    /// The block to draw.
     pub block: BlockId,
     /// The document, to read the block's attributes from.
     pub document: &'a Document,
@@ -109,6 +110,7 @@ pub struct EditorView {
 }
 
 impl EditorView {
+    /// A view of `editor`, with the built-in keymap and slash menu entries.
     pub fn new(editor: Editor, cx: &mut Context<Self>) -> Self {
         // The menus are drawn with gpui-component, in its theme.
         if !cx.has_global::<gpui_component::Theme>() {
@@ -164,6 +166,7 @@ impl EditorView {
         self
     }
 
+    /// The editor the view shows.
     pub fn editor(&self) -> &Editor {
         &self.editor
     }
