@@ -213,6 +213,9 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai.session.is_some() || self.ai_space(text, window, cx) {
+            return;
+        }
         self.start_writing();
         let Some(shown) = self.shown() else { return };
         // Typing over a selection that spans blocks replaces all of it, as
@@ -272,6 +275,9 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai.session.is_some() {
+            return;
+        }
         self.start_writing();
         let Some(shown) = self.shown() else { return };
         if let Some(range) = range {

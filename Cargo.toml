@@ -20,6 +20,7 @@ categories = ["text-editors", "gui", "asynchronous"]
 gpui = { package = "gpui-pre", version = "=0.3.12", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
 gpui-component = "=0.10.0"
+lotype-ai = { path = "crates/ai", version = "=0.1.0-alpha.0" }
 lotype-core = { path = "crates/core", version = "=0.1.0-alpha.0" }
 lotype-storage = { path = "crates/storage", version = "=0.1.0-alpha.0", default-features = false }
 loro = "1.19.0"

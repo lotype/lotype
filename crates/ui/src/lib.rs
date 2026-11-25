@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod ai_panel;
 mod editor;
 mod icons;
 mod marks;
@@ -10,4 +11,5 @@ mod marks;
 pub mod test_support;
 mod text_el;
 
+pub use ai_panel::AiPanel;
 pub use editor::{AlertLook, BlockContent, EditorView, Shade};

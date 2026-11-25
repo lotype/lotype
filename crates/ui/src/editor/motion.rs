@@ -287,6 +287,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai.session.is_some() {
+            return;
+        }
         window.focus(&self.focus, cx);
         self.toolbar.menu = None;
         // A click ends a composition with what was composed.
@@ -334,6 +337,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.ai.session.is_some() {
+            return;
+        }
         let pressed = event.pressed_button == Some(MouseButton::Left);
         if self.side_menu_move(event.position, pressed, cx) {
             cx.notify();

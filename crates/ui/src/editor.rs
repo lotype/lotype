@@ -1,3 +1,5 @@
+mod ai;
+mod ai_bar;
 mod alert;
 mod blink;
 mod block_menu;
@@ -19,6 +21,7 @@ mod toolbar;
 mod toolbar_menus;
 mod visible;
 
+pub(crate) use ai_bar::Act;
 pub use alert::{AlertLook, Shade};
 
 use std::cell::Cell;
@@ -110,6 +113,7 @@ pub struct EditorView {
     watches: Vec<Subscription>,
     /// The other peers in the document, to draw their carets and selections.
     presence: Option<lotype_core::Presence>,
+    ai: ai::Ai,
 }
 
 impl EditorView {
@@ -153,6 +157,7 @@ impl EditorView {
             measuring: false,
             watches: Vec::new(),
             presence: None,
+            ai: ai::Ai::default(),
         }
     }
 
@@ -170,9 +175,10 @@ impl EditorView {
         self
     }
 
-    /// The editor the view shows.
+    /// The document's editor. While an AI session is open the view shows
+    /// the session's copy instead, which is no part of the document.
     pub fn editor(&self) -> &Editor {
-        &self.editor
+        self.ai.main.as_ref().unwrap_or(&self.editor)
     }
 
     /// Changes the editor and redraws, as an import from a peer does. Text
@@ -183,7 +189,7 @@ impl EditorView {
         cx: &mut Context<Self>,
         edit: impl FnOnce(&mut Editor) -> R,
     ) -> R {
-        let result = edit(&mut self.editor);
+        let result = edit(self.ai.main.as_mut().unwrap_or(&mut self.editor));
         if self.shown().is_none() {
             self.composition = None;
         }
@@ -280,6 +286,9 @@ impl Render for EditorView {
             let focus = cx.on_focus(&self.focus, window, wake);
             let active = cx.observe_window_activation(window, wake);
             self.watches = vec![blur, focus, active];
+        }
+        if std::mem::take(&mut self.ai.wanted) {
+            self.open_ai_prompt(window, cx);
         }
         // The frame's cost, up to the caret's paint, decides the blinking.
         self.blink.started.set(Some(std::time::Instant::now()));
@@ -398,7 +407,14 @@ impl Render for EditorView {
             .child(paint::selection(cx.entity()))
             // The peers under the caret, which stays in sight where one is.
             .child(collab::cursors(cx.entity()))
+            .child(ai_bar::marks(cx.entity()))
             .child(paint::caret(cx.entity()))
+            // A session's copy is the model's to write in, and no one else's.
+            .children(self.ai.session.is_some().then(|| {
+                let cover = div().absolute().top_0().left_0().size_full();
+                cover.block_mouse_except_scroll()
+            }))
+            .children(self.ai_bar(window, cx))
             .children(self.slash_menu(window, cx))
             .children(self.toolbar(window, cx))
             .children(self.link_field(window, cx))

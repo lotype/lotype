@@ -90,7 +90,8 @@ impl EditorView {
     ) {
         // While text is being composed, keys are the IME's, and while a
         // field of the editor's has the focus, they are the field's.
-        if self.composition.is_some() || !self.focus.is_focused(window) {
+        let reviewing = self.ai.session.is_some();
+        if self.composition.is_some() || !self.focus.is_focused(window) || reviewing {
             return;
         }
         let name = key_name(&event.keystroke);

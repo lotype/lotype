@@ -192,6 +192,17 @@ impl EditorView {
                     .on_click(click),
             )
         });
+        let ask = self.has_ai().then(|| {
+            let click = cx.listener(|view: &mut Self, _: &ClickEvent, window, cx| {
+                view.open_ai_prompt(window, cx);
+            });
+            let ask = Button::new("ai")
+                .ghost()
+                .small()
+                .tab_stop(false)
+                .label("AI");
+            tagged("ai", ask.tooltip("Ask AI").on_click(click))
+        });
         let (block_type, type_menu) = self.block_type_select(first, cx).unzip();
         let (color, color_menu) = self.color_button(&active, cx).unzip();
         // The open dropdown comes last, so that it is in front of the bar's
@@ -305,6 +316,7 @@ impl EditorView {
                 button("unnest", icons::UNNEST, "Unnest block").on_click(unnest),
             ))
             .children(link)
+            .children(ask)
             .child(measure(self.toolbar.bar.clone()))
             .children(dropdown);
         Some(popup(at, true, bar))

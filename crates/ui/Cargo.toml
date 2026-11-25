@@ -15,6 +15,7 @@ categories.workspace = true
 [dependencies]
 gpui.workspace = true
 gpui-component.workspace = true
+lotype-ai.workspace = true
 lotype-core.workspace = true
 unicode-segmentation.workspace = true
 
@@ -23,6 +24,7 @@ unicode-segmentation.workspace = true
 test-support = ["gpui/test-support", "lotype-core/test-support"]
 
 [dev-dependencies]
+lotype-ai = { workspace = true, features = ["test-support"] }
 lotype-ui = { path = ".", features = ["test-support"] }
 # Compiles Metal shaders at run time, so the example needs no full Xcode.
 gpui_platform = { workspace = true, features = ["font-kit", "runtime_shaders"] }
