@@ -71,8 +71,18 @@ fn guarded<T>(
 /// The document that the snapshots and updates in `parts` make together,
 /// in any order. Bytes that are none, or that Loro panics on, are an error.
 pub fn restore<P: AsRef<[u8]>>(parts: impl IntoIterator<Item = P>) -> Result<Document, StoreError> {
-    // Blocks of any type are kept, so the schema does not matter here.
-    let mut doc = Document::new(Schema::new());
+    restore_with_schema(Schema::new(), parts)
+}
+
+/// Restores snapshots and updates into an editable document with the given schema.
+///
+/// Use the same schema as the editor to interpret built-in and custom blocks.
+/// Like [`restore`], returns an error if Loro rejects a part or panics while importing it.
+pub fn restore_with_schema<P: AsRef<[u8]>>(
+    schema: Schema,
+    parts: impl IntoIterator<Item = P>,
+) -> Result<Document, StoreError> {
+    let mut doc = Document::new(schema);
     // Only the import is guarded, not what gives the parts.
     for part in parts {
         let bytes = part.as_ref();
@@ -90,4 +100,21 @@ pub fn merge<P: AsRef<[u8]>>(
     let export = |doc: &mut Document| Ok([Some(doc.export_snapshot()?), doc.export_waiting()?]);
     let (_, merged) = guarded(restore(parts)?, export)?;
     Ok(merged.into_iter().flatten().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use lotype_core::{BlockSpec, Content, Document, Schema};
+
+    #[test]
+    fn a_restored_document_uses_the_supplied_schema() {
+        let schema = Schema::builtin().block(BlockSpec::new("note", Content::Inline));
+        let mut original = Document::new(schema.clone());
+        let note = original.insert_block(None, 0, "note").unwrap();
+        original.insert_text(note, 0, "custom text").unwrap();
+        let snapshot = original.export_snapshot().unwrap();
+        let mut restored = super::restore_with_schema(schema, [snapshot]).unwrap();
+        restored.insert_text(note, 11, "!").unwrap();
+        assert_eq!(restored.plain_text(note).unwrap(), "custom text!");
+    }
 }
