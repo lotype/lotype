@@ -153,6 +153,54 @@ fn saving_a_stale_form_leaves_the_peers_attachment_alone(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn an_import_that_finishes_after_a_peer_edit_leaves_the_peers_reference_alone(
+    cx: &mut TestAppContext,
+) {
+    use std::time::Duration;
+
+    let import_time = Duration::from_millis(20);
+    let mut editor = EditorTestContext::with_view(cx, |cx| {
+        EditorView::new(editor(blocks![block("file", vec![])]), cx).with_media_importer(
+            move |_, cx| {
+                let executor = cx.background_executor();
+                let finished = executor.timer(import_time);
+                executor.spawn(async move {
+                    finished.await;
+                    Ok("asset:late".into())
+                })
+            },
+        )
+    });
+    let file = editor.editor(|editor| editor.document().blocks()[0]);
+    click(&mut editor, "media-edit");
+    click(&mut editor, "media-browse");
+    editor
+        .cx
+        .simulate_path_prompt_response(|_| Some(vec![PathBuf::from("/test/report.pdf")]));
+    editor.settle();
+    click(&mut editor, "media-save");
+    assert!(editor.cx.debug_bounds("media-error").is_none());
+
+    editor.view.update(editor.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let mut peer = Document::new(Schema::builtin());
+            peer.import(&editor.document().export_snapshot().unwrap())
+                .unwrap();
+            peer.set_attr(file, attr::URL, "asset:peer").unwrap();
+            editor.import(&peer.export_snapshot().unwrap()).unwrap();
+        });
+    });
+    editor.cx.executor().advance_clock(import_time);
+    editor.settle();
+
+    assert!(editor.cx.debug_bounds("media-error").is_some());
+    assert_eq!(
+        editor.editor(|editor| editor.document().text_of(file, attr::URL)),
+        "asset:peer"
+    );
+}
+
+#[gpui::test]
 fn only_save_imports_the_last_picked_file_and_keeps_its_opaque_reference(cx: &mut TestAppContext) {
     let imports = Rc::new(RefCell::new(Vec::new()));
     let mut editor = EditorTestContext::with_view(cx, |cx| {
