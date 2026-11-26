@@ -13,3 +13,4 @@ mod text_el;
 
 pub use ai_panel::AiPanel;
 pub use editor::{AlertLook, BlockContent, EditorView, MediaSource, Shade};
+pub use text_el::{Interline, LineDecoration, TextDecoration};

@@ -166,12 +166,18 @@ impl EditorView {
                     ),
                     false => None,
                 };
-                let document = self.editor.document();
+                let view_handle = cx.entity();
+                let editable = self.ai.session.is_none();
+                let editing = self.is_editing_block(block);
+                let document = self.document_of(block);
                 div().child(view(
                     BlockContent {
                         block,
                         document,
                         text,
+                        view: view_handle,
+                        editable,
+                        editing,
                     },
                     window,
                     cx,

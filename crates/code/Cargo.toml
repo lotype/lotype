@@ -1,0 +1,54 @@
+[package]
+name = "lotype-code"
+description = "Code blocks for lotype documents: language metadata, syntax highlighting, and Twoslash annotations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+lotype-core.workspace = true
+serde_json = "1.0.154"
+gpui = { workspace = true, optional = true }
+gpui-component = { workspace = true, optional = true, features = [
+    "tree-sitter",
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-jsdoc",
+    "tree-sitter-lua",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-ruby",
+    "tree-sitter-rust",
+    "tree-sitter-sql",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+    "tree-sitter-zig",
+] }
+lotype-ui = { workspace = true, optional = true }
+tree-sitter = { version = "0.26", optional = true }
+
+[features]
+# Enables the GPUI block view, Tree-sitter syntax highlighting, and Twoslash overlays.
+gpui = ["dep:gpui", "dep:gpui-component", "dep:lotype-ui", "dep:tree-sitter"]
+# Enables every additional Tree-sitter grammar shipped by gpui-component.
+all-languages = ["gpui", "gpui-component/tree-sitter-languages"]
+# Test helpers for GPUI views using lotype-code.
+test-support = ["gpui", "lotype-core/test-support", "lotype-ui/test-support"]
+
+[dev-dependencies]
+lotype-core = { workspace = true, features = ["test-support"] }

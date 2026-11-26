@@ -16,7 +16,7 @@ use super::EditorView;
 const PLACEHOLDER: &str = "Type '/' for blocks, or just write";
 const AI_PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
 use super::input::Shown;
-use crate::marks::{CODE_FONT, Inks, text_runs};
+use crate::marks::{CODE_FONT, Inks, apply_highlights, text_runs};
 use crate::text_el::TextElement;
 
 /// The row of a document with no blocks: where writing starts, as the first
@@ -79,6 +79,20 @@ impl EditorView {
             dark: cx.theme().mode.is_dark(),
         };
         let mut runs = text_runs(&spans, &style, inks);
+        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
+        let decoration = if marks.is_none() {
+            let decorator = self.text_decorators.get(&block_type).cloned();
+            let editing = self.is_editing_block(block);
+            decorator.map(|decorate| {
+                let doc = self.document_of(block);
+                decorate(block, doc, &text, editing, window, cx)
+            })
+        } else {
+            None
+        };
+        if let Some(decoration) = &decoration {
+            runs = apply_highlights(text.len(), runs, &decoration.highlights);
+        }
         // Text being composed is underlined, and is a span of its own.
         let mut at = 0;
         for run in &mut runs {
@@ -106,8 +120,10 @@ impl EditorView {
             }
             at += span.text.len();
         }
-        let text: String = spans.iter().map(|span| span.text.as_str()).collect();
-        let element = TextElement::new(text.into(), runs, atoms).align(align);
+        let mut element = TextElement::new(text.into(), runs, atoms).align(align);
+        if let Some(decoration) = decoration {
+            element = element.decorate(decoration);
+        }
         if !self.measuring {
             self.layouts.insert(block, element.layout().clone());
             if marks.is_some() {
@@ -184,5 +200,36 @@ impl EditorView {
             .bg(cx.theme().secondary)
             .child(text);
         chip.into_any_element()
+    }
+
+    /// Whether an active text selection currently touches `block`.
+    pub(super) fn is_editing_block(&self, block: BlockId) -> bool {
+        if self.ai.session.is_some() {
+            return false;
+        }
+        let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
+            return false;
+        };
+        if anchor.block == block || head.block == block {
+            return true;
+        }
+        let mut from = None;
+        let mut to = None;
+        let mut current = None;
+        for (idx, &id) in self.order.iter().enumerate() {
+            if id == anchor.block {
+                from = Some(idx);
+            }
+            if id == head.block {
+                to = Some(idx);
+            }
+            if id == block {
+                current = Some(idx);
+            }
+        }
+        match (from, to, current) {
+            (Some(a), Some(b), Some(c)) => c >= a.min(b) && c <= a.max(b),
+            _ => false,
+        }
     }
 }

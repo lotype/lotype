@@ -168,4 +168,35 @@ impl TextLayout {
         });
         rectangles.unwrap_or_default()
     }
+
+    /// The UTF-8 byte offset strictly under `at`, or `None` when `at` falls
+    /// outside any glyph run (such as blank space to the right or an interline row).
+    pub(crate) fn byte_at(&self, at: Point<Pixels>) -> Option<usize> {
+        self.read(|laid| {
+            let local = at - laid.origin;
+            if local.x < Pixels::ZERO || local.y < Pixels::ZERO || local.y >= laid.size.height {
+                return None;
+            }
+            let line = laid.lines.iter().find(|line| {
+                let text_top = line.top + line.text_top;
+                local.y >= text_top && local.y < text_top + laid.line_height
+            })?;
+            let right_edge = line
+                .pieces
+                .last()
+                .map_or(line.left, |piece| piece.x + piece.width);
+            if local.x < line.left || local.x >= right_edge {
+                return None;
+            }
+            let index = line.index(local.x).min(line.range.end.saturating_sub(1));
+            (line.range.contains(&index)).then_some(index)
+        })
+    }
+
+    /// Bounding rectangle covering a single-line or multi-line byte `range`.
+    pub(crate) fn range_bounds(&self, range: Range<usize>) -> Option<Bounds<Pixels>> {
+        let rects = self.rectangles(range.start, range.end, false);
+        let first = *rects.first()?;
+        Some(rects[1..].iter().fold(first, |acc, rect| acc.union(rect)))
+    }
 }

@@ -44,12 +44,14 @@ use lotype_core::{
     default_slash_items,
 };
 
-use crate::text_el::{Affinity, TextLayout};
+use crate::text_el::{Affinity, TextDecoration, TextLayout};
 use input::Composition;
 
 /// Draws an atom of one type.
 type AtomView = Rc<dyn Fn(&Atom, &mut Window, &mut App) -> AnyElement>;
 type BlockView = Rc<dyn Fn(BlockContent, &mut Window, &mut App) -> AnyElement>;
+type TextDecorator =
+    Rc<dyn Fn(BlockId, &Document, &str, bool, &mut Window, &mut App) -> TextDecoration>;
 
 /// What a view of a block of its own type draws from.
 pub struct BlockContent<'a> {
@@ -60,6 +62,26 @@ pub struct BlockContent<'a> {
     /// The block's text, which the editor lays out and edits, for a type
     /// that holds text: the view puts it where the text goes.
     pub text: Option<AnyElement>,
+    pub(crate) view: Entity<EditorView>,
+    pub(crate) editable: bool,
+    pub(crate) editing: bool,
+}
+
+impl BlockContent<'_> {
+    /// Handle to the owning [`EditorView`], for controls that update block attributes.
+    pub fn view(&self) -> &Entity<EditorView> {
+        &self.view
+    }
+
+    /// Whether interactive block controls should allow edits (`false` during AI preview).
+    pub fn is_editable(&self) -> bool {
+        self.editable
+    }
+
+    /// Whether the active text caret or selection currently touches this block.
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
 }
 
 /// A GPUI view of an [`Editor`]: the text of its blocks, with their marks.
@@ -81,6 +103,7 @@ pub struct EditorView {
     side: Option<(Pos, Affinity)>,
     atom_views: HashMap<String, AtomView>,
     block_views: HashMap<String, BlockView>,
+    text_decorators: HashMap<String, TextDecorator>,
     /// Toggle list items whose children are hidden.
     closed: HashSet<BlockId>,
     scroll: ScrollHandle,
@@ -143,6 +166,7 @@ impl EditorView {
             side: None,
             atom_views: HashMap::new(),
             block_views: HashMap::new(),
+            text_decorators: HashMap::new(),
             closed: HashSet::new(),
             scroll: ScrollHandle::new(),
             reveal: Rc::default(),
@@ -233,6 +257,20 @@ impl EditorView {
         self
     }
 
+    /// Styles the rendered text of `block_type` at paint time (such as syntax
+    /// highlighting, line tints, and Twoslash interline callouts) without
+    /// storing marks in the document.
+    pub fn with_text_decorator(
+        mut self,
+        block_type: &str,
+        decorate: impl Fn(BlockId, &Document, &str, bool, &mut Window, &mut App) -> TextDecoration
+        + 'static,
+    ) -> Self {
+        self.text_decorators
+            .insert(block_type.to_owned(), Rc::new(decorate));
+        self
+    }
+
     /// Where a caret at `pos` was drawn in the last frame, as tall as its text.
     pub fn caret_bounds(&self, pos: Pos) -> Option<Bounds<Pixels>> {
         let affinity = self.affinity(pos);
@@ -242,6 +280,20 @@ impl EditorView {
     /// Where a block's text was in the last frame.
     pub fn text_bounds(&self, block: BlockId) -> Option<Bounds<Pixels>> {
         self.layouts.get(&block)?.bounds()
+    }
+
+    /// UTF-8 byte offset strictly under `point` in `block`'s last text layout.
+    pub fn byte_offset_at(&self, block: BlockId, point: gpui::Point<Pixels>) -> Option<usize> {
+        self.layouts.get(&block)?.byte_at(point)
+    }
+
+    /// Screen bounds of `range` in `block`'s last text layout.
+    pub fn range_bounds(
+        &self,
+        block: BlockId,
+        range: std::ops::Range<usize>,
+    ) -> Option<Bounds<Pixels>> {
+        self.layouts.get(&block)?.range_bounds(range)
     }
 
     /// The side of a soft wrap the caret at `head` is on.

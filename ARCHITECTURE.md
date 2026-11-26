@@ -79,6 +79,7 @@ Workspace members today:
 | `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum`, `tokio` |
 | `lotype-storage` | The `DocStore` trait a server saves through, and one in SQLite (feature `sqlite`, on by default); debounced auto-save and the migrator for legacy Tiptap/BlockNote JSON come with the reference app | `core`, `rusqlite`, `tokio` |
 | `lotype-ai` | A chat with a model about a document: the provider trait, the tools, and the private copy the model edits until its edits are accepted | `core`, `storage` (for `DocId`), `futures-core`, `serde_json` |
+| `lotype-code` | Code blocks with language/title metadata, Tree-sitter highlighting, JS/TS Twoslash directives (`^?`, `^|`, `@errors`, `@noErrors`, `@filename`, `---cut---`), built-in & stdio LSP semantic analysis, and folded GPUI preview (`gpui` feature) | `core`, `serde_json`, optional `ui`, `gpui-pre`, `gpui-component`, `tree-sitter` |
 
 Planned and not yet workspace members:
 
@@ -86,7 +87,6 @@ Planned and not yet workspace members:
 | :--- | :--- | :--- |
 | `app` (binary) | Reference application that wires Tokio and GPUI together | 7 |
 | `lotype` | Umbrella crate with feature-gated re-exports | Unassigned |
-| `lotype-code` | Syntax highlighting for code blocks | Unassigned |
 | `lotype-math` | LaTeX blocks and inline math | Unassigned |
 | `lotype-diagram` | Mermaid diagram blocks | Unassigned |
 
@@ -94,12 +94,14 @@ All dependencies point towards `core`. `core` never depends on GPUI, Tokio or an
 
 ```mermaid
 flowchart TD
+    CODE["lotype-code<br/>Twoslash • optional GPUI Tree-sitter"]
     UI["lotype-ui<br/>GPUI • gpui-component"]
     SERVER["lotype-server<br/>Axum WebSocket"]
     STORAGE["lotype-storage<br/>DocStore • optional SQLite"]
     AI["lotype-ai<br/>LlmProvider • private draft • replay"]
     CORE["lotype-core<br/>Loro • WYSIWYM • collaboration"]
 
+    CODE --> CORE & UI
     UI --> CORE & AI & STORAGE
     SERVER --> CORE & STORAGE
     STORAGE --> CORE
@@ -218,7 +220,7 @@ Built-in `BlockSpec`s live in `lotype-core`, and their GPUI views live in `lotyp
 | Crate | Contents | Renderer |
 | :--- | :--- | :--- |
 | `lotype-ui` | Blocks: Paragraph, Heading, Quote, Alert, Bullet/Numbered/Check/Toggle list, Code (plain), Table, Image, File, Divider, PageBreak<br/>Styles: bold, italic, underline, strike, code, text color, background color<br/>Inline: text, link | `text_el` |
-| `lotype-code` (planned) | Syntax highlighting | gpui-component `highlighter` |
+| `lotype-code` | Header (`language`, `title`, `Twoslash`, `Copy`), Tree-sitter syntax highlighting, line highlights/diffs, Twoslash (`^?`, `@error`, `@hover`, `CodeAnalyzer`) | `gpui-component` `highlighter` + `text_el` decorations |
 | `lotype-math` (planned) | Block and inline LaTeX | `katex-rs` + `katex-native` |
 | `lotype-diagram` (planned) | Mermaid diagrams | `bezel-mermaid` |
 
@@ -470,6 +472,8 @@ lotype/
     ├── ui/examples/editor.rs # Local editor demo, not the reference app
     ├── server/src/         # router.rs (the WebSocket and its clients), room.rs, auth.rs; tests/relay.rs, failures.rs
     ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs
+    ├── code/src/           # languages.rs, lines.rs, analyzer.rs, twoslash.rs (+ directives.rs),
+    │                       # infer.rs (+ builtins.rs), lsp.rs, highlight.rs (+ cards.rs), view.rs (+ header.rs)
     └── ai/src/             # provider.rs, session.rs, store.rs, context.rs, tools.rs,
                             # partial.rs (JSON still being written), apply.rs (an edit made in a document),
                             # diff.rs (what changed in a text, by word),
@@ -481,7 +485,7 @@ Current workspace membership in `Cargo.toml`:
 ```toml
 [workspace]
 resolver = "3"
-members = ["crates/ai", "crates/core", "crates/server", "crates/storage", "crates/ui"]
+members = ["crates/ai", "crates/code", "crates/core", "crates/server", "crates/storage", "crates/ui"]
 exclude = ["porting"]
 ```
 

@@ -79,6 +79,88 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
     run
 }
 
+/// Splits and styles `runs` with `highlights`, preserving existing run properties
+/// where a highlight leaves a field unset.
+pub(crate) fn apply_highlights(
+    text_len: usize,
+    runs: Vec<TextRun>,
+    highlights: &[(std::ops::Range<usize>, HighlightStyle)],
+) -> Vec<TextRun> {
+    if highlights.is_empty() || runs.is_empty() || text_len == 0 {
+        return runs;
+    }
+    let mut cuts = Vec::with_capacity(runs.len() * 2 + highlights.len() * 2 + 2);
+    cuts.push(0);
+    cuts.push(text_len);
+    let mut pos = 0;
+    for run in &runs {
+        pos += run.len;
+        cuts.push(pos.min(text_len));
+    }
+    for (range, _) in highlights {
+        cuts.push(range.start.min(text_len));
+        cuts.push(range.end.min(text_len));
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    let mut run_starts = Vec::with_capacity(runs.len());
+    let mut at = 0;
+    for run in &runs {
+        run_starts.push(at);
+        at += run.len;
+    }
+
+    let mut out: Vec<TextRun> = Vec::with_capacity(cuts.len());
+    for pair in cuts.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if start >= end {
+            continue;
+        }
+        let base_idx = run_starts
+            .partition_point(|&run_start| run_start <= start)
+            .saturating_sub(1);
+        let mut run = TextRun {
+            len: end - start,
+            ..runs[base_idx].clone()
+        };
+        for (range, style) in highlights {
+            if range.start <= start && end <= range.end {
+                if let Some(color) = style.color {
+                    run.color = color;
+                }
+                if let Some(bg) = style.background_color {
+                    run.background_color = Some(bg);
+                }
+                if let Some(weight) = style.font_weight {
+                    run.font.weight = weight;
+                }
+                if let Some(font_style) = style.font_style {
+                    run.font.style = font_style;
+                }
+                if let Some(underline) = style.underline {
+                    run.underline = Some(underline);
+                }
+                if let Some(strike) = style.strikethrough {
+                    run.strikethrough = Some(strike);
+                }
+            }
+        }
+        if let Some(last) = out.last_mut() {
+            let merged = TextRun {
+                len: last.len,
+                ..run.clone()
+            };
+            if *last == merged {
+                last.len += run.len;
+                continue;
+            }
+        }
+        out.push(run);
+    }
+    out
+}
+
 /// A color mark's value: one of BlockNote's names, in the light or the
 /// dark color scheme, or a CSS hex color.
 pub(crate) fn color(value: &Value, background: bool, dark: bool) -> Option<Hsla> {

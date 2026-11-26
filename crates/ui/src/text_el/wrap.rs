@@ -14,6 +14,9 @@ pub(super) struct Input {
     /// Where each run begins.
     pub(super) starts: Vec<usize>,
     pub(super) atoms: Vec<(Range<usize>, Size<Pixels>)>,
+    pub(super) interlines: Vec<(usize, Size<Pixels>)>,
+    pub(super) hidden_lines: Vec<usize>,
+    pub(super) trimmed_lines: Vec<(usize, usize)>,
     pub(super) font_size: Pixels,
     pub(super) line_height: Pixels,
     /// How far right each line goes in the room it leaves: 0 left, 1 right.
@@ -160,37 +163,59 @@ impl Input {
 
     pub(super) fn lay_out(&self, wrap_width: Option<Pixels>, window: &Window) -> Laid {
         let mut lines = Vec::new();
+        let mut placed_interlines = Vec::new();
         let mut top = Pixels::ZERO;
         let mut widest = Pixels::ZERO;
         let mut start = 0;
-        for hard in self.text.split('\n') {
-            let range = start..start + hard.len();
-            start = range.end + 1;
-            let line = self.hard(range.clone(), window);
-            for range in self.breaks(&line, range, wrap_width) {
-                // Space hanging past the edge takes no width.
-                let content = range.start + self.text[range.clone()].trim_end().len();
-                let width = line.x(content) - line.x(range.start);
-                widest = widest.max(width);
-                let mut laid = self.line(&line, range, top, window);
-                if let Some(room) = wrap_width.map(|wrap| wrap - width) {
-                    let left = (room * self.align).max(Pixels::ZERO);
-                    for piece in &mut laid.pieces {
-                        piece.x += left;
+        for (hard_line, hard) in self.text.split('\n').enumerate() {
+            let full_range = start..start + hard.len();
+            start = full_range.end + 1;
+            if !self.hidden_lines.contains(&hard_line) {
+                let visible_end = self
+                    .trimmed_lines
+                    .iter()
+                    .find_map(|&(line_idx, end)| (line_idx == hard_line).then_some(end))
+                    .unwrap_or(full_range.end)
+                    .clamp(full_range.start, full_range.end);
+                let range = full_range.start..visible_end;
+                let line = self.hard(range.clone(), window);
+                for (sub_idx, range) in self
+                    .breaks(&line, range, wrap_width)
+                    .into_iter()
+                    .enumerate()
+                {
+                    // Space hanging past the edge takes no width.
+                    let content = range.start + self.text[range.clone()].trim_end().len();
+                    let width = line.x(content) - line.x(range.start);
+                    widest = widest.max(width);
+                    let mut laid = self.line(&line, hard_line, sub_idx == 0, range, top, window);
+                    if let Some(room) = wrap_width.map(|wrap| wrap - width) {
+                        let left = (room * self.align).max(Pixels::ZERO);
+                        for piece in &mut laid.pieces {
+                            piece.x += left;
+                        }
+                        laid.left = left;
                     }
-                    laid.left = left;
+                    top += laid.height;
+                    lines.push(laid);
                 }
-                top += laid.height;
-                lines.push(laid);
+                if let Some(last) = lines.last_mut() {
+                    last.wraps = false;
+                }
             }
-            if let Some(last) = lines.last_mut() {
-                last.wraps = false;
+            for (index, &(after_line, measured)) in self.interlines.iter().enumerate() {
+                if after_line == hard_line {
+                    widest = widest.max(measured.width);
+                    placed_interlines.push((index, top));
+                    top += measured.height;
+                }
             }
         }
         Laid {
             text: self.text.clone(),
             line_height: self.line_height,
             lines,
+            interlines: placed_interlines,
             size: size(wrap_width.unwrap_or(widest), top),
             wrap_width,
             origin: Default::default(),
@@ -247,7 +272,15 @@ impl Input {
         }
     }
 
-    fn line(&self, hard: &Hard, range: Range<usize>, top: Pixels, window: &Window) -> Line {
+    fn line(
+        &self,
+        hard: &Hard,
+        hard_line: usize,
+        first_of_hard: bool,
+        range: Range<usize>,
+        top: Pixels,
+        window: &Window,
+    ) -> Line {
         let left = hard.x(range.start);
         let mut pieces = Vec::new();
         let mut text_top = Pixels::ZERO;
@@ -298,6 +331,8 @@ impl Input {
             }
         }
         Line {
+            hard_line,
+            first_of_hard,
             range,
             wraps: true,
             left: Pixels::ZERO,

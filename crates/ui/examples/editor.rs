@@ -73,11 +73,25 @@ An application adds atoms of its own to the text, one step for the arrows, as th
 
 ### Code block
 
+```ts twoslash title="src/blocks.ts"
+// @noErrors
+interface Block {
+  id: string
+  kind: "paragraph" | "code"
+}
+// ---cut---
+/** Formats a block label for the outline. */
+function describeBlock(block: Block) {
+  return `${block.kind}:${block.id}` // [!code ++]
+}
+
+const label = describeBlock({ id: "b1", kind: "code" })
+//    ^?
+label.to
+//      ^|
 ```
-// Type ``` and a space, or press ⌥⌘C.
-// No Markdown turns into anything here.
-let tour = "of the blocks";
-```
+
+Hover any identifier for its inferred signature and JSDoc. Click inside the block to edit hidden `---cut---`, `^?`, and `^|` Twoslash directives, then press Escape or click Preview to fold back.
 
 ### Table
 
@@ -302,7 +316,7 @@ fn main() {
         cx.open_window(options, move |window, cx| {
             let editor = cx.new(|cx| {
                 let imports = paths.clone();
-                EditorView::new(editor, cx)
+                let view = EditorView::new(editor, cx)
                     .with_ai(provider)
                     .with_media_importer(move |path, _| {
                         // Keep the mapping for this demo session. Applications can
@@ -315,7 +329,8 @@ fn main() {
                     .with_media_resolver(move |reference| match paths.borrow().get(reference) {
                         Some(path) => Some(MediaSource::Path(path.clone())),
                         None => Some(MediaSource::Url(reference.to_owned())),
-                    })
+                    });
+                lotype_code::install(view, cx)
             });
             window.focus(&editor.focus_handle(cx), cx);
             cx.new(|_| Page(editor))
