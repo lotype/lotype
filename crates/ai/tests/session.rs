@@ -19,6 +19,56 @@ fn shown(doc: &Document) -> String {
     outline(doc, None)
 }
 
+#[tokio::test]
+async fn cancelling_a_running_future_discards_the_unfinished_call_and_allows_retry() {
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use futures_core::Stream;
+    use lotype_ai::{LlmProvider, LlmRequest, LlmStream};
+
+    struct Stalled(LlmEvent);
+    struct OneThenPending(Option<LlmEvent>);
+
+    impl Stream for OneThenPending {
+        type Item = Result<LlmEvent, LlmError>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            match self.0.take() {
+                Some(event) => Poll::Ready(Some(Ok(event))),
+                None => Poll::Pending,
+            }
+        }
+    }
+
+    impl LlmProvider for Stalled {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            Box::pin(OneThenPending(Some(self.0.clone())))
+        }
+    }
+
+    let (main, [one, ..]) = three();
+    let provider = Stalled(LlmEvent::ToolCallDelta {
+        id: "one".into(),
+        name: "update".into(),
+        args_delta: update_text(one, "ONE").to_string(),
+    });
+    let mut session = AiSession::new(&main).unwrap();
+    let request = session.prompt("Rewrite").unwrap();
+    {
+        let mut run = std::pin::pin!(session.run(&provider, request));
+        std::future::poll_fn(|cx| {
+            assert!(run.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+    assert_eq!(session.state(), &AiState::Error("request cancelled".into()));
+    assert_eq!(session.document().plain_text(one).unwrap(), "one");
+    assert!(session.retry().is_ok());
+    assert_eq!(session.state(), &AiState::Thinking);
+}
+
 /// A whole call, in one part.
 fn call(session: &mut AiSession, id: &str, name: &str, args: serde_json::Value) {
     let event = LlmEvent::ToolCallDelta {

@@ -114,6 +114,22 @@ pub struct AiSession {
     original: HashMap<BlockId, Vec<Span>>,
 }
 
+/// Returns a started request to a retryable state when its future is dropped.
+struct Running<'a> {
+    session: &'a mut AiSession,
+    finished: bool,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self
+                .session
+                .fail(&crate::LlmError("request cancelled".into()));
+        }
+    }
+}
+
 impl AiSession {
     /// A session on the document of `editor` as it is now, with its
     /// selection as what the user means.
@@ -392,27 +408,40 @@ impl AiSession {
 
     /// Sends `request` to `provider` and takes its answer to the end. A
     /// request that fails leaves the session in [`AiState::Error`].
+    /// Dropping the future after it starts also leaves a retryable error.
     pub async fn run(
         &mut self,
         provider: &dyn LlmProvider,
         request: LlmRequest,
     ) -> Result<(), AiError> {
-        let mut stream = provider.stream(request);
-        loop {
-            let next = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx));
-            match next.await {
-                Some(Ok(event)) => {
-                    let done = event == LlmEvent::Done;
-                    self.feed(event)?;
-                    if done {
-                        return Ok(());
+        if !matches!(self.state, AiState::Thinking | AiState::Writing) {
+            return Err(AiError::State);
+        }
+        let mut running = Running {
+            session: self,
+            finished: false,
+        };
+        let result = async {
+            let mut stream = provider.stream(request);
+            loop {
+                let next = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx));
+                match next.await {
+                    Some(Ok(event)) => {
+                        let done = event == LlmEvent::Done;
+                        running.session.feed(event)?;
+                        if done {
+                            return Ok(());
+                        }
                     }
+                    Some(Err(error)) => return running.session.fail(&error),
+                    // An answer that ends without saying so has ended.
+                    None => return running.session.feed(LlmEvent::Done),
                 }
-                Some(Err(error)) => return self.fail(&error),
-                // An answer that ends without saying so has ended.
-                None => return self.feed(LlmEvent::Done),
             }
         }
+        .await;
+        running.finished = true;
+        result
     }
 
     /// The blocks the edits changed, for a view to mark: those of the copy
