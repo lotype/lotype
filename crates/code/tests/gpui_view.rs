@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{Modifiers, MouseMoveEvent, TestAppContext};
+use gpui::{Modifiers, MouseMoveEvent, ScrollDelta, ScrollEvent, TestAppContext, point, px};
 use lotype_code::{
     AnalysisFuture, AnalysisRequest, CodeAnalysis, CodeAnalyzer, CodeBlocks, HoverAnnotation,
 };
@@ -91,6 +91,13 @@ let bad: u8 = \"no\";
     });
     ed.settle();
     assert!(ed.cx.debug_bounds("twoslash-hover").is_some());
+    ed.cx.simulate_event(ScrollEvent {
+        position: count_bounds.center(),
+        delta: ScrollDelta::Pixels(point(px(0.), px(40.))),
+        ..Default::default()
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("twoslash-hover").is_none());
 
     // Copy strips Twoslash directive lines while preserving code.
     click(&mut ed, "code-copy");

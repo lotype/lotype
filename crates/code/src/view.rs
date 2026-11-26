@@ -362,6 +362,8 @@ impl CodeState {
         let editor_for_move = args.editor_view.clone();
         let state_for_move = cx.entity();
         let state_for_leave = cx.entity();
+        let state_for_scroll = cx.entity();
+        let editor_for_scroll = args.editor_view.clone();
 
         let body = div()
             .id(elem_id("code-body", block_id))
@@ -414,6 +416,19 @@ impl CodeState {
                 });
                 if clear {
                     args.editor_view.update(cx, |_, cx| cx.notify());
+                }
+            })
+            .on_scroll(move |_, _, cx| {
+                let clear = state_for_scroll.update(cx, |state, _| {
+                    if state.hovered.as_ref().is_some_and(|h| h.block == block_id) {
+                        state.hovered = None;
+                        true
+                    } else {
+                        false
+                    }
+                });
+                if clear {
+                    editor_for_scroll.update(cx, |_, cx| cx.notify());
                 }
             })
             .children(args.text);
