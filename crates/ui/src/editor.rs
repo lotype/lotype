@@ -321,7 +321,7 @@ impl Render for EditorView {
         // The rows of the frame before stay whole while these are made, for
         // what a row draws by the rows around it, as where a block lands.
         let all = self.shape(selected);
-        self.keep_media_form(&all);
+        self.keep_media_form(&all, window, cx);
         let candidates: Vec<BlockId> = all.iter().map(|row| row.block).collect();
         let ai_cursor = self.ai_cursor_row(&candidates);
         let peers = self
@@ -398,6 +398,7 @@ impl Render for EditorView {
         }
         self.rows = blocks;
         self.row_items = items;
+        self.reveal_media_form();
         let blank = self.editor.document().children(None);
         if blank.is_ok_and(|blocks| blocks.is_empty()) && all.is_empty() {
             let empty = render::empty_document(self.has_ai(), cx);

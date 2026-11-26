@@ -1,4 +1,8 @@
 use std::path::PathBuf;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use gpui::{Modifiers, Task, TestAppContext};
 use lotype_core::test_support::{block, editor};
@@ -146,4 +150,186 @@ fn saving_a_stale_form_leaves_the_peers_attachment_alone(cx: &mut TestAppContext
         editor.editor(|editor| editor.document().text_of(file, attr::URL)),
         "https://example.com/peer.pdf"
     );
+}
+
+#[gpui::test]
+fn only_save_imports_the_last_picked_file_and_keeps_its_opaque_reference(cx: &mut TestAppContext) {
+    let imports = Rc::new(RefCell::new(Vec::new()));
+    let mut editor = EditorTestContext::with_view(cx, |cx| {
+        let imports = imports.clone();
+        EditorView::new(
+            editor(blocks![block("file", vec![]), block("file", vec![])]),
+            cx,
+        )
+        .with_media_importer(move |path, _| {
+            imports.borrow_mut().push(path);
+            Task::ready(Ok("assets:report ".into()))
+        })
+    });
+    let pick = |editor: &mut EditorTestContext, name: &str| {
+        click(editor, "media-browse");
+        editor
+            .cx
+            .simulate_path_prompt_response(|_| Some(vec![PathBuf::from(name)]));
+        editor.settle();
+    };
+    click(&mut editor, "media-edit");
+    assert!(editor.cx.debug_bounds("media-edit").is_none());
+    pick(&mut editor, "/test/discard.pdf");
+    click(&mut editor, "media-cancel");
+    assert!(imports.borrow().is_empty());
+    click(&mut editor, "media-edit");
+    pick(&mut editor, "/test/draft.pdf");
+    pick(&mut editor, "/test/final.pdf");
+    assert!(imports.borrow().is_empty());
+    click(&mut editor, "media-save");
+    assert_eq!(*imports.borrow(), [PathBuf::from("/test/final.pdf")]);
+    let saved = editor.editor(|editor| {
+        let doc = editor.document();
+        doc.blocks()
+            .into_iter()
+            .filter_map(|block| BlockKind::of(doc, block))
+            .collect::<Vec<_>>()
+    });
+    assert!(saved.contains(&BlockKind::File {
+        url: "assets:report ".into(),
+        name: "final.pdf".into(),
+    }));
+}
+
+#[gpui::test]
+fn a_replaced_resolution_is_not_opened_from_the_old_button(cx: &mut TestAppContext) {
+    use gpui::{MouseButton, MouseDownEvent, MouseUpEvent};
+    let changed = Rc::new(Cell::new(false));
+    let mut editor = EditorTestContext::with_view(cx, |cx| {
+        let changed = changed.clone();
+        EditorView::new(
+            editor(blocks![block("file", vec![]).attr("url", "asset:report")]),
+            cx,
+        )
+        .with_media_resolver(move |_| {
+            let url = if changed.get() {
+                "https://example.com/new"
+            } else {
+                "https://example.com/old"
+            };
+            Some(MediaSource::Url(url.into()))
+        })
+    });
+    editor.settle();
+    let old_button = editor
+        .cx
+        .debug_bounds("media-open")
+        .expect("open button")
+        .center();
+    editor.cx.simulate_event(MouseDownEvent {
+        position: old_button,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    changed.set(true);
+    editor.cx.simulate_event(MouseUpEvent {
+        position: old_button,
+        modifiers: Modifiers::none(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+    assert_eq!(editor.cx.opened_url(), None);
+    click(&mut editor, "media-open");
+    assert_eq!(
+        editor.cx.opened_url().as_deref(),
+        Some("https://example.com/new")
+    );
+}
+
+#[gpui::test]
+fn the_editor_recovers_focus_when_the_form_target_is_deleted(cx: &mut TestAppContext) {
+    let mut editor = EditorTestContext::new(cx, blocks![p!["<a>"], block("file", vec![])]);
+    let file = editor.editor(|editor| editor.document().blocks()[1]);
+    click(&mut editor, "media-edit");
+    editor.view.update(editor.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let mut peer = Document::new(Schema::builtin());
+            peer.import(&editor.document().export_snapshot().unwrap())
+                .unwrap();
+            peer.remove_block(file).unwrap();
+            editor.import(&peer.export_snapshot().unwrap()).unwrap();
+        });
+    });
+    editor.settle();
+    assert!(editor.cx.debug_bounds("media-reference").is_none());
+    editor.type_text("back");
+    editor.assert(blocks![p!["back<a>"]]);
+}
+
+#[gpui::test]
+fn files_with_invalid_urls_keep_their_label_but_have_no_open_action(cx: &mut TestAppContext) {
+    let mut editor = EditorTestContext::new(
+        cx,
+        blocks![
+            block("file", vec![])
+                .attr("url", "https://?report")
+                .attr("name", "Report"),
+        ],
+    );
+    assert!(editor.cx.debug_bounds("media-open").is_none());
+    click(&mut editor, "media-edit");
+    editor.keys("cmd-a backspace enter");
+    assert!(editor.cx.debug_bounds("media-title").is_some());
+}
+
+#[gpui::test]
+fn editing_the_bottom_of_a_tall_image_scrolls_the_form_into_view(cx: &mut TestAppContext) {
+    use gpui::{ScrollDelta, ScrollEvent, point, px, size};
+    let mut editor = EditorTestContext::with_view(cx, |cx| {
+        let mut blocks = blocks![block("image", vec![]).attr("url", "assets:logo")];
+        blocks.extend((0..24).map(|_| p!["line"]));
+        EditorView::new(editor(blocks), cx).with_media_resolver(|_| {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/logo.png");
+            Some(MediaSource::Path(path))
+        })
+    });
+    editor.cx.simulate_resize(size(px(360.), px(220.)));
+    editor.settle();
+    let action = editor
+        .cx
+        .debug_bounds("media-edit")
+        .expect("image edit action");
+    editor.cx.simulate_event(ScrollEvent {
+        position: point(px(100.), px(100.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(45.) - action.center().y)),
+        ..Default::default()
+    });
+    editor.settle();
+    click(&mut editor, "media-edit");
+    let field = editor
+        .cx
+        .debug_bounds("media-reference")
+        .expect("reference field");
+    assert!(field.top() >= px(0.) && field.bottom() <= px(220.));
+}
+
+#[gpui::test]
+fn a_long_image_caption_wraps_in_a_narrow_window(cx: &mut TestAppContext) {
+    let caption = "A caption that covers more than one line in a narrow editor window.";
+    let mut editor = EditorTestContext::new(
+        cx,
+        blocks![
+            block("image", vec![])
+                .attr("url", "asset:missing")
+                .attr("caption", caption),
+        ],
+    );
+    editor
+        .cx
+        .simulate_resize(gpui::size(gpui::px(260.), gpui::px(250.)));
+    editor.settle();
+    let title = editor
+        .cx
+        .debug_bounds("media-title")
+        .expect("image caption");
+    let line = editor.cx.update(|window, _| window.line_height());
+    assert!(title.size.height > line);
 }
