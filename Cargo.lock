@@ -4023,6 +4023,7 @@ dependencies = [
  "lotype-core",
  "lotype-storage",
  "lotype-ui",
+ "serde_json",
  "unicode-segmentation",
  "url",
 ]
