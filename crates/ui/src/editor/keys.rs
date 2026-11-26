@@ -109,10 +109,12 @@ impl EditorView {
             let after = &text[head.offset..];
             let line_before = before.rsplit('\n').next().unwrap_or_default();
             let line_after = after.split('\n').next().unwrap_or_default();
-            if before.contains('\n') && line_before.is_empty() && line_after.is_empty() {
-                self.editor
-                    .set_selection(Some(Selection::Blocks(vec![head.block])))
-                    .ok();
+            if head.offset == text.len()
+                && before.contains('\n')
+                && line_before.is_empty()
+                && line_after.is_empty()
+            {
+                self.editor.add_text_block_after(head.block).ok();
             } else {
                 self.editor.insert_line_break().ok();
             }

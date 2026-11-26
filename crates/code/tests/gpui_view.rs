@@ -168,14 +168,14 @@ fn enter_in_code_block_inserts_lines_then_leaves_edit_mode_on_empty_line(
     ));
 
     ed.keys("enter");
-    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 1);
+    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 2);
     assert_eq!(
         ed.editor(|editor| editor.document().plain_text(code).unwrap()),
         "fn main() {}\n"
     );
     assert!(matches!(
         ed.editor(|editor| editor.selection().cloned()),
-        Some(Selection::Blocks(blocks)) if blocks == vec![code]
+        Some(Selection::Text { head, .. }) if head.block != code
     ));
 }
 
