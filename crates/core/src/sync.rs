@@ -80,24 +80,41 @@ pub struct SyncParts(Vec<u8>);
 impl SyncParts {
     /// Takes a message as it came. Gives it back, an `Update` with the
     /// parts before it, or `None` for a part, which is kept for its end.
-    /// Parts of more than `limit` bytes together are an error, and
-    /// forgotten: a peer could send them without end.
+    /// An update payload larger than `limit` bytes is an error. The limit
+    /// counts all parts and the final update, and an error clears the parts.
     pub fn join(&mut self, message: SyncMessage, limit: usize) -> Result<Option<SyncMessage>> {
         match message {
             SyncMessage::Part(part) => {
+                self.check_len(part.len(), limit)?;
                 self.0.extend(part);
-                if self.0.len() > limit {
-                    self.0 = Vec::new();
-                    return Err(Error::InvalidUpdate("an update without end".into()));
-                }
                 Ok(None)
             }
-            SyncMessage::Update(end) if !self.0.is_empty() => {
+            SyncMessage::Update(end) => {
+                self.check_len(end.len(), limit)?;
+                if self.0.is_empty() {
+                    return Ok(Some(SyncMessage::Update(end)));
+                }
                 let mut update = std::mem::take(&mut self.0);
                 update.extend(end);
                 Ok(Some(SyncMessage::Update(update)))
             }
             whole => Ok(Some(whole)),
         }
+    }
+
+    /// Checks the payload length before growing the buffer.
+    fn check_len(&mut self, incoming: usize, limit: usize) -> Result<()> {
+        if self
+            .0
+            .len()
+            .checked_add(incoming)
+            .is_some_and(|len| len <= limit)
+        {
+            return Ok(());
+        }
+        self.0 = Vec::new();
+        Err(Error::InvalidUpdate(
+            "sync update exceeds the receive limit".into(),
+        ))
     }
 }

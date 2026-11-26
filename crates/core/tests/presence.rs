@@ -62,6 +62,23 @@ fn a_long_update_goes_in_parts_and_comes_together() {
     assert_eq!(joined.join(end.clone(), 100).unwrap(), Some(end));
 }
 
+#[test]
+fn the_receive_limit_counts_the_whole_update_payload() {
+    let mut parts = SyncParts::default();
+    let whole = SyncMessage::Update(vec![1, 2, 3, 4]);
+    assert_eq!(parts.join(whole.clone(), 4).unwrap(), Some(whole.clone()));
+    assert!(parts.join(whole.clone(), 3).is_err());
+
+    assert_eq!(parts.join(SyncMessage::Part(vec![1, 2]), 4).unwrap(), None);
+    assert_eq!(
+        parts.join(SyncMessage::Update(vec![3, 4]), 4).unwrap(),
+        Some(whole.clone())
+    );
+    assert_eq!(parts.join(SyncMessage::Part(vec![1, 2]), 4).unwrap(), None);
+    assert!(parts.join(SyncMessage::Update(vec![3, 4, 5]), 4).is_err());
+    assert_eq!(parts.join(whole.clone(), 4).unwrap(), Some(whole));
+}
+
 /// A presence as a relay passes it on: under the number of its client.
 fn relayed(mut presence: Vec<u8>, client: u64) -> Vec<u8> {
     Presence::readdress(&mut presence, client).unwrap();
