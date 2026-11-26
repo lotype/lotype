@@ -1,7 +1,8 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use rusqlite::{Connection, TransactionBehavior, params};
+use tokio::sync::Mutex;
 
 use crate::{DocId, DocStore, StoreError, merge};
 
@@ -32,9 +33,10 @@ impl SqliteStore {
         &self,
         work: impl FnOnce(&mut Connection) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, StoreError> {
-        let db = Arc::clone(&self.0);
-        let work = move || work(&mut db.lock().unwrap_or_else(PoisonError::into_inner));
-        tokio::task::spawn_blocking(work).await?
+        // Wait on the executor. The worker owns the guard until the operation
+        // ends, including when its caller cancels the wait for the result.
+        let mut db = Arc::clone(&self.0).lock_owned().await;
+        tokio::task::spawn_blocking(move || work(&mut db)).await?
     }
 }
 
@@ -76,5 +78,53 @@ impl DocStore for SqliteStore {
             Ok(())
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::poll_fn;
+    use std::sync::mpsc;
+    use std::task::Poll;
+    use std::time::Duration;
+
+    use super::SqliteStore;
+
+    #[test]
+    fn waiting_for_sqlite_leaves_a_worker_free_after_the_caller_cancels() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(2)
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let store = SqliteStore::open(":memory:").unwrap();
+            let (entered, running) = tokio::sync::oneshot::channel();
+            let (release, wait) = mpsc::channel();
+            let first_store = store.clone();
+            let first = tokio::spawn(async move {
+                first_store
+                    .run(move |_| {
+                        entered.send(()).unwrap();
+                        wait.recv().unwrap();
+                        Ok(())
+                    })
+                    .await
+            });
+            running.await.unwrap();
+            first.abort();
+            assert!(first.await.unwrap_err().is_cancelled());
+
+            let mut queued = std::pin::pin!(store.run(|_| Ok(())));
+            let waiting = poll_fn(|cx| Poll::Ready(queued.as_mut().poll(cx).is_pending())).await;
+            let spare =
+                tokio::time::timeout(Duration::from_secs(2), tokio::task::spawn_blocking(|| ()))
+                    .await;
+            release.send(()).unwrap();
+
+            assert!(waiting);
+            assert!(matches!(spare, Ok(Ok(()))));
+            queued.await.unwrap();
+        });
     }
 }
