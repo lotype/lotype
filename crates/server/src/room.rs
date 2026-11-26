@@ -140,11 +140,19 @@ impl Room {
 
     /// Subscribes from the point at which the initial presence was read.
     pub(crate) fn subscribe(&self) -> (broadcast::Receiver<Relayed>, Vec<Bytes>) {
+        self.subscribe_with(|| {})
+    }
+
+    fn subscribe_with(
+        &self,
+        after_subscribe: impl FnOnce(),
+    ) -> (broadcast::Receiver<Relayed>, Vec<Bytes>) {
         let present = lock(&self.present);
         // publish holds the same lock through the send. Its event is either
         // in the snapshot or queued after it, so an older event cannot
         // overwrite a newer presence from the snapshot.
         let receiver = self.relay.subscribe();
+        after_subscribe();
         let fresh = present
             .values()
             .filter(|(_, said)| said.elapsed() < PRESENCE_TIMEOUT);
@@ -204,13 +212,17 @@ impl Rooms {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{TryLockError, mpsc};
+    use std::time::Duration;
+
     use lotype_core::{Document, Presence, Schema, SyncMessage};
     use tokio::sync::broadcast::error::TryRecvError;
 
     use super::Room;
 
     #[test]
-    fn a_join_observes_a_concurrent_presence_in_the_snapshot_or_the_queue() {
+    fn a_publish_after_subscription_waits_for_the_presence_snapshot() {
+        let deadline = Duration::from_secs(2);
         let room = Room::new(Vec::new()).unwrap();
         let doc = Document::new(Schema::new());
         let presence = |name| {
@@ -218,32 +230,44 @@ mod tests {
             Presence::readdress(&mut bytes, 1).unwrap();
             bytes
         };
-        for _ in 0..64 {
-            let original = presence("original");
-            room.publish(1, original.clone());
-            let latest = presence("latest");
-            std::thread::scope(|threads| {
-                let room = &room;
-                let update = latest.clone();
-                let publish = threads.spawn(move || room.publish(1, update));
-                let (mut updates, snapshot) = room.subscribe();
-                publish.join().unwrap();
-
-                assert_eq!(snapshot.len(), 1);
-                let read = SyncMessage::decode(&snapshot[0]).unwrap();
-                match updates.try_recv() {
-                    Ok((1, bytes)) => {
-                        assert_eq!(read, SyncMessage::Presence(original));
-                        assert_eq!(
-                            SyncMessage::decode(&bytes).unwrap(),
-                            SyncMessage::Presence(latest)
-                        );
-                        assert!(matches!(updates.try_recv(), Err(TryRecvError::Empty)));
-                    }
-                    Err(TryRecvError::Empty) => assert_eq!(read, SyncMessage::Presence(latest)),
-                    error => panic!("unexpected relay result: {error:?}"),
-                }
+        let original = presence("original");
+        room.publish(1, original.clone());
+        let latest = presence("latest");
+        let (subscribed, begin_publish) = mpsc::channel();
+        let (checked, publisher_waits) = mpsc::channel();
+        let (mut updates, snapshot) = std::thread::scope(|threads| {
+            let room = &room;
+            let update = latest.clone();
+            threads.spawn(move || {
+                begin_publish
+                    .recv_timeout(deadline)
+                    .expect("receiver was not created");
+                let blocked = matches!(room.present.try_lock(), Err(TryLockError::WouldBlock));
+                checked.send(blocked).unwrap();
+                room.publish(1, update);
             });
-        }
+            room.subscribe_with(|| {
+                subscribed.send(()).unwrap();
+                assert!(
+                    publisher_waits
+                        .recv_timeout(deadline)
+                        .expect("publisher did not check the lock"),
+                    "presence changed between subscription and snapshot"
+                );
+            })
+        });
+
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(
+            SyncMessage::decode(&snapshot[0]).unwrap(),
+            SyncMessage::Presence(original)
+        );
+        let (peer, bytes) = updates.try_recv().unwrap();
+        assert_eq!(peer, 1);
+        assert_eq!(
+            SyncMessage::decode(&bytes).unwrap(),
+            SyncMessage::Presence(latest)
+        );
+        assert!(matches!(updates.try_recv(), Err(TryRecvError::Empty)));
     }
 }
