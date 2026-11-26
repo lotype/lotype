@@ -52,7 +52,10 @@ async fn an_update_the_store_did_not_take_is_asked_for_again() {
 
 /// A store that holds an update until told, and then does not take it.
 #[derive(Clone, Default)]
-struct Held(Arc<tokio::sync::Notify>);
+struct Held {
+    appending: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
 
 impl DocStore for Held {
     async fn load(&self, _: &DocId) -> Result<Vec<Vec<u8>>, StoreError> {
@@ -60,7 +63,8 @@ impl DocStore for Held {
     }
 
     async fn append_update(&self, _: &DocId, _: &[u8]) -> Result<(), StoreError> {
-        self.0.notified().await;
+        self.appending.notify_one();
+        self.release.notified().await;
         Err("the disk is full".into())
     }
 }
@@ -73,20 +77,19 @@ async fn nothing_leaves_a_room_before_the_store_has_it() {
     let mut writer = Peer::open(address, "writer", doc).await;
     // The relay asks the writer for what it has, and waits on the store.
     writer.until(|writer| !writer.asked.is_empty()).await;
+    tokio::time::timeout(Duration::from_secs(5), store.appending.notified())
+        .await
+        .expect("writer's update reached the store");
     let mut reader = Peer::open(address, "reader", empty()).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    store.0.notify_one();
+    let early = tokio::time::timeout(Duration::from_millis(100), reader.next()).await;
+    store.release.notify_one();
+    assert!(
+        early.is_err(),
+        "reader got a message before the append finished: {early:?}"
+    );
 
     // The reader asked meanwhile, and is sent away without an answer.
-    let code = loop {
-        match reader.next().await {
-            Ok(SyncMessage::Update(update)) => reader.doc.import(&update).unwrap(),
-            Ok(_) => {}
-            Err(code) => break code,
-        }
-    };
-    assert_eq!(code, Some(INTERNAL));
-    assert_eq!(reader.text(), outline(&empty(), None));
+    assert_eq!(reader.next().await, Err(Some(INTERNAL)));
 }
 
 /// An update, and one made of the next by changing bytes of it, on which
