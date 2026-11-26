@@ -61,6 +61,42 @@ impl Editor {
         })
     }
 
+    /// Sets an image's reference and caption in one undo step. An empty value clears it.
+    pub fn set_image(&mut self, block: BlockId, url: &str, caption: &str) -> Result<()> {
+        self.set_media(
+            block,
+            types::IMAGE,
+            [(attr::URL, url), (attr::CAPTION, caption)],
+        )
+    }
+
+    /// Sets a file's reference and name in one undo step. An empty value clears it.
+    pub fn set_file(&mut self, block: BlockId, url: &str, name: &str) -> Result<()> {
+        self.set_media(block, types::FILE, [(attr::URL, url), (attr::NAME, name)])
+    }
+
+    /// Changes the attachment metadata while preserving the block and the selection.
+    fn set_media(
+        &mut self,
+        block: BlockId,
+        kind: &'static str,
+        attrs: [(&str, &str); 2],
+    ) -> Result<()> {
+        check_type(&self.doc, block, kind)?;
+        self.apply(|doc, selection| {
+            for (key, text) in attrs {
+                let wanted = (!text.is_empty()).then(|| crate::Value::from(text));
+                if doc.attr(block, key)? != wanted {
+                    match wanted {
+                        Some(value) => doc.set_attr(block, key, value)?,
+                        None => doc.remove_attr(block, key)?,
+                    }
+                }
+            }
+            Ok(selection.cloned())
+        })
+    }
+
     /// Makes the numbered list `block` is in start at `start`, within 0 to
     /// CommonMark's largest, or at 1 for `None`; fails for a block that is
     /// no numbered list item. The list's first item holds its start.

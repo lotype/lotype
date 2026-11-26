@@ -3,6 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
+mod media;
+
+use self::media::{Description, Media};
 use super::PAGE_BREAK;
 use crate::{
     AlertKind, BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, attr, block,
@@ -51,9 +54,9 @@ enum Container {
 /// The block whose text is being read.
 struct Leaf {
     node: Node,
-    /// Text read so far that did not come from an image.
+    /// Text read so far outside a single image or file link.
     plain: bool,
-    image: Option<String>,
+    media: Option<Media>,
 }
 
 #[derive(Default)]
@@ -64,8 +67,8 @@ pub(super) struct Reader {
     marks: [Vec<Value>; 4],
     /// Which marks were opened, in order, to close them in turn.
     opened: Vec<usize>,
-    /// Inside an image, where text is its description, and whether it has any.
-    described: Option<bool>,
+    described: Option<Description>,
+    in_file_link: bool,
 }
 
 /// The marks Markdown has signs for. Code is not among them: it does not nest.
@@ -78,27 +81,19 @@ const LINK: usize = 3;
 impl Reader {
     fn open(&mut self, node: Node) {
         self.close();
-        let (plain, image) = (false, None);
-        self.leaf = Some(Leaf { node, plain, image });
+        self.leaf = Some(Leaf {
+            node,
+            plain: false,
+            media: None,
+        });
     }
 
     /// Ends the block being read. Text in a list item needs no paragraph
     /// around it in Markdown, so one can also end where no tag says so.
     fn close(&mut self) {
-        let Some(leaf) = self.leaf.take() else {
-            return;
-        };
-        let mut node = leaf.node;
-        let alone = !leaf.plain && node.block_type == block::PARAGRAPH;
-        if let Some(url) = leaf.image.filter(|_| alone) {
-            // An image on its own is a block. The text was its description.
-            let caption: String = node.spans.drain(..).map(|span| span.text).collect();
-            node = Node::new(block::IMAGE).with(attr::URL, url.clone());
-            if !caption.is_empty() && caption != url {
-                node.attrs.push(("caption".into(), caption.into()));
-            }
+        if let Some(leaf) = self.leaf.take() {
+            self.push(leaf.into_node());
         }
-        self.push(node);
     }
 
     fn push(&mut self, node: Node) {
@@ -122,7 +117,7 @@ impl Reader {
             }
         }
         if let Some(described) = &mut self.described {
-            *described = true;
+            described.has_text = true;
         }
         if code {
             marks.insert("code".to_owned(), true.into());
@@ -134,11 +129,11 @@ impl Reader {
         }
     }
 
-    /// Text that is not the description of an image.
+    /// Text that can keep a media item from becoming a block.
     fn plain(&mut self, text: &str, code: bool) {
         self.text(text, code);
         if let Some(leaf) = &mut self.leaf {
-            leaf.plain |= self.described.is_none();
+            leaf.plain |= !text.is_empty() && self.described.is_none() && !self.in_file_link;
         }
     }
 
@@ -184,21 +179,10 @@ impl Reader {
             Tag::Emphasis => self.mark(ITALIC, true),
             Tag::Strong => self.mark(BOLD, true),
             Tag::Strikethrough => self.mark(STRIKE, true),
-            Tag::Link { dest_url, .. } => self.mark(LINK, dest_url.as_ref()),
-            Tag::Image { dest_url, .. } => {
-                if self.leaf.is_none() {
-                    self.open(Node::new(block::PARAGRAPH));
-                }
-                // A linked image stays text that goes where its link does.
-                let outer = self.marks[LINK].last().cloned();
-                if let Some(leaf) = &mut self.leaf {
-                    // A second image makes neither of them a block.
-                    leaf.plain |= leaf.image.is_some() || outer.is_some();
-                    leaf.image = Some(dest_url.to_string());
-                }
-                self.mark(LINK, outer.unwrap_or_else(|| dest_url.as_ref().into()));
-                self.described = Some(false);
-            }
+            Tag::Link {
+                dest_url, title, ..
+            } => self.start_link(&dest_url, &title),
+            Tag::Image { dest_url, .. } => self.start_image(&dest_url),
             _ => {}
         }
     }
@@ -234,21 +218,11 @@ impl Reader {
             TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item => self.leave(),
             TagEnd::Table | TagEnd::TableHead | TagEnd::TableRow => self.leave(),
             TagEnd::TableCell => self.close(),
-            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
+            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
                 self.unmark();
             }
-            TagEnd::Image => {
-                // An image without a description still shows as its address.
-                if let Some(link) = self.unmark()
-                    && self.described == Some(false)
-                    && let Some(url) = self.leaf.as_ref().and_then(|leaf| leaf.image.clone())
-                {
-                    self.mark(LINK, link);
-                    self.text(&url, false);
-                    self.unmark();
-                }
-                self.described = None;
-            }
+            TagEnd::Link => self.end_link(),
+            TagEnd::Image => self.end_image(),
             _ => {}
         }
     }
@@ -405,9 +379,7 @@ impl Document {
             };
             let nested = parent.is_some() && top_level(&node.block_type);
             if unmade || part || nested || lacks(&node.block_type) {
-                if node.block_type == block::IMAGE {
-                    node.spans = image_link(&node.attrs);
-                }
+                node.keep_attachment_as_link();
                 // Without its type, its attributes mean nothing.
                 (node.block_type, node.attrs) = (block::PARAGRAPH.into(), Vec::new());
                 if node.spans.is_empty() {
@@ -492,16 +464,4 @@ impl Document {
         }
         Ok(table)
     }
-}
-
-/// An image as text: its description, linked to its address.
-fn image_link(attrs: &[(Cow<'static, str>, Value)]) -> Vec<Span> {
-    let text = |wanted| match attrs.iter().find(|(key, _)| *key == wanted) {
-        Some((_, Value::Str(text))) => text.clone(),
-        _ => String::new(),
-    };
-    let (url, caption) = (text("url"), text("caption"));
-    let marks = BTreeMap::from([("link".to_owned(), Value::from(url.as_str()))]);
-    let text = if caption.is_empty() { url } else { caption };
-    vec![Span::new(text, marks)]
 }

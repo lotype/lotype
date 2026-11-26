@@ -1,4 +1,4 @@
-use super::PAGE_BREAK;
+use super::{FILE_TITLE, PAGE_BREAK, UNNAMED_FILE_TITLE};
 use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value, attr, block};
 
 /// A block with what the line before it, its first line and its later lines
@@ -10,11 +10,12 @@ impl Document {
     /// and strikethrough.
     ///
     /// Markdown cannot say everything a document holds. Underline and colors
-    /// are left off, a toggle list item reads as a bullet, a file as a link,
-    /// and blocks nested in a block that is no list item, quote or alert
+    /// are left off, a toggle list item reads as a bullet, and
+    /// blocks nested in a block that is no list item, quote or alert
     /// follow it instead. Space at the ends of a block's text, empty
     /// paragraphs, and the difference between a list item without text and
     /// one whose text is its first paragraph are not kept either.
+    /// A file is a link with a title that Lotype uses to restore its block type.
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         let mut stack = self.items(None, "");
@@ -137,8 +138,12 @@ impl Document {
             ),
             block::FILE => {
                 let (name, url) = (attr(attr::NAME), attr(attr::URL));
-                let shown = if name.is_empty() { &url } else { &name };
-                format!("[{}]({})", escape(shown), address(&url))
+                let (label, title) = match (name.is_empty(), url.is_empty()) {
+                    (false, _) => (name.as_str(), FILE_TITLE),
+                    (true, false) => (url.as_str(), UNNAMED_FILE_TITLE),
+                    (true, true) => ("File", UNNAMED_FILE_TITLE),
+                };
+                format!("[{}]({} \"{title}\")", escape(label), address(&url))
             }
             block::CODE_BLOCK => {
                 let code = self.plain_text(block).ok()?;

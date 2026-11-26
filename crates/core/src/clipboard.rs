@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{BlockId, Document, Error, Pos, Result, block};
+use crate::{BlockId, Document, Error, Pos, Result, attr, block};
 
 impl Document {
     /// The text from `a` to `b` with the blocks it is in, as a document of
@@ -177,13 +177,28 @@ impl Document {
     }
 
     /// The document as plain text: a block a line, and a table's rows a line
-    /// each with tabs between its cells, as spreadsheets take them. Blocks
-    /// without text, as a divider, are left out.
+    /// each with tabs between its cells, as spreadsheets take them. Images and
+    /// files contribute their reference, or their label if they have no reference.
     pub fn to_plain_text(&self) -> String {
         let mut lines = Vec::new();
         for block in self.blocks() {
             if let Ok(text) = self.plain_text(block) {
                 lines.push(text);
+                continue;
+            }
+            if let Ok(kind @ (block::IMAGE | block::FILE)) = self.block_type(block).as_deref() {
+                let label = if kind == block::IMAGE {
+                    attr::CAPTION
+                } else {
+                    attr::NAME
+                };
+                let mut text = self.text_of(block, attr::URL);
+                if text.is_empty() {
+                    text = self.text_of(block, label);
+                }
+                if !text.is_empty() {
+                    lines.push(text);
+                }
                 continue;
             }
             let Ok(columns) = self.columns(block) else {
