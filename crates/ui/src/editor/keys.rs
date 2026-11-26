@@ -95,6 +95,32 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
+        if name == "Enter"
+            && let Some(Selection::Text { anchor, head }) = self.editor.selection().cloned()
+            && anchor == head
+            && self.editor.document().role(head.block) == Role::Code
+        {
+            let text = self
+                .editor
+                .document()
+                .plain_text(head.block)
+                .unwrap_or_default();
+            let before = &text[..head.offset];
+            let after = &text[head.offset..];
+            let line_before = before.rsplit('\n').next().unwrap_or_default();
+            let line_after = after.split('\n').next().unwrap_or_default();
+            if before.contains('\n') && line_before.is_empty() && line_after.is_empty() {
+                self.editor
+                    .set_selection(Some(Selection::Blocks(vec![head.block])))
+                    .ok();
+            } else {
+                self.editor.insert_line_break().ok();
+            }
+            cx.stop_propagation();
+            window.notify_text_input_changed(&self.focus);
+            self.selection_changed(window, cx);
+            return;
+        }
         if self.start_writing() {
             self.selection_changed(window, cx);
         }

@@ -138,6 +138,48 @@ let bad: u8 = \"no\";
 }
 
 #[gpui::test]
+fn enter_in_code_block_inserts_lines_then_leaves_edit_mode_on_empty_line(
+    cx: &mut TestAppContext,
+) {
+    let mut doc = Document::new(Schema::builtin());
+    doc.insert_markdown(None, 0, "```rs\nfn main() {}\n```\n")
+        .unwrap();
+    let code = doc.blocks()[0];
+    let end = doc.text_len(code).unwrap();
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(code, end))))
+        .unwrap();
+
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(editor, cx), cx)
+    });
+    ed.settle();
+
+    ed.keys("enter");
+    assert_eq!(
+        ed.editor(|editor| editor.document().plain_text(code).unwrap()),
+        "fn main() {}\n"
+    );
+    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 1);
+    assert!(matches!(
+        ed.editor(|editor| editor.selection().cloned()),
+        Some(Selection::Text { head, .. }) if head.block == code
+    ));
+
+    ed.keys("enter");
+    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 1);
+    assert_eq!(
+        ed.editor(|editor| editor.document().plain_text(code).unwrap()),
+        "fn main() {}\n"
+    );
+    assert!(matches!(
+        ed.editor(|editor| editor.selection().cloned()),
+        Some(Selection::Blocks(blocks)) if blocks == vec![code]
+    ));
+}
+
+#[gpui::test]
 fn folded_twoslash_preview_hides_directives_shows_completions_and_unfolds_on_click(
     cx: &mut TestAppContext,
 ) {
