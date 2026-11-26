@@ -2,9 +2,9 @@
 //! edits, the toolbar's menu for selected text, the marks on the blocks they changed, and where the model writes.
 
 use gpui::{
-    Anchor, AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, Hsla, IntoElement,
-    KeyDownEvent, MouseButton, Pixels, TextAlign, TextRun, TransformationMatrix, Window, anchored,
-    canvas, deferred, div, fill, point, prelude::*, px, size,
+    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, Hsla, IntoElement, KeyDownEvent,
+    MouseButton, Pixels, TextAlign, TextRun, TransformationMatrix, Window, canvas, div, fill,
+    point, prelude::*, px, size,
 };
 use gpui_component::input::Textarea;
 use gpui_component::list::ListItem;
@@ -13,7 +13,7 @@ use lotype_ai::{AiState, Change, EditLocation, Role};
 use lotype_core::BlockId;
 
 use super::EditorView;
-use super::ai::PromptScope;
+use super::ai::{BarLayout, PromptScope};
 use super::ai_controls::{Act, WORKING, send, status, tier, working};
 use crate::icons::{self, icon};
 use crate::text_el::Affinity;
@@ -257,24 +257,17 @@ impl EditorView {
 
     /// The card next to the row a prompt was opened at: what the session
     /// says and offers, over the field to ask in.
-    pub(super) fn ai_bar(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub(super) fn ai_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.ai.scope == Some(PromptScope::Document)
             || (self.ai.field.is_none() && self.ai.session.is_none())
             || self.ai_asks_selection()
         {
+            self.ai.bar_layout.set(None);
             return None;
         }
         let focus = self.ai.field.as_ref().map(|field| field.focus.clone());
-        let view = self.scroll.bounds();
-        if view.size.width <= Pixels::ZERO {
-            window.request_animation_frame();
-            return None;
-        }
         let state = self.ai_state().cloned();
+        let review = matches!(state, Some(AiState::Reviewing | AiState::Error(_)));
         let buttons = Act::buttons(state.as_ref(), "ai", cx, Self::ai_act);
         // One row: what the session says and offers, or the field to ask in.
         let row = tier(self.ai_line(cx), buttons);
@@ -282,12 +275,35 @@ impl EditorView {
             Some(_) => None,
             None => self.ai_field_row(cx),
         };
-        let width = (view.size.width - px(24.)).min(px(560.)).max(px(1.));
+        let (scroll, measured, view) = (
+            self.scroll.clone(),
+            self.ai.bar_layout.clone(),
+            cx.entity_id(),
+        );
+        let reveal = canvas(
+            move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+                let layout = Some(BarLayout {
+                    height: bounds.size.height,
+                    viewport: scroll.bounds().size.height,
+                    review,
+                });
+                if measured.replace(layout) != layout
+                    && super::paint::reveal_bounds(&scroll, bounds)
+                {
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            },
+            |_, _, _, _| {},
+        );
+        let theme = cx.theme();
         let bar = v_flex()
-            .popover_style(cx)
-            .occlude()
+            .border_1()
+            .border_color(theme.border)
+            .rounded(theme.radius)
+            .bg(theme.background)
             .overflow_hidden()
-            .w(width)
+            .w_full()
+            .max_w(px(560.))
             .debug_selector(|| "ai-bar".to_owned())
             .when_some(focus, |bar, focus| bar.track_focus(&focus))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -295,20 +311,17 @@ impl EditorView {
             .children(self.ai_answer(cx))
             .children(row)
             .children(field);
-        if let Some(mut target) = self.ai.place.get(window)
-            && target.bottom() >= view.top()
-            && target.top() <= view.bottom()
-        {
-            target.origin.x = target.left().min(view.right() - width).max(view.left());
-            return Some(super::popup::popup(target, false, bar));
-        }
-        let left = view.left() + (view.size.width - width) / 2.;
-        let at = point(left, view.bottom() - px(12.));
-        let placed = anchored()
-            .anchor(Anchor::BottomLeft)
-            .position(at)
-            .child(bar);
-        Some(deferred(placed).with_priority(1).into_any_element())
+        Some(
+            div()
+                .relative()
+                .pt(px(4.))
+                .pb(px(6.))
+                .pr(px(12.))
+                .flex_none()
+                .child(bar)
+                .child(reveal.absolute().top_0().left_0().size_full())
+                .into_any_element(),
+        )
     }
 }
 

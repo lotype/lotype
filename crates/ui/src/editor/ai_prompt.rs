@@ -1,11 +1,10 @@
 //! The editor-local AI prompt and its entry points.
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui::{
-    Bounds, Context, Entity, FocusHandle, Focusable, Pixels, Subscription, Window, prelude::*,
-};
+use gpui::{Context, Entity, FocusHandle, Focusable, Pixels, Subscription, Window, prelude::*};
 use gpui_component::input::{InputEvent, TextareaState};
 use lotype_ai::Change;
 use lotype_core::{BlockId, Selection};
@@ -26,7 +25,7 @@ pub(super) struct PromptField {
     /// How long the text was when it no longer fit on one line next to
     /// the button that sends it, which is under the field since.
     pub(super) wrapped_at: Cell<Option<usize>>,
-    anchor: Option<BlockId>,
+    pub(super) anchor: Option<BlockId>,
     _watches: [Subscription; 2],
 }
 
@@ -134,22 +133,26 @@ impl EditorView {
         cx.notify();
     }
 
-    /// What the local prompt goes under, as last laid out: its row, and
-    /// what a session changed below that, which it would cover.
-    pub(super) fn ai_prompt_target(&self) -> Option<Bounds<Pixels>> {
-        let mut target = self.text_bounds(self.ai.field.as_ref()?.anchor?)?;
-        let changed = self.ai.changes.iter().map(|change| match change {
-            Change::Added(block) | Change::Updated(block) | Change::Removed(block) => *block,
+    /// Places the card below the prompt's row and any draft edits beneath it.
+    pub(super) fn ai_bar_after(&self, rows: &[BlockId]) -> Option<BlockId> {
+        let anchor = self.ai.field.as_ref().and_then(|field| field.anchor);
+        let anchor = anchor.or_else(|| match self.editor().selection() {
+            Some(Selection::Text { head, .. }) => Some(head.block),
+            _ => None,
         });
-        for bounds in changed.filter_map(|block| self.text_bounds(block)) {
-            target.size.height = target.size.height.max(bounds.bottom() - target.top());
-        }
-        Some(target)
-    }
-
-    /// Updates the contextual prompt's anchor before replacing the layouts.
-    pub(super) fn place_ai_prompt(&mut self) {
-        self.ai.place.update(self.ai_prompt_target());
+        let anchor = anchor.and_then(|block| self.visible_cursor_row(block, rows));
+        let changed: HashSet<_> = self
+            .ai
+            .changes
+            .iter()
+            .map(|change| match change {
+                Change::Added(block) | Change::Updated(block) | Change::Removed(block) => *block,
+            })
+            .collect();
+        rows.iter()
+            .rev()
+            .copied()
+            .find(|block| Some(*block) == anchor || changed.contains(block))
     }
 
     /// Opens the inline prompt instead of inserting a literal Space.

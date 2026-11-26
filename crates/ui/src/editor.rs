@@ -303,7 +303,6 @@ impl Render for EditorView {
         self.place_toolbar();
         self.place_side_menu();
         self.place_links();
-        self.place_ai_prompt();
         self.ai_refocus_field(window, cx);
         self.layouts.clear();
         self.ai.diffed.clear();
@@ -342,7 +341,9 @@ impl Render for EditorView {
         }
         // Rows far from the view lay out nothing: those next to each other
         // are one space as tall as they are.
-        let plan = self.plan_rows(&candidates, window);
+        let mut ai_bar = self.ai_bar(cx);
+        let ai_after = ai_bar.as_ref().and_then(|_| self.ai_bar_after(&candidates));
+        let plan = self.plan_rows(&candidates, ai_after, window);
         let (mut rows, mut blocks, mut items) = (Vec::new(), Vec::new(), Vec::new());
         let mut space = Pixels::ZERO;
         let spacer = |height| div().h(height).w_full().flex_none().into_any_element();
@@ -388,7 +389,21 @@ impl Render for EditorView {
             }
             blocks.push(row.block);
             items.push(Some(rows.len()));
-            rows.push(element);
+            if Some(row.block) == ai_after
+                && let Some(bar) = ai_bar.take()
+            {
+                rows.push(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_none()
+                        .child(element)
+                        .child(bar)
+                        .into_any_element(),
+                );
+            } else {
+                rows.push(element);
+            }
         }
         if space > Pixels::ZERO {
             rows.push(spacer(space));
@@ -409,6 +424,7 @@ impl Render for EditorView {
                 empty
             });
         }
+        rows.extend(ai_bar);
         // A block's menu goes with it, deleted or hidden.
         if self
             .side_menu
@@ -448,12 +464,6 @@ impl Render for EditorView {
             .child(collab::cursors(cx.entity(), peers))
             .child(ai_bar::marks(cx.entity()))
             .child(paint::caret(cx.entity()))
-            // A session's copy is the model's to write in, and no one else's.
-            .children(self.ai.session.is_some().then(|| {
-                let cover = div().absolute().top_0().left_0().size_full();
-                cover.block_mouse_except_scroll()
-            }))
-            .children(self.ai_bar(window, cx))
             .when(self.ai.session.is_none(), |editor| {
                 editor
                     .children(self.slash_menu(window, cx))

@@ -261,7 +261,17 @@ impl EditorView {
                     .child(content),
             )
             .children(selected)
-            .children(ai_cursor.then(|| super::ai_bar::cursor(cx)));
+            .children(ai_cursor.then(|| super::ai_bar::cursor(cx)))
+            // A draft's blocks are read-only even while its AI controls are interactive.
+            .children((self.ai.session.is_some() && !self.measuring).then(|| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-super::side_menu::GUTTER))
+                    .right_0()
+                    .block_mouse_except_scroll()
+            }));
         Some(row_element.into_any_element())
     }
 

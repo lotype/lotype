@@ -6,11 +6,13 @@
 //! the document's editor is put aside, and goes on taking the changes of
 //! other peers. Accepting makes the edits in it and shows it again.
 
+use std::cell::Cell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Task, Window};
+use gpui::{Context, Pixels, Task, Window};
 use lotype_ai::{
     Accepted, AiSession, AiState, AiTranscript, Change, LlmError, LlmEvent, LlmProvider,
 };
@@ -18,7 +20,6 @@ use lotype_core::{BlockId, Document, Editor, Selection};
 
 use super::EditorView;
 use super::ai_prompt::PromptField;
-use super::popup::Placement;
 
 /// How long what comes of an answer waits for more, to be taken together.
 const FRAME: Duration = Duration::from_millis(16);
@@ -34,6 +35,13 @@ pub(super) enum PromptScope {
     Inline,
     Selection,
     Document,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct BarLayout {
+    pub(super) height: Pixels,
+    pub(super) viewport: Pixels,
+    pub(super) review: bool,
 }
 
 /// The AI's state between frames.
@@ -58,7 +66,10 @@ pub(crate) struct Ai {
     pub(super) glow: usize,
     /// The field to ask in, while the bar is open.
     pub(super) field: Option<PromptField>,
-    pub(super) place: Placement,
+    /// The row that shared the card's layout in the last frame.
+    pub(super) bar_after: Option<BlockId>,
+    /// The layout for which the card was last brought into view.
+    pub(super) bar_layout: Rc<Cell<Option<BarLayout>>>,
     /// The blocks the session changed, as of the last frame.
     pub(super) changes: Vec<Change>,
     /// Those of them this frame shows the changed words of, which need

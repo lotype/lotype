@@ -191,7 +191,20 @@ impl EditorView {
     /// scrolls by as much, so that it stays put. A frame that lays out a row
     /// of no known height asks for the next, which places the rows by what
     /// that one measured.
-    pub(super) fn plan_rows(&mut self, rows: &[BlockId], window: &mut Window) -> Vec<Plan> {
+    pub(super) fn plan_rows(
+        &mut self,
+        rows: &[BlockId],
+        ai_after: Option<BlockId>,
+        window: &mut Window,
+    ) -> Vec<Plan> {
+        let previous = std::mem::replace(&mut self.ai.bar_after, ai_after);
+        if previous != ai_after {
+            // The attached card counts toward its row's measured height.
+            for block in previous.into_iter().chain(ai_after) {
+                self.heights.known.remove(&block);
+            }
+            self.ai.bar_layout.set(None);
+        }
         // Before the view is laid out, the window is as tall as it can be.
         let view = self.scroll.bounds().size.height;
         let view = if view > Pixels::ZERO {
@@ -232,7 +245,8 @@ impl EditorView {
         for (at, block) in rows.iter().enumerate() {
             let tall = height(at);
             let near = y + tall >= from && y <= to;
-            let wanted = wanted.contains(&at) || Some(*block) == editing_media;
+            let wanted =
+                wanted.contains(&at) || Some(*block) == editing_media || Some(*block) == ai_after;
             y += tall;
             if !(near || wanted) {
                 plan.push(Plan::Space(tall));
