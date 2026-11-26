@@ -6,12 +6,14 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -21,6 +23,9 @@ use crate::analyzer::{
 };
 use crate::infer::BuiltInAnalyzer;
 use crate::languages::canonical_language;
+
+static NEXT_LSP_SESSION: AtomicU64 = AtomicU64::new(0);
+const LSP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Command-line configuration for launching a stdio LSP server for a language.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +103,7 @@ impl Future for ReplyFuture {
 /// Multi-language stdio LSP [`CodeAnalyzer`] with [`BuiltInAnalyzer`] fallback.
 pub struct LspAnalyzer {
     configs: HashMap<String, LspServerConfig>,
-    workers: Mutex<HashMap<String, mpsc::Sender<(AnalysisRequest, ReplySlot)>>>,
+    workers: Mutex<HashMap<String, mpsc::SyncSender<(AnalysisRequest, ReplySlot)>>>,
 }
 
 impl Default for LspAnalyzer {
@@ -142,7 +147,7 @@ impl CodeAnalyzer for LspAnalyzer {
             if let Some(tx) = guard.get(&canonical) {
                 tx.clone()
             } else {
-                let (tx, rx) = mpsc::channel::<(AnalysisRequest, ReplySlot)>();
+                let (tx, rx) = mpsc::sync_channel::<(AnalysisRequest, ReplySlot)>(1);
                 let cfg = config;
                 std::thread::spawn(move || run_lsp_worker(cfg, rx));
                 guard.insert(canonical, tx.clone());
@@ -151,8 +156,11 @@ impl CodeAnalyzer for LspAnalyzer {
         };
 
         let slot: ReplySlot = Arc::new(Mutex::new((None, None)));
-        if sender.send((request.clone(), slot.clone())).is_err() {
-            return BuiltInAnalyzer.analyze(request);
+        match sender.try_send((request.clone(), slot.clone())) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_) | mpsc::TrySendError::Disconnected(_)) => {
+                return BuiltInAnalyzer.analyze(request);
+            }
         }
         Box::pin(ReplyFuture { slot })
     }
@@ -161,7 +169,7 @@ impl CodeAnalyzer for LspAnalyzer {
 struct LspSession {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    responses: mpsc::Receiver<Result<Value, String>>,
     workspace: PathBuf,
     next_id: i64,
     doc_version: i64,
@@ -184,26 +192,27 @@ fn run_lsp_worker(config: LspServerConfig, rx: mpsc::Receiver<(AnalysisRequest, 
         if session.is_none() {
             session = start_session(&config).ok();
         }
-        if let Some(sess) = session.as_mut()
-            && let Ok(lsp_out) = query_session(sess, &request)
-        {
-            for (range, sig) in lsp_out.queries {
-                if let Some(existing) = analysis.queries.iter_mut().find(|(r, _)| *r == range) {
-                    existing.1 = sig;
+        let lsp_result = session.as_mut().map(|sess| query_session(sess, &request));
+        if let Some(Ok(lsp_out)) = lsp_result.as_ref() {
+            for (range, sig) in &lsp_out.queries {
+                if let Some(existing) = analysis.queries.iter_mut().find(|(r, _)| *r == *range) {
+                    existing.1 = sig.clone();
                 } else {
-                    analysis.queries.push((range, sig));
+                    analysis.queries.push((range.clone(), sig.clone()));
                 }
             }
-            for (offset, items) in lsp_out.completions {
+            for (offset, items) in &lsp_out.completions {
                 if !items.is_empty() {
-                    analysis.completions.retain(|(o, _)| *o != offset);
-                    analysis.completions.push((offset, items));
+                    analysis.completions.retain(|(o, _)| o != offset);
+                    analysis.completions.push((*offset, items.clone()));
                 }
             }
-            for hover in lsp_out.hovers {
+            for hover in &lsp_out.hovers {
                 analysis.hovers.retain(|h| h.range != hover.range);
-                analysis.hovers.push(hover);
+                analysis.hovers.push(hover.clone());
             }
+        } else if lsp_result.is_some() {
+            session = None;
         }
         let mut guard = slot
             .lock()
@@ -216,12 +225,14 @@ fn run_lsp_worker(config: LspServerConfig, rx: mpsc::Receiver<(AnalysisRequest, 
 }
 
 fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
+    let session_id = NEXT_LSP_SESSION.fetch_add(1, Ordering::Relaxed);
     let workspace = std::env::temp_dir().join(format!(
-        "lotype-lsp-{}-{}",
+        "lotype-lsp-{}-{}-{}",
         config.language_id,
-        std::process::id()
+        std::process::id(),
+        session_id,
     ));
-    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    std::fs::create_dir(&workspace).map_err(|e| e.to_string())?;
     let mut child = Command::new(&config.program)
         .args(&config.args)
         .current_dir(&workspace)
@@ -231,11 +242,29 @@ fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     let stdin = child.stdin.take().ok_or("missing stdin")?;
-    let stdout = BufReader::new(child.stdout.take().ok_or("missing stdout")?);
+    let stdout = child.stdout.take().ok_or("missing stdout")?;
+    let (response_tx, responses) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        loop {
+            match read_msg(&mut stdout) {
+                Ok(message) if message.get("id").is_some() => {
+                    if response_tx.send(Ok(message)).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    let _ = response_tx.send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
     let mut sess = LspSession {
         child,
         stdin,
-        stdout,
+        responses,
         workspace,
         next_id: 1,
         doc_version: 0,
@@ -295,7 +324,7 @@ fn query_session(sess: &mut LspSession, req: &AnalysisRequest) -> Result<CodeAna
             "textDocument/hover",
             json!({
                 "textDocument": { "uri": uri },
-                "position": { "line": query.line, "character": query.character }
+                "position": { "line": query.line, "character": lsp_character(&req.code, query.line, query.character) }
             }),
         )?;
         if let Some((sig, docs)) = extract_hover(&resp) {
@@ -314,7 +343,7 @@ fn query_session(sess: &mut LspSession, req: &AnalysisRequest) -> Result<CodeAna
             "textDocument/completion",
             json!({
                 "textDocument": { "uri": uri },
-                "position": { "line": comp.line, "character": comp.character }
+                "position": { "line": comp.line, "character": lsp_character(&req.code, comp.line, comp.character) }
             }),
         )?;
         let items = extract_completions(&resp, &comp.prefix);
@@ -337,8 +366,16 @@ impl LspSession {
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         self.write_msg(&msg)?;
         for _ in 0..64 {
-            let incoming = self.read_msg()?;
+            let incoming = self.responses.recv_timeout(LSP_RESPONSE_TIMEOUT).map_err(
+                |error| match error {
+                    mpsc::RecvTimeoutError::Timeout => "LSP response timed out".to_owned(),
+                    mpsc::RecvTimeoutError::Disconnected => "LSP response stream closed".to_owned(),
+                },
+            )??;
             if incoming.get("id").and_then(Value::as_i64) == Some(id) {
+                if let Some(error) = incoming.get("error") {
+                    return Err(format!("LSP request failed: {error}"));
+                }
                 return Ok(incoming.get("result").cloned().unwrap_or(Value::Null));
             }
         }
@@ -351,32 +388,48 @@ impl LspSession {
         self.stdin.write_all(&body).map_err(|e| e.to_string())?;
         self.stdin.flush().map_err(|e| e.to_string())
     }
+}
 
-    fn read_msg(&mut self) -> Result<Value, String> {
-        let mut content_len = None;
-        loop {
-            let mut header = String::new();
-            let read = self
-                .stdout
-                .read_line(&mut header)
-                .map_err(|e| e.to_string())?;
-            if read == 0 {
-                return Err("LSP EOF".into());
-            }
-            let trimmed = header.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-                content_len = len_str.trim().parse::<usize>().ok();
-            }
+fn read_msg(stdout: &mut impl BufRead) -> Result<Value, String> {
+    let mut content_len = None;
+    loop {
+        let mut header = String::new();
+        let read = stdout.read_line(&mut header).map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Err("LSP EOF".into());
         }
-        let len = content_len.ok_or("missing Content-Length")?;
-        let mut buf = vec![0u8; len];
-        self.stdout
-            .read_exact(&mut buf)
-            .map_err(|e| e.to_string())?;
-        serde_json::from_slice(&buf).map_err(|e| e.to_string())
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
+            content_len = len_str.trim().parse::<usize>().ok();
+        }
+    }
+    let len = content_len.ok_or("missing Content-Length")?;
+    let mut buf = vec![0u8; len];
+    stdout.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&buf).map_err(|e| e.to_string())
+}
+
+fn lsp_character(code: &str, line: usize, character: usize) -> usize {
+    code.split('\n')
+        .nth(line)
+        .unwrap_or_default()
+        .chars()
+        .take(character)
+        .map(char::len_utf16)
+        .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lsp_character;
+
+    #[test]
+    fn lsp_character_counts_utf16_code_units() {
+        assert_eq!(lsp_character("a😀b\nçx", 0, 2), 3);
+        assert_eq!(lsp_character("a😀b\nçx", 1, 1), 1);
     }
 }
 
