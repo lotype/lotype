@@ -238,7 +238,7 @@ impl EditorView {
             );
         }
         self.ai.arrived.clear();
-        self.ai.taken = Some(Instant::now());
+        self.ai.taken = Some(cx.background_executor().now());
         self.ai.working = Some(cx.spawn(async move |view, cx| {
             loop {
                 cx.background_executor().timer(GLOW).await;
@@ -267,17 +267,18 @@ impl EditorView {
                 let last = !matches!(&event, Ok(event) if *event != LlmEvent::Done);
                 let told = view.update(cx, |view, cx| {
                     view.ai.arrived.push(event);
+                    let now = cx.background_executor().now();
                     let wait = view.ai.taken.map_or(Duration::ZERO, |taken| {
-                        FRAME.saturating_sub(taken.elapsed())
+                        FRAME.saturating_sub(now.saturating_duration_since(taken))
                     });
                     if last || wait.is_zero() {
-                        view.ai_take();
+                        view.ai_take(now);
                         cx.notify();
                     } else if view.ai.flush.is_none() {
                         view.ai.flush = Some(cx.spawn(async move |view, cx| {
                             cx.background_executor().timer(wait).await;
                             let _ = view.update(cx, |view, cx| {
-                                view.ai_take();
+                                view.ai_take(cx.background_executor().now());
                                 cx.notify();
                             });
                         }));
@@ -291,9 +292,9 @@ impl EditorView {
     }
 
     /// Takes what came of the answer since the last time, in one go.
-    fn ai_take(&mut self) {
+    fn ai_take(&mut self, now: Instant) {
         self.ai.flush = None;
-        self.ai.taken = Some(Instant::now());
+        self.ai.taken = Some(now);
         let arrived = std::mem::take(&mut self.ai.arrived);
         let Some(session) = &mut self.ai.session else {
             return;
@@ -364,8 +365,10 @@ impl EditorView {
     /// be reviewed.
     pub fn ai_stop(&mut self, cx: &mut Context<Self>) {
         self.ai.reading = None;
-        self.ai.flush = None;
-        self.ai.arrived.clear();
+        self.ai.working = None;
+        // The provider has already sent these events. A later call in the
+        // batch can end an earlier one even if the frame timer has not fired.
+        self.ai_take(cx.background_executor().now());
         if let Some(session) = &mut self.ai.session {
             session.abort().ok();
         }

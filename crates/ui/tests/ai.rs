@@ -204,6 +204,41 @@ impl LlmProvider for Stalled {
 }
 
 #[gpui::test]
+fn stopping_during_a_pending_flush_keeps_calls_that_already_ended(cx: &mut TestAppContext) {
+    struct Buffered(Answer);
+
+    impl LlmProvider for Buffered {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            Box::pin(stream::iter(self.0.clone()).chain(stream::pending()))
+        }
+    }
+
+    let model = editor(blocks![p!["one<a>"], p!["two"]]);
+    let blocks = model.document().blocks();
+    let first = format!(r#"{{"id": "{}", "block": "ONE"}}"#, blocks[0]);
+    let second = format!(r#"{{"id": "{}", "block": "TW"#, blocks[1]);
+    let mut events = tool_call("first", "update", &first, 99);
+    events.extend(tool_call("second", "update", &second, 99));
+    let provider = Arc::new(Buffered(events));
+    let mut ed =
+        EditorTestContext::with_view(cx, |cx| EditorView::new(model, cx).with_ai(provider));
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Rewrite", cx));
+    ed.settle();
+    assert_eq!(state(&mut ed), Some(AiState::Thinking));
+
+    ed.view.update(ed.cx, |view, cx| view.ai_stop(cx));
+    ed.settle();
+    assert_eq!(state(&mut ed), Some(AiState::Reviewing));
+    ed.view.update(ed.cx, |view, _| {
+        let draft = view.ai_document().unwrap();
+        assert_eq!(draft.plain_text(blocks[0]).unwrap(), "ONE");
+        assert_eq!(draft.plain_text(blocks[1]).unwrap(), "two");
+    });
+    click(&mut ed, "ai-accept");
+    ed.assert(blocks![p!["ONE<a>"], p!["two"]]);
+}
+
+#[gpui::test]
 fn the_label_rides_the_live_caret_while_the_model_writes_text(cx: &mut TestAppContext) {
     let doc = editor(blocks![p!["one<a>"], p!["two"]]);
     let model = Arc::new(Stalled(doc.document().blocks()[0]));
