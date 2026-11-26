@@ -69,6 +69,22 @@ async fn cancelling_a_running_future_discards_the_unfinished_call_and_allows_ret
     assert_eq!(session.state(), &AiState::Thinking);
 }
 
+#[tokio::test]
+async fn an_aborted_request_cannot_start_the_provider() {
+    let (main, _) = three();
+    let mut session = AiSession::new(&main).unwrap();
+    let request = session.prompt("Rewrite").unwrap();
+    session.abort().unwrap();
+
+    let provider = MockProvider::new();
+    assert!(matches!(
+        session.run(&provider, request).await,
+        Err(AiError::State)
+    ));
+    assert!(provider.requests().is_empty());
+    assert_eq!(session.state(), &AiState::UserInput);
+}
+
 /// A whole call, in one part.
 fn call(session: &mut AiSession, id: &str, name: &str, args: serde_json::Value) {
     let event = LlmEvent::ToolCallDelta {
