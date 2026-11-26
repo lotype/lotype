@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use lotype_core::{BlockId, ColumnId, Document, Result, Span, Value, block};
+use lotype_core::{BlockId, ColumnId, Document, Pos, Result, Span, Value, block};
 
 use crate::Op;
 
@@ -128,6 +128,7 @@ pub(crate) struct Effect {
     /// What the block it changed or removed was.
     pub(crate) before: Before,
     pub(crate) location: EditLocation,
+    pub(crate) caret: Option<Pos>,
     pub(crate) target: BlockId,
 }
 
@@ -204,7 +205,7 @@ pub(crate) fn run(
     if expect.is_some_and(|expect| !expect.matches(&before, made, *block)) {
         return Ok(None);
     }
-    let (made, location) = match op {
+    let (made, location, caret) = match op {
         Op::Add { before, blocks, .. } => {
             let mut index = doc.index_of(target)? + usize::from(!before);
             let mut made = Vec::new();
@@ -215,8 +216,8 @@ pub(crate) fn run(
                     made.extend(with_inside(doc, block)?);
                 }
             }
-            let location = EditLocation::Block(made.last().copied().unwrap_or(target));
-            (made, location)
+            let block = made.last().copied().unwrap_or(target);
+            (made, EditLocation::Block(block), text_end(doc, block))
         }
         Op::Update { .. } => {
             let Some(update) = update else {
@@ -227,21 +228,27 @@ pub(crate) fn run(
         Op::Delete { .. } => {
             let index = doc.index_of(target)?;
             doc.remove_block(target)?;
-            (Vec::new(), removal_at(doc, parent, index)?)
+            (Vec::new(), removal_at(doc, parent, index)?, None)
         }
         Op::ReplaceSelectedText { range, text, .. } => {
             if !crate::selected::replace(doc, target, range.clone(), text)? {
                 return Ok(None);
             }
-            (Vec::new(), EditLocation::Block(target))
+            let caret = Some(Pos::new(target, range.start + text.len()));
+            (Vec::new(), EditLocation::Block(target), caret)
         }
     };
     Ok(Some(Effect {
         made,
         before,
         location,
+        caret,
         target,
     }))
+}
+
+fn text_end(doc: &Document, block: BlockId) -> Option<Pos> {
+    doc.text_len(block).ok().map(|end| Pos::new(block, end))
 }
 
 /// Locates a removed row at its next sibling, previous sibling, or parent.
@@ -342,13 +349,13 @@ impl Update {
         Ok(Some(Self::Replace(Box::new(new))))
     }
 
-    /// Makes the checked update and returns its new blocks and location.
+    /// Makes the checked update and returns its new blocks, location and caret.
     fn apply(
         self,
         doc: &mut Document,
         block: BlockId,
         parent: Option<BlockId>,
-    ) -> Result<(Vec<BlockId>, EditLocation)> {
+    ) -> Result<(Vec<BlockId>, EditLocation, Option<Pos>)> {
         match self {
             Self::Text { kind, attrs, spans } => {
                 // Markdown says some of a block's attributes, as a heading's
@@ -378,12 +385,13 @@ impl Update {
                     doc.delete_text(block, 0..doc.text_len(block)?)?;
                     doc.insert_spans(block, 0, &spans)?;
                 }
-                Ok((Vec::new(), EditLocation::Block(block)))
+                Ok((Vec::new(), EditLocation::Block(block), text_end(doc, block)))
             }
             // No text to keep: an empty block of the type it was.
             Self::Clear => {
                 doc.delete_text(block, 0..doc.text_len(block)?)?;
-                Ok((Vec::new(), EditLocation::Block(block)))
+                let caret = Some(Pos::new(block, 0));
+                Ok((Vec::new(), EditLocation::Block(block), caret))
             }
             Self::Replace(new) => {
                 let index = doc.index_of(block)?;
@@ -393,11 +401,11 @@ impl Update {
                 for block in top {
                     made.extend(with_inside(doc, block)?);
                 }
-                let location = match made.last() {
-                    Some(block) => EditLocation::Block(*block),
-                    None => removal_at(doc, parent, index)?,
+                let (location, caret) = match made.last() {
+                    Some(&block) => (EditLocation::Block(block), text_end(doc, block)),
+                    None => (removal_at(doc, parent, index)?, None),
                 };
-                Ok((made, location))
+                Ok((made, location, caret))
             }
         }
     }

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use lotype_core::{BlockId, Document, Editor, Selection, Span};
+use lotype_core::{BlockId, Document, Editor, Pos, Selection, Span};
 
 use crate::apply::{self, EditLocation, Effect};
 use crate::selected::TextSelection;
@@ -181,6 +181,11 @@ impl AiSession {
             _ => None,
         }
         .map(|effect| effect.location)
+    }
+
+    /// Where the live text caret sits while the model writes.
+    pub fn writing_pos(&self) -> Option<Pos> {
+        self.writing_effect()?.caret
     }
 
     /// The shared block to mark while the model writes, following draft-only

@@ -1,7 +1,7 @@
 use lotype_ai::test_support::tool_call;
 use lotype_ai::{Accepted, AiSession, AiState, Change, LlmEvent};
 use lotype_core::test_support::editor;
-use lotype_core::{BlockId, Document, Editor, b, blocks, i, p};
+use lotype_core::{BlockId, Document, Editor, Pos, b, blocks, i, p};
 use serde_json::{Value, json};
 
 /// Starts a session that may edit only the supplied editor selection.
@@ -207,4 +207,31 @@ fn accept_skips_a_replacement_if_a_peer_shifted_its_range() {
         live.document().text(block).unwrap(),
         "Peer: Keep speling here"
     );
+}
+
+#[test]
+fn writing_pos_tracks_the_replaced_fragment_instead_of_the_block_end() {
+    let live = editor(blocks![p![
+        "Fix <a>speling<b> here, and leave the rest untouched."
+    ]]);
+    let block = live.document().blocks()[0];
+    let mut writing = session(&live);
+    assert_eq!(writing.writing_pos(), None);
+
+    for (delta, expected) in [
+        (format!(r#"{{"id":"{block}","text":"spe"#), "Fix spe".len()),
+        ("lling\"}".into(), "Fix spelling".len()),
+    ] {
+        writing
+            .feed(LlmEvent::ToolCallDelta {
+                id: "fix".into(),
+                name: "replace_selected_text".into(),
+                args_delta: delta,
+            })
+            .unwrap();
+        assert_eq!(writing.writing_pos(), Some(Pos::new(block, expected)));
+        assert!(expected < writing.document().text_len(block).unwrap());
+    }
+    writing.feed(LlmEvent::Done).unwrap();
+    assert_eq!(writing.writing_pos(), None);
 }
