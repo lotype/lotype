@@ -98,6 +98,7 @@ mod tests {
             .build()
             .unwrap();
         runtime.block_on(async {
+            let deadline = Duration::from_secs(2);
             let store = SqliteStore::open(":memory:").unwrap();
             let (entered, running) = tokio::sync::oneshot::channel();
             let (release, wait) = mpsc::channel();
@@ -106,25 +107,30 @@ mod tests {
                 first_store
                     .run(move |_| {
                         entered.send(()).unwrap();
-                        wait.recv().unwrap();
+                        wait.recv_timeout(Duration::from_secs(10))
+                            .expect("SQLite worker was not released");
                         Ok(())
                     })
                     .await
             });
-            running.await.unwrap();
+            tokio::time::timeout(deadline, running)
+                .await
+                .expect("SQLite worker did not start")
+                .unwrap();
             first.abort();
             assert!(first.await.unwrap_err().is_cancelled());
 
             let mut queued = std::pin::pin!(store.run(|_| Ok(())));
             let waiting = poll_fn(|cx| Poll::Ready(queued.as_mut().poll(cx).is_pending())).await;
-            let spare =
-                tokio::time::timeout(Duration::from_secs(2), tokio::task::spawn_blocking(|| ()))
-                    .await;
+            let spare = tokio::time::timeout(deadline, tokio::task::spawn_blocking(|| ())).await;
             release.send(()).unwrap();
 
             assert!(waiting);
             assert!(matches!(spare, Ok(Ok(()))));
-            queued.await.unwrap();
+            tokio::time::timeout(deadline, queued)
+                .await
+                .expect("queued SQLite operation did not finish after releasing the first worker")
+                .unwrap();
         });
     }
 }
