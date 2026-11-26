@@ -12,6 +12,7 @@ mod collab;
 mod input;
 mod keys;
 mod link;
+mod media;
 mod motion;
 mod paint;
 mod popup;
@@ -26,6 +27,7 @@ mod visible;
 
 pub(crate) use ai_controls::{Act, send, status, tier};
 pub use alert::{AlertLook, Shade};
+pub use media::MediaSource;
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -92,6 +94,7 @@ pub struct EditorView {
     slash: slash::SlashMenu,
     toolbar: toolbar::Toolbar,
     links: link::Links,
+    media: media::Media,
     side_menu: side_menu::SideMenu,
     /// The alert whose menu of kinds is open.
     alert_menu: Option<BlockId>,
@@ -149,6 +152,7 @@ impl EditorView {
             slash: slash::SlashMenu::default(),
             toolbar: toolbar::Toolbar::default(),
             links: link::Links::default(),
+            media: media::Media::default(),
             side_menu: side_menu::SideMenu::default(),
             alert_menu: None,
             alert_looks: HashMap::new(),
@@ -317,6 +321,7 @@ impl Render for EditorView {
         // The rows of the frame before stay whole while these are made, for
         // what a row draws by the rows around it, as where a block lands.
         let all = self.shape(selected);
+        self.keep_media_form(&all);
         let candidates: Vec<BlockId> = all.iter().map(|row| row.block).collect();
         let ai_cursor = self.ai_cursor_row(&candidates);
         let peers = self

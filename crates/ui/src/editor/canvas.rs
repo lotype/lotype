@@ -4,13 +4,11 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, SharedString,
-    TextStyle, Window, canvas, div, img, point, prelude::*, px, size,
+    AnyElement, App, Bounds, Context, FontStyle, Hsla, MouseButton, Pixels, TextStyle, Window,
+    canvas, div, point, prelude::*, px, size,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::{
-    AlertKind, BlockColor, BlockId, Document, Pos, Role, Selection, Value, attr, block,
-};
+use lotype_core::{AlertKind, BlockColor, BlockId, Document, Pos, Role, Selection, Value, block};
 
 use super::input::Shown;
 use super::{BlockContent, EditorView};
@@ -209,39 +207,7 @@ impl EditorView {
                 let row = div().h(px(17.)).w_full().flex().items_center();
                 row.child(dashes()).child(label).child(dashes())
             }
-            block::IMAGE => {
-                let (url, caption) = (
-                    doc.text_of(block, attr::URL),
-                    doc.text_of(block, attr::CAPTION),
-                );
-                let label = if caption.is_empty() {
-                    url.clone()
-                } else {
-                    caption.clone()
-                };
-                let shown = SharedString::from(label);
-                let (fill, ink) = (cx.theme().muted, muted(cx));
-                let fallback = move || {
-                    let missing = div().p_2().rounded_md().bg(fill);
-                    missing
-                        .text_color(ink)
-                        .child(shown.clone())
-                        .into_any_element()
-                };
-                let image = img(url).max_w_full().with_fallback(fallback);
-                let caption = (!caption.is_empty()).then(|| div().text_color(ink).child(caption));
-                div().flex().flex_col().child(image).children(caption)
-            }
-            block::FILE => {
-                let (url, name) = (
-                    doc.text_of(block, attr::URL),
-                    doc.text_of(block, attr::NAME),
-                );
-                let name = if name.is_empty() { url } else { name };
-                div()
-                    .text_color(cx.theme().link)
-                    .child(format!("📎 {name}"))
-            }
+            block::IMAGE | block::FILE => div().child(self.media_block(block, cx)?),
             block::ALERT => div().pl(px(INDENT)).child(self.alert_title(block, cx)),
             block::TABLE => div().child(self.table_grid(block, base, shown, window, cx)?),
             block::QUOTE => div()
@@ -427,7 +393,7 @@ mod tests {
         let second = doc
             .insert_block(Some(quote), 1, block::NUMBERED_LIST_ITEM)
             .unwrap();
-        doc.set_attr(first, attr::START, 3).unwrap();
+        doc.set_attr(first, lotype_core::attr::START, 3).unwrap();
         let toggle = doc.insert_block(None, 2, block::TOGGLE_LIST_ITEM).unwrap();
         let inside = doc.insert_block(Some(toggle), 0, block::PARAGRAPH).unwrap();
 

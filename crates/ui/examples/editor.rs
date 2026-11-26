@@ -1,13 +1,15 @@
 //! An editor window, for trying the editor by hand: a tour of the blocks.
 
+use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+
 use gpui::{
-    App, Bounds, Entity, Focusable, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
-    white,
+    App, Bounds, Entity, Focusable, Task, Window, WindowBounds, WindowOptions, div, prelude::*, px,
+    size, white,
 };
 use lotype_core::{
     Atom, BlockId, Document, Editor, InlineSpec, Pos, Schema, Selection, Value, block,
 };
-use lotype_ui::EditorView;
+use lotype_ui::{EditorView, MediaSource};
 
 /// The blocks, each under a heading of its own with how to make it and what
 /// it does.
@@ -82,7 +84,13 @@ Pick Table in the slash menu for a 2 × 2 one. Hover it for the bars that add a 
 
 ### Image
 
-![The Lotype logo](https://raw.githubusercontent.com/lotype/lotype/main/assets/logo.png)
+![The Lotype logo](demo:logo)
+
+### File
+
+[Project README](demo:readme "lotype-file")
+
+Use `/image` or `/file`, then Choose file to attach a local file in this demo.
 
 ### Divider
 
@@ -132,6 +140,11 @@ impl Render for Page {
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let paths = Rc::new(RefCell::new(HashMap::from([
+            ("demo:logo".to_owned(), repo.join("assets/logo.png")),
+            ("demo:readme".to_owned(), repo.join("README.md")),
+        ])));
         let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
         let mut doc = Document::new(schema);
         doc.insert_markdown(None, 0, TEXT)
@@ -167,8 +180,23 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             ..Default::default()
         };
-        cx.open_window(options, |window, cx| {
-            let editor = cx.new(|cx| EditorView::new(editor, cx));
+        cx.open_window(options, move |window, cx| {
+            let editor = cx.new(|cx| {
+                let imports = paths.clone();
+                EditorView::new(editor, cx)
+                    .with_media_importer(move |path, _| {
+                        // Keep the mapping for this demo session. Applications can
+                        // persist the bytes and return a durable reference here.
+                        let mut files = imports.borrow_mut();
+                        let reference = format!("demo:attachment/{}", files.len());
+                        files.insert(reference.clone(), path);
+                        Task::ready(Ok(reference))
+                    })
+                    .with_media_resolver(move |reference| match paths.borrow().get(reference) {
+                        Some(path) => Some(MediaSource::Path(path.clone())),
+                        None => Some(MediaSource::Url(reference.to_owned())),
+                    })
+            });
             window.focus(&editor.focus_handle(cx), cx);
             cx.new(|_| Page(editor))
         })

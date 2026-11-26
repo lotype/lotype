@@ -226,20 +226,22 @@ impl EditorView {
         }
         let (from, to) = (top - view, top + view * 2.);
         let wanted = self.selection_rows(rows);
+        let editing_media = self.media_form_block();
         let (mut y, mut unknown) = (Pixels::ZERO, false);
         let mut plan = Vec::with_capacity(rows.len());
         for (at, block) in rows.iter().enumerate() {
             let tall = height(at);
             let near = y + tall >= from && y <= to;
+            let wanted = wanted.contains(&at) || Some(*block) == editing_media;
             y += tall;
-            if !(near || wanted.contains(&at)) {
+            if !(near || wanted) {
                 plan.push(Plan::Space(tall));
                 continue;
             }
             unknown |= heights[at].is_none();
             // Apart only where no one looks: rows in sight are drawn, and
-            // the selection's are where the caret is brought into sight.
-            let apart = at < first && heights[at].is_none() && y <= top && !wanted.contains(&at);
+            // the selection and active controls keep their layout in the column.
+            let apart = at < first && heights[at].is_none() && y <= top && !wanted;
             if apart {
                 self.heights.unseen += usize::from(y > top && y - tall < top + view);
                 plan.push(Plan::Measure(tall));

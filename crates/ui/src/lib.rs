@@ -12,4 +12,4 @@ pub mod test_support;
 mod text_el;
 
 pub use ai_panel::AiPanel;
-pub use editor::{AlertLook, BlockContent, EditorView, Shade};
+pub use editor::{AlertLook, BlockContent, EditorView, MediaSource, Shade};
