@@ -180,6 +180,33 @@ fn enter_in_code_block_inserts_lines_then_leaves_edit_mode_on_empty_line(
 }
 
 #[gpui::test]
+fn enter_replaces_a_code_block_selection_with_a_line_break(cx: &mut TestAppContext) {
+    let mut doc = Document::new(Schema::builtin());
+    doc.insert_markdown(None, 0, "```rs\nalpha beta\n```\n")
+        .unwrap();
+    let code = doc.blocks()[0];
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::Text {
+            anchor: Pos::new(code, 0),
+            head: Pos::new(code, 5),
+        }))
+        .unwrap();
+
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(editor, cx), cx)
+    });
+    ed.settle();
+    ed.keys("enter");
+
+    assert_eq!(
+        ed.editor(|editor| editor.document().plain_text(code).unwrap()),
+        "\n beta"
+    );
+    assert_eq!(ed.editor(|editor| editor.document().blocks().len()), 1);
+}
+
+#[gpui::test]
 fn folded_twoslash_preview_hides_directives_shows_completions_and_unfolds_on_click(
     cx: &mut TestAppContext,
 ) {

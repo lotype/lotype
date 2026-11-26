@@ -97,7 +97,6 @@ impl EditorView {
         let name = key_name(&event.keystroke);
         if name == "Enter"
             && let Some(Selection::Text { anchor, head }) = self.editor.selection().cloned()
-            && anchor == head
             && self.editor.document().role(head.block) == Role::Code
         {
             let text = self
@@ -109,7 +108,8 @@ impl EditorView {
             let after = &text[head.offset..];
             let line_before = before.rsplit('\n').next().unwrap_or_default();
             let line_after = after.split('\n').next().unwrap_or_default();
-            if head.offset == text.len()
+            if anchor == head
+                && head.offset == text.len()
                 && before.contains('\n')
                 && line_before.is_empty()
                 && line_after.is_empty()
