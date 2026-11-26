@@ -10,7 +10,7 @@ use gpui_component::input::Textarea;
 use gpui_component::list::ListItem;
 use gpui_component::{ActiveTheme, Sizable, ThemeStyled, h_flex, v_flex};
 use lotype_ai::{AiState, Change, EditLocation, Role};
-use lotype_core::BlockId;
+use lotype_core::{BlockId, Pos};
 
 use super::EditorView;
 use super::ai::{BarLayout, PromptScope};
@@ -54,20 +54,23 @@ impl EditorView {
         })
     }
 
+    /// Where the live text caret sits in the shown document while the model writes.
+    pub(super) fn ai_writing_pos(&self) -> Option<Pos> {
+        let pos = self.ai.session.as_ref()?.writing_pos()?;
+        let len = self.editor.document().text_len(pos.block).ok()?;
+        (pos.offset <= len).then_some(pos)
+    }
+
     /// The text block the model is writing, where its live cursor is drawn.
     pub(super) fn ai_writing_block(&self) -> Option<BlockId> {
-        let session = self.ai.session.as_ref()?;
-        let EditLocation::Block(block) = session.edit_location()? else {
-            return None;
-        };
-        let writes = session.state() == &AiState::Writing;
-        (writes && self.editor.document().text_len(block).is_ok()).then_some(block)
+        self.ai_writing_pos().map(|pos| pos.block)
     }
 
     pub(super) fn ai_writing_caret(&self) -> Option<Bounds<Pixels>> {
-        let block = self.ai_writing_block()?;
-        let end = self.editor.document().text_len(block).ok()?;
-        self.layouts.get(&block)?.caret(end, Affinity::default())
+        let pos = self.ai_writing_pos()?;
+        self.layouts
+            .get(&pos.block)?
+            .caret(pos.offset, Affinity::default())
     }
 
     /// Finds the closest row in the view, including a collapsed block's ancestor.
@@ -261,13 +264,17 @@ impl EditorView {
         Some(menu.into_any_element())
     }
 
+    pub(super) fn shows_ai_bar(&self) -> bool {
+        self.ai.scope != Some(PromptScope::Document)
+            && (self.ai.field.is_some() || self.ai.session.is_some())
+            && !self.ai_asks_selection()
+    }
+
     /// The card next to the row a prompt was opened at: what the session
     /// says and offers, over the field to ask in.
     pub(super) fn ai_bar(&self, follow_write: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.ai.scope == Some(PromptScope::Document)
-            || (self.ai.field.is_none() && self.ai.session.is_none())
-            || self.ai_asks_selection()
-        {
+        if !self.shows_ai_bar() {
+            self.ai.bar_height.set(None);
             self.ai.bar_layout.set(None);
             return None;
         }
@@ -281,23 +288,31 @@ impl EditorView {
             Some(_) => None,
             None => self.ai_field_row(cx),
         };
-        let (scroll, measured, view) = (
+        let (scroll, height, measured, entity) = (
             self.scroll.clone(),
+            self.ai.bar_height.clone(),
             self.ai.bar_layout.clone(),
-            cx.entity_id(),
+            cx.entity(),
         );
         let reveal = canvas(
-            move |bounds: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+            move |bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App| {
+                height.set(Some(bounds.size.height));
                 let layout = Some(BarLayout {
                     height: bounds.size.height,
                     viewport: scroll.bounds().size.height,
                     review,
                 });
-                if measured.replace(layout) != layout
-                    && !follow_write
-                    && super::paint::reveal_bounds(&scroll, bounds)
-                {
-                    window.on_next_frame(move |_, cx| cx.notify(view));
+                if measured.get() != layout {
+                    let view = entity.entity_id();
+                    if follow_write {
+                        window.on_next_frame(move |_, cx| cx.notify(view));
+                    } else {
+                        measured.set(layout);
+                        let keep = entity.read(cx).ai_writing_caret();
+                        if super::paint::reveal_bounds_preserving(&scroll, bounds, keep) {
+                            window.on_next_frame(move |_, cx| cx.notify(view));
+                        }
+                    }
                 }
             },
             |_, _, _, _| {},

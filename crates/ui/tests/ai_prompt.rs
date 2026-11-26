@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use gpui::{Modifiers, TestAppContext, px};
+use futures_util::{StreamExt, stream};
+use gpui::{Modifiers, TestAppContext, point, px, size};
 use lotype_ai::test_support::{MockProvider, tool_call};
-use lotype_ai::{AiState, LlmError, LlmEvent};
+use lotype_ai::{AiState, LlmError, LlmEvent, LlmProvider, LlmRequest, LlmStream};
 use lotype_core::test_support::{BlockNode, editor};
-use lotype_core::{BlockId, blocks, p};
+use lotype_core::{BlockId, Document, Pos, blocks, p};
 use lotype_ui::EditorView;
 use lotype_ui::test_support::EditorTestContext;
 
@@ -166,4 +168,240 @@ fn the_button_to_send_leaves_the_field_s_row_once_the_text_is_more_than_a_line(
     click(&mut ed, "ai-send");
     assert_eq!(provider.requests().len(), 1);
     assert_eq!(down(&mut ed), beside);
+}
+
+#[gpui::test]
+fn peer_deleting_the_prompt_row_keeps_the_card_near_where_it_opened(cx: &mut TestAppContext) {
+    let mut rows = vec![p!["Above"], p!["<a>"], p!["Below"]];
+    for index in 0..24 {
+        let text = format!("Paragraph {index}");
+        rows.push(p![text.as_str()]);
+    }
+    let (mut ed, _) = with_model(cx, rows, |_| Vec::new());
+    let ids = ed.editor(|editor| editor.document().blocks());
+    let (above, target, below, last) = (ids[0], ids[1], ids[2], *ids.last().unwrap());
+    let height = px(180.);
+    ed.cx.simulate_resize(size(px(360.), height));
+    ed.settle();
+    ed.type_text(" ");
+    assert!(shows(&mut ed, "ai-bar"));
+
+    let mut peer = Document::new(ed.editor(|editor| editor.document().schema().clone()));
+    let snapshot = ed.editor(|editor| editor.document().export_snapshot().unwrap());
+    let version = ed.editor(|editor| editor.document().version());
+    peer.import(&snapshot).unwrap();
+    peer.remove_block(target).unwrap();
+    let updates = peer.export_updates(&version).unwrap();
+
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            editor.import(&updates).unwrap();
+            editor.set_selection(None).unwrap();
+        });
+    });
+    ed.settle();
+
+    let bar = ed.cx.debug_bounds("ai-bar").expect("prompt stays open");
+    let (above_bounds, below_bounds, last_drawn) = ed.view.update(ed.cx, |view, _| {
+        (
+            view.text_bounds(above).unwrap(),
+            view.text_bounds(below).unwrap(),
+            view.text_bounds(last),
+        )
+    });
+    assert!(above_bounds.bottom() <= bar.top() && bar.bottom() <= below_bounds.top());
+    assert!(bar.top() >= px(0.) && bar.bottom() <= height);
+    assert!(last_drawn.is_none());
+}
+
+#[gpui::test]
+fn stalled_stream_reveals_stop_after_caret_follow_skips_the_card_reveal(cx: &mut TestAppContext) {
+    struct AddAndStall(BlockId);
+
+    impl LlmProvider for AddAndStall {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            let args = format!(
+                r#"{{"referenceId":"{}","position":"after","blocks":["Added line"]}}"#,
+                self.0
+            );
+            Box::pin(stream::iter(tool_call("1", "add", &args, 99)).chain(stream::pending()))
+        }
+    }
+
+    let doc = editor(blocks![
+        p!["First"],
+        p!["Second"],
+        p!["Third"],
+        p!["<a>"],
+        p!["Below"]
+    ]);
+    let target = doc.document().blocks()[3];
+    let provider = Arc::new(AddAndStall(target));
+    let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(provider));
+    let bottom = ed
+        .view
+        .update(ed.cx, |view, _| view.text_bounds(target).unwrap().bottom());
+    // Tall enough for the added line right below `target`, but not the Stop card under it.
+    let height = bottom + px(28.);
+    ed.cx.simulate_resize(size(px(360.), height));
+    ed.settle();
+
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Add one", cx));
+    ed.settle();
+    ed.cx.executor().advance_clock(Duration::from_millis(20));
+    ed.settle();
+
+    assert_eq!(state(&mut ed), Some(AiState::Writing));
+    let stop = ed.cx.debug_bounds("ai-stop").expect("Stop button is drawn");
+    assert!(
+        stop.top() >= px(0.) && stop.bottom() <= height,
+        "{stop:?} vs {height:?}"
+    );
+}
+
+#[gpui::test]
+fn streaming_selection_replacement_keeps_viewport_on_the_edited_phrase(cx: &mut TestAppContext) {
+    struct ReplaceStalled(BlockId);
+
+    impl LlmProvider for ReplaceStalled {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            let args = format!(r#"{{"id":"{}","text":"spelling"}}"#, self.0);
+            Box::pin(
+                stream::iter(tool_call("fix", "replace_selected_text", &args, 99))
+                    .chain(stream::pending()),
+            )
+        }
+    }
+
+    let tail = " Leave this long trailing paragraph untouched.".repeat(60);
+    let text = format!("Fix <a>speling<b> here.{tail}");
+    let doc = editor(blocks![p![text.as_str()]]);
+    let block = doc.document().blocks()[0];
+    let provider = Arc::new(ReplaceStalled(block));
+    let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(provider));
+    let height = px(220.);
+    ed.cx.simulate_resize(size(px(640.), height));
+    ed.settle();
+
+    click(&mut ed, "toolbar-ai");
+    click(&mut ed, "ai-suggestion-spelling");
+    ed.cx.executor().advance_clock(Duration::from_millis(20));
+    ed.settle();
+
+    assert_eq!(state(&mut ed), Some(AiState::Writing));
+    let (edited, end_caret, paragraph) = ed.view.update(ed.cx, |view, _| {
+        let end = view.ai_document().unwrap().text_len(block).unwrap();
+        (
+            view.caret_bounds(Pos::new(block, "Fix spelling".len()))
+                .unwrap(),
+            view.caret_bounds(Pos::new(block, end)).unwrap(),
+            view.text_bounds(block).unwrap(),
+        )
+    });
+    assert!(paragraph.size.height > height * 2.);
+    assert!(edited.top() >= px(0.) && edited.bottom() <= height);
+    assert!(end_caret.bottom() > height);
+}
+
+#[gpui::test]
+fn offscreen_writing_caret_stays_in_view_after_taller_rows_above_measure(cx: &mut TestAppContext) {
+    struct OffscreenWrite(BlockId);
+
+    impl LlmProvider for OffscreenWrite {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            let args = format!(
+                r#"{{"id":"{}","block":"Updated offscreen target"}}"#,
+                self.0
+            );
+            Box::pin(stream::iter(tool_call("1", "update", &args, 99)).chain(stream::pending()))
+        }
+    }
+
+    let mut rows = Vec::new();
+    for index in 0..8 {
+        let text = format!("Short {index}");
+        rows.push(p![text.as_str()]);
+    }
+    let tall = "This unseen middle paragraph wraps across many lines when measured. ".repeat(8);
+    for _ in 0..16 {
+        rows.push(p![tall.as_str()]);
+    }
+    rows.push(p!["Bottom target"]);
+    let mut doc = editor(rows);
+    let first_id = doc.document().blocks()[0];
+    doc.set_selection(Some(lotype_core::Selection::caret(Pos::new(first_id, 0))))
+        .unwrap();
+    let target = *doc.document().blocks().last().unwrap();
+    let provider = Arc::new(OffscreenWrite(target));
+    let mut ed = EditorTestContext::with_view(cx, |cx| EditorView::new(doc, cx).with_ai(provider));
+    let height = px(140.);
+    ed.cx.simulate_resize(size(px(320.), height));
+    ed.settle();
+
+    ed.view.update(ed.cx, |view, cx| {
+        assert!(view.ai_ask_document("Update the last paragraph", cx));
+    });
+    ed.settle();
+    ed.cx.executor().advance_clock(Duration::from_millis(20));
+    ed.settle();
+
+    assert_eq!(state(&mut ed), Some(AiState::Writing));
+    let caret = ed.view.update(ed.cx, |view, _| {
+        let end = view.ai_document().unwrap().text_len(target).unwrap();
+        view.caret_bounds(Pos::new(target, end)).unwrap()
+    });
+    assert!(
+        caret.top() >= px(0.) && caret.bottom() <= height,
+        "{caret:?} vs {height:?}"
+    );
+}
+
+#[gpui::test]
+fn closing_a_scrolled_past_prompt_preserves_visible_anchor_position(cx: &mut TestAppContext) {
+    let tall =
+        "A tall opening paragraph whose wrapped height far exceeds the average row. ".repeat(10);
+    let opening_text = format!("{tall}<a>");
+    let mut rows = vec![p![opening_text.as_str()]];
+    for index in 0..24 {
+        let text = format!("Short row {index}");
+        rows.push(p![text.as_str()]);
+    }
+    let (mut ed, _) = with_model(cx, rows, |_| Vec::new());
+    let height = px(160.);
+    ed.cx.simulate_resize(size(px(320.), height));
+    ed.settle();
+
+    ed.view
+        .update_in(ed.cx, |view, window, cx| view.open_ai_prompt(window, cx));
+    ed.settle();
+    ed.cx.simulate_event(gpui::ScrollEvent {
+        position: point(px(160.), px(80.)),
+        delta: gpui::ScrollDelta::Pixels(point(px(0.), -px(180.))),
+        ..Default::default()
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("ai-bar").unwrap().bottom() <= px(0.));
+
+    let (visible_row, before) = ed.view.update(ed.cx, |view, _| {
+        view.editor()
+            .document()
+            .blocks()
+            .into_iter()
+            .skip(1)
+            .find_map(|block| {
+                let bounds = view.text_bounds(block)?;
+                (bounds.top() >= px(16.) && bounds.bottom() <= height)
+                    .then_some((block, bounds.top()))
+            })
+            .expect("a visible row below the scrolled-past prompt")
+    });
+    ed.keys("escape");
+    assert!(!shows(&mut ed, "ai-bar"));
+    let after = ed.view.update(ed.cx, |view, _| {
+        view.text_bounds(visible_row).unwrap().top()
+    });
+    assert!(
+        (after - before).abs() <= px(1.),
+        "expected {visible_row:?} to stay put: before={before:?}, after={after:?}"
+    );
 }

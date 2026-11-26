@@ -342,12 +342,17 @@ impl Render for EditorView {
         }
         // Rows far from the view lay out nothing: those next to each other
         // are one space as tall as they are.
-        let reveal_row = writing_block.filter(|block| {
-            self.ai.reveal_write.get() && ai_cursor == Some(EditLocation::Block(*block))
-        });
-        let mut ai_bar = self.ai_bar(reveal_row.is_some(), cx);
-        let ai_after = ai_bar.as_ref().and_then(|_| self.ai_bar_after(&candidates));
-        let plan = self.plan_rows(&candidates, ai_after, reveal_row, window);
+        let writing_row =
+            writing_block.filter(|block| ai_cursor == Some(EditLocation::Block(*block)));
+        let ai_after = if self.shows_ai_bar() {
+            self.ai_bar_after(&candidates)
+        } else {
+            self.ai.bar_height.set(None);
+            self.ai.bar_layout.set(None);
+            None
+        };
+        let plan = self.plan_rows(&candidates, ai_after, writing_row, window);
+        let mut ai_bar = self.ai_bar(self.ai.reveal_write.get(), cx);
         let (mut rows, mut blocks, mut items) = (Vec::new(), Vec::new(), Vec::new());
         let mut space = Pixels::ZERO;
         let spacer = |height| div().h(height).w_full().flex_none().into_any_element();

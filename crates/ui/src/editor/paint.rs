@@ -127,11 +127,28 @@ fn selection_head(view: &EditorView) -> Option<Bounds<Pixels>> {
 
 /// Scrolls just enough to bring the given bounds into view.
 pub(super) fn reveal_bounds(scroll: &ScrollHandle, target: Bounds<Pixels>) -> bool {
+    reveal_bounds_preserving(scroll, target, None)
+}
+
+/// Scrolls `target` into view without pushing `keep` out of sight.
+pub(super) fn reveal_bounds_preserving(
+    scroll: &ScrollHandle,
+    target: Bounds<Pixels>,
+    keep: Option<Bounds<Pixels>>,
+) -> bool {
     let (shown, mut offset) = (scroll.bounds(), scroll.offset());
     if target.top() < shown.top() {
-        offset.y += shown.top() - target.top();
+        let mut shift = shown.top() - target.top();
+        if let Some(keep) = keep {
+            shift = shift.min((shown.bottom() - keep.bottom()).max(Pixels::ZERO));
+        }
+        offset.y += shift;
     } else if target.bottom() > shown.bottom() {
-        offset.y -= target.bottom() - shown.bottom();
+        let mut shift = target.bottom() - shown.bottom();
+        if let Some(keep) = keep {
+            shift = shift.min((keep.top() - shown.top()).max(Pixels::ZERO));
+        }
+        offset.y -= shift;
     } else {
         return false;
     }

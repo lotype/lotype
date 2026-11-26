@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gpui::{Context, Entity, FocusHandle, Focusable, Pixels, Subscription, Window, prelude::*};
 use gpui_component::input::{InputEvent, TextareaState};
-use lotype_ai::Change;
+use lotype_ai::{Change, EditLocation};
 use lotype_core::{BlockId, Selection};
 
 use super::EditorView;
@@ -25,7 +25,7 @@ pub(super) struct PromptField {
     /// How long the text was when it no longer fit on one line next to
     /// the button that sends it, which is under the field since.
     pub(super) wrapped_at: Cell<Option<usize>>,
-    pub(super) anchor: Option<BlockId>,
+    pub(super) anchor: Cell<Option<BlockId>>,
     _watches: [Subscription; 2],
 }
 
@@ -50,10 +50,7 @@ impl EditorView {
         if !self.ai_can_submit(scope) || self.ai.field.is_some() {
             return;
         }
-        let anchor = match self.editor().selection() {
-            Some(Selection::Text { head, .. }) => Some(head.block),
-            _ => None,
-        };
+        let anchor = Cell::new(self.selection_anchor());
         let history_start = self.ai_transcript().messages.len();
         let placeholder = match scope {
             PromptScope::Selection => "Ask AI to change this…",
@@ -133,22 +130,63 @@ impl EditorView {
         cx.notify();
     }
 
+    fn selection_anchor(&self) -> Option<BlockId> {
+        match self.editor().selection() {
+            Some(Selection::Text { head, .. }) => Some(head.block),
+            Some(Selection::Cells { head, .. }) => Some(*head),
+            Some(Selection::Blocks(blocks)) => blocks.last().copied(),
+            None => None,
+        }
+    }
+
+    fn nearby_visible_row(&self, gone: BlockId, rows: &[BlockId]) -> Option<BlockId> {
+        let at = self.rows.iter().position(|row| *row == gone)?;
+        self.rows[..at]
+            .iter()
+            .rev()
+            .chain(&self.rows[at + 1..])
+            .find_map(|row| self.visible_cursor_row(*row, rows))
+    }
+
     /// Places the card below the prompt's row and any draft edits beneath it.
     pub(super) fn ai_bar_after(&self, rows: &[BlockId]) -> Option<BlockId> {
-        let anchor = self.ai.field.as_ref().and_then(|field| field.anchor);
-        let anchor = anchor.or_else(|| match self.editor().selection() {
-            Some(Selection::Text { head, .. }) => Some(head.block),
-            _ => None,
-        });
-        let anchor = anchor.and_then(|block| self.visible_cursor_row(block, rows));
-        let changed: HashSet<_> = self
+        let saved = self.ai.field.as_ref().and_then(|field| field.anchor.get());
+        let resolved = saved.and_then(|block| self.visible_cursor_row(block, rows));
+        let anchor = resolved
+            .or_else(|| {
+                self.selection_anchor()
+                    .and_then(|block| self.visible_cursor_row(block, rows))
+            })
+            .or_else(|| {
+                saved
+                    .or(self.ai.bar_after)
+                    .and_then(|gone| self.nearby_visible_row(gone, rows))
+            })
+            .or_else(|| {
+                self.heights
+                    .anchor_block()
+                    .and_then(|block| self.visible_cursor_row(block, rows))
+            })
+            .or_else(|| rows.first().copied());
+        if resolved.is_none()
+            && self.ai.session.is_none()
+            && let Some(field) = &self.ai.field
+        {
+            field.anchor.set(anchor);
+        }
+        let mut changed: HashSet<_> = self
             .ai
             .changes
             .iter()
-            .map(|change| match change {
-                Change::Added(block) | Change::Updated(block) | Change::Removed(block) => *block,
+            .filter_map(|change| {
+                let (Change::Added(block) | Change::Updated(block) | Change::Removed(block)) =
+                    change;
+                self.visible_cursor_row(*block, rows)
             })
             .collect();
+        if let Some(EditLocation::Block(block)) = self.ai_cursor_row(rows) {
+            changed.insert(block);
+        }
         rows.iter()
             .rev()
             .copied()

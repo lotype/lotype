@@ -31,6 +31,7 @@ pub(crate) struct Heights {
     /// How many more frames bring the caret into sight again, after one
     /// that did while rows near it were first measured, which moves it.
     follow: u8,
+    follow_write: u8,
     /// How many rows in sight frames laid out apart, where no one sees
     /// them, for tests: none should be.
     unseen: usize,
@@ -49,6 +50,10 @@ pub(crate) enum Plan {
 }
 
 impl Heights {
+    pub(super) fn anchor_block(&self) -> Option<BlockId> {
+        self.anchor.map(|(block, _)| block)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn laid_out_count(&self) -> usize {
         self.laid_out.len()
@@ -144,6 +149,7 @@ impl EditorView {
             self.heights.known.clear();
             self.heights.width = Some(view.size.width);
         }
+        let attached_bar = self.ai.bar_after.zip(self.ai.bar_height.get());
         // The scroll handle has the rows where they are before scrolling.
         let top = view.top() - self.scroll.offset().y;
         self.heights.anchor = None;
@@ -155,7 +161,12 @@ impl EditorView {
             let Some(bounds) = item.and_then(|item| self.scroll.bounds_for_item(item)) else {
                 continue;
             };
-            self.heights.known.insert(*block, bounds.size.height);
+            let card = match attached_bar {
+                Some((attached, height)) if attached == *block => height,
+                _ => Pixels::ZERO,
+            };
+            let block_height = (bounds.size.height - card).max(Pixels::ZERO);
+            self.heights.known.insert(*block, block_height);
             if self.heights.anchor.is_none() && bounds.bottom() > top {
                 self.heights.anchor = Some((*block, bounds.top() - top));
             }
@@ -195,17 +206,23 @@ impl EditorView {
         &mut self,
         rows: &[BlockId],
         ai_after: Option<BlockId>,
-        ai_writing: Option<BlockId>,
+        writing_row: Option<BlockId>,
         window: &mut Window,
     ) -> Vec<Plan> {
         let previous = std::mem::replace(&mut self.ai.bar_after, ai_after);
-        if previous != ai_after {
-            // The attached card counts toward its row's measured height.
-            for block in previous.into_iter().chain(ai_after) {
-                self.heights.known.remove(&block);
-            }
+        let moved_bar = previous != ai_after;
+        if moved_bar {
             self.ai.bar_layout.set(None);
+            if ai_after.is_none() {
+                self.ai.bar_height.set(None);
+            }
         }
+        let card_height = match ai_after {
+            Some(_) => self.ai.bar_height.get().unwrap_or_default(),
+            None => Pixels::ZERO,
+        };
+        let ai_writing =
+            writing_row.filter(|_| self.ai.reveal_write.get() || self.heights.follow_write > 0);
         // Before the view is laid out, the window is as tall as it can be.
         let view = self.scroll.bounds().size.height;
         let view = if view > Pixels::ZERO {
@@ -222,13 +239,24 @@ impl EditorView {
         };
         let heights: Vec<Option<Pixels>> =
             rows.iter().map(|block| known.get(block).copied()).collect();
-        let height = |at: usize| heights[at].unwrap_or(estimate);
+        let block_height = |at: usize| heights[at].unwrap_or(estimate);
+        let height = |at: usize| {
+            let tall = block_height(at);
+            if Some(rows[at]) == ai_after {
+                tall + card_height
+            } else {
+                tall
+            }
+        };
         let mut top = -self.scroll.offset().y;
         let mut first = 0;
-        if let Some((anchor, below)) = self.heights.anchor.take()
+        if let Some((anchor, mut below)) = self.heights.anchor.take()
             && let Some(at) = rows.iter().position(|block| *block == anchor)
         {
             first = at;
+            if previous == Some(anchor) && ai_after != Some(anchor) {
+                below = below.max(-block_height(at));
+            }
             let y: Pixels = (0..at).map(height).sum();
             let wanted = (y - below).max(Pixels::ZERO);
             if wanted != top {
@@ -255,7 +283,7 @@ impl EditorView {
                 plan.push(Plan::Space(tall));
                 continue;
             }
-            unknown |= heights[at].is_none();
+            unknown |= heights[at].is_none() || (moved_bar && Some(*block) == ai_after);
             // Apart only where no one looks: rows in sight are drawn, and
             // the selection and active controls keep their layout in the column.
             let apart = at < first && heights[at].is_none() && y <= top && !wanted;
@@ -277,6 +305,17 @@ impl EditorView {
             self.reveal.set(true);
         } else {
             self.heights.follow = 0;
+        }
+        if writing_row.is_none() {
+            self.heights.follow_write = 0;
+            self.ai.reveal_write.set(false);
+        } else if self.ai.reveal_write.get() {
+            self.heights.follow_write = 2;
+        } else if unknown && self.heights.follow_write > 0 {
+            self.heights.follow_write -= 1;
+            self.ai.reveal_write.set(true);
+        } else {
+            self.heights.follow_write = 0;
         }
         if unknown {
             window.request_animation_frame();

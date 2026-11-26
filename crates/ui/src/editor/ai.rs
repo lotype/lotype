@@ -68,6 +68,8 @@ pub(crate) struct Ai {
     pub(super) field: Option<PromptField>,
     /// The row that shared the card's layout in the last frame.
     pub(super) bar_after: Option<BlockId>,
+    /// How tall the attached card was in the last frame.
+    pub(super) bar_height: Rc<Cell<Option<Pixels>>>,
     /// The layout for which the card was last brought into view.
     pub(super) bar_layout: Rc<Cell<Option<BarLayout>>>,
     /// A draft edit advanced the live caret since the last layout.
