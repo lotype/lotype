@@ -54,18 +54,14 @@ fn first(ed: &mut EditorTestContext) -> (String, Option<String>) {
 }
 
 #[gpui::test]
-fn the_prompt_opens_from_an_empty_paragraph_the_slash_menu_and_the_toolbar(
-    cx: &mut TestAppContext,
-) {
+fn the_prompt_opens_from_space_and_the_toolbar(cx: &mut TestAppContext) {
     let (mut ed, _) = with_model(cx, blocks![p!["text"], p!["<a>"]], |_| Vec::new());
-    ed.type_text(" ");
-    assert!(shows(&mut ed, "ai-bar"));
-    ed.assert(blocks![p!["text"], p!["<a>"]]);
-    ed.keys("escape");
-
     ed.type_text("/ai");
-    assert!(shows(&mut ed, "slash-ai"));
-    ed.keys("enter");
+    assert!(!shows(&mut ed, "slash-ai") && !shows(&mut ed, "ai-bar"));
+    ed.assert(blocks![p!["text"], p!["/ai<a>"]]);
+    ed.keys("backspace backspace backspace");
+
+    ed.type_text(" ");
     assert!(shows(&mut ed, "ai-bar"));
     ed.assert(blocks![p!["text"], p!["<a>"]]);
     ed.keys("escape");
@@ -146,8 +142,7 @@ fn without_a_model_space_is_a_space_and_no_prompt_is_offered(cx: &mut TestAppCon
     let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
     ed.type_text(" ");
     ed.assert(blocks![p![" <a>"]]);
-    ed.type_text("/ai");
-    assert!(!shows(&mut ed, "slash-ai") && !shows(&mut ed, "ai-bar"));
+    assert!(!shows(&mut ed, "ai-bar"));
 }
 
 #[gpui::test]

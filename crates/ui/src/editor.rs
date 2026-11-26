@@ -297,9 +297,6 @@ impl Render for EditorView {
             let active = cx.observe_window_activation(window, wake);
             self.watches = vec![blur, focus, active];
         }
-        if std::mem::take(&mut self.ai.wanted) {
-            self.open_inline_ai_prompt(window, cx);
-        }
         // The frame's cost, up to the caret's paint, decides the blinking.
         self.blink.started.set(Some(std::time::Instant::now()));
         self.place_slash_menu();

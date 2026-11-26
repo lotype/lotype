@@ -8,7 +8,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, TextareaState};
 use lotype_ai::Change;
-use lotype_core::{BlockId, Pos, Selection, SlashItem};
+use lotype_core::{BlockId, Selection};
 
 use super::EditorView;
 use super::ai::PromptScope;
@@ -30,19 +30,6 @@ pub(super) struct PromptField {
     _watches: [Subscription; 2],
 }
 
-/// The slash menu's entry for the local writing prompt.
-pub(super) fn slash_item() -> SlashItem {
-    SlashItem {
-        key: "ai".to_owned(),
-        title: "Ask AI".to_owned(),
-        subtext: "Write or edit here".to_owned(),
-        group: "AI".to_owned(),
-        aliases: vec!["ask".to_owned(), "write".to_owned()],
-        block_type: String::new(),
-        attrs: Vec::new(),
-    }
-}
-
 impl EditorView {
     /// Opens an inline prompt for the caret or suggestions for a text selection.
     pub fn open_ai_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -52,11 +39,6 @@ impl EditorView {
     /// Opens the selection prompt from the formatting toolbar.
     pub(super) fn open_selection_ai_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_context_prompt(PromptScope::Selection, window, cx);
-    }
-
-    /// Opens the local writing prompt from Space or the slash menu.
-    pub(super) fn open_inline_ai_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_context_prompt(PromptScope::Inline, window, cx);
     }
 
     /// Focuses a contextual field without submitting or changing the document.
@@ -192,20 +174,7 @@ impl EditorView {
         if text != " " || !empty || !self.has_ai() || self.composition.is_some() {
             return false;
         }
-        self.open_inline_ai_prompt(window, cx);
+        self.open_context_prompt(PromptScope::Inline, window, cx);
         self.ai.field.is_some()
-    }
-
-    /// Removes the slash query and opens a local writing prompt on the next frame.
-    pub(super) fn ai_from_slash(&mut self) {
-        if let Some(query) = self.editor.slash_query() {
-            let caret = Selection::caret(Pos::new(query.block, query.range.start));
-            let cleared = self.editor.apply(|doc, _| {
-                doc.delete_text(query.block, query.range)?;
-                Ok(Some(caret))
-            });
-            cleared.ok();
-        }
-        self.ai.wanted = true;
     }
 }

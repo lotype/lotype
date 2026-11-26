@@ -38,11 +38,10 @@ impl EditorView {
         if self.slash.dismissed == Some(query.block) {
             return None;
         }
-        // The prompt first, where there is a model to ask.
-        let ai = self.has_ai().then(super::ai_prompt::slash_item);
-        let ai = filter_slash_items(ai.as_slice(), &query.query);
-        let items = filter_slash_items(&self.slash_items, &query.query);
-        let items: Vec<_> = ai.into_iter().chain(items).cloned().collect();
+        let items = filter_slash_items(&self.slash_items, &query.query)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
         (!items.is_empty()).then_some((query, items))
     }
 
@@ -81,10 +80,7 @@ impl EditorView {
         if self.ai.session.is_some() {
             return;
         }
-        match item.key.as_str() {
-            "ai" => self.ai_from_slash(),
-            _ => drop(self.editor.accept_slash_item(item)),
-        }
+        drop(self.editor.accept_slash_item(item));
         self.slash.highlighted = 0;
     }
 

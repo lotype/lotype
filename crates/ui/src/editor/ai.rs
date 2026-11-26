@@ -64,8 +64,6 @@ pub(crate) struct Ai {
     /// Those of them this frame shows the changed words of, which need
     /// no tint over the whole block.
     pub(super) diffed: HashSet<BlockId>,
-    /// The slash menu's entry asked for the bar, which the next frame opens.
-    pub(super) wanted: bool,
 }
 
 /// An editor of a document of its own that starts as `doc` is.
