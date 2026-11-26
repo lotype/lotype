@@ -39,14 +39,24 @@ pub(crate) fn block_rule(typed: &str) -> Option<BlockRule> {
     if (1..=MAX_HEADING_LEVEL).contains(&level) && marker.bytes().all(|b| b == b'#') {
         return Some(block_with(block::HEADING, "level", level));
     }
-    if let Some(language) = marker.strip_prefix("```") {
-        let plain = !language.contains(|c: char| c == '`' || c.is_whitespace());
-        return plain.then(|| match language {
-            "" => BlockRule {
+    if let Some(info) = marker.strip_prefix("```") {
+        let plain = !info.contains(|c: char| c == '`' || c.is_whitespace());
+        return plain.then(|| {
+            let mut attrs = Vec::new();
+            let (language, title) = match info.split_once(':') {
+                Some((lang, title)) => (lang, (!title.is_empty()).then_some(title)),
+                None => (info, None),
+            };
+            if !language.is_empty() {
+                attrs.push((attr::LANGUAGE, language.into()));
+            }
+            if let Some(title) = title {
+                attrs.push((attr::TITLE, title.into()));
+            }
+            BlockRule {
                 block_type: block::CODE_BLOCK,
-                attrs: Vec::new(),
-            },
-            _ => block_with(block::CODE_BLOCK, "language", language),
+                attrs,
+            }
         });
     }
     let number = marker.strip_suffix('.')?;

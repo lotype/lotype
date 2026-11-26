@@ -56,6 +56,12 @@ pub mod attr {
     pub const KIND: &str = "kind";
     /// A code block's language.
     pub const LANGUAGE: &str = "language";
+    /// A code block's title or file name.
+    pub const TITLE: &str = "title";
+    /// Whether Twoslash annotations are enabled on a code block.
+    pub const TWOSLASH: &str = "twoslash";
+    /// Highlighted 1-based line ranges on a code block, such as `1,3-5`.
+    pub const HIGHLIGHT_LINES: &str = "highlight_lines";
     /// The address of an image or a file.
     pub const URL: &str = "url";
     /// An image's caption.
@@ -338,5 +344,28 @@ impl Document {
     /// or the empty text.
     pub fn text_of(&self, block: BlockId, key: &str) -> String {
         self.text_attr(block, key).unwrap_or_default()
+    }
+
+    /// A code block's language, `None` where none or empty text is stored.
+    pub fn code_language(&self, block: BlockId) -> Option<String> {
+        self.text_attr(block, attr::LANGUAGE)
+            .filter(|text| !text.is_empty())
+    }
+
+    /// A code block's title or file name, `None` where none or empty text is stored.
+    pub fn code_title(&self, block: BlockId) -> Option<String> {
+        self.text_attr(block, attr::TITLE)
+            .filter(|text| !text.is_empty())
+    }
+
+    /// Whether Twoslash annotations are enabled on a code block.
+    pub fn is_twoslash(&self, block: BlockId) -> bool {
+        !matches!(self.attr(block, attr::TWOSLASH), Ok(Some(Value::Bool(false))))
+    }
+
+    /// Highlighted line ranges on a code block, such as `1,3-5`.
+    pub fn code_highlights(&self, block: BlockId) -> Option<String> {
+        self.text_attr(block, attr::HIGHLIGHT_LINES)
+            .filter(|text| !text.is_empty())
     }
 }

@@ -75,6 +75,60 @@ impl Editor {
         self.set_media(block, types::FILE, [(attr::URL, url), (attr::NAME, name)])
     }
 
+    /// Sets or clears a code block's language in one undo step.
+    pub fn set_code_language(&mut self, block: BlockId, language: Option<&str>) -> Result<()> {
+        self.set_code_text_attr(block, attr::LANGUAGE, language.unwrap_or_default())
+    }
+
+    /// Sets or clears a code block's title in one undo step.
+    pub fn set_code_title(&mut self, block: BlockId, title: Option<&str>) -> Result<()> {
+        self.set_code_text_attr(block, attr::TITLE, title.unwrap_or_default())
+    }
+
+    /// Sets or clears a code block's highlighted line ranges in one undo step.
+    pub fn set_code_highlights(&mut self, block: BlockId, lines: Option<&str>) -> Result<()> {
+        let normalized = lines
+            .and_then(crate::markdown::normalize_line_ranges)
+            .unwrap_or_default();
+        self.set_code_text_attr(block, attr::HIGHLIGHT_LINES, &normalized)
+    }
+
+    /// Enables or disables Twoslash on a code block in one undo step.
+    pub fn set_twoslash(&mut self, block: BlockId, twoslash: bool) -> Result<()> {
+        check_type(&self.doc, block, types::CODE_BLOCK)?;
+        let value = crate::Value::Bool(twoslash);
+        if self.doc.attr(block, attr::TWOSLASH)?.as_ref() == Some(&value) {
+            return Ok(());
+        }
+        self.apply(|doc, selection| {
+            doc.set_attr(block, attr::TWOSLASH, twoslash)?;
+            Ok(selection.cloned())
+        })
+    }
+
+    fn set_code_text_attr(&mut self, block: BlockId, key: &'static str, text: &str) -> Result<()> {
+        check_type(&self.doc, block, types::CODE_BLOCK)?;
+        let value = if text.is_empty() {
+            if !self.doc.has_attr(block, key)? {
+                return Ok(());
+            }
+            None
+        } else {
+            let value = crate::Value::from(text);
+            if self.doc.attr(block, key)?.as_ref() == Some(&value) {
+                return Ok(());
+            }
+            Some(value)
+        };
+        self.apply(|doc, selection| {
+            match value {
+                Some(value) => doc.set_attr(block, key, value)?,
+                None => doc.remove_attr(block, key)?,
+            }
+            Ok(selection.cloned())
+        })
+    }
+
     /// Changes the attachment metadata while preserving the block and the selection.
     fn set_media(
         &mut self,

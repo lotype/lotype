@@ -148,9 +148,8 @@ impl Document {
             block::CODE_BLOCK => {
                 let code = self.plain_text(block).ok()?;
                 let fence = "`".repeat(longest_run(&code, '`').max(2) + 1);
-                let language =
-                    attr(attr::LANGUAGE).replace(|c: char| c == '`' || c.is_whitespace(), "");
-                format!("{fence}{language}\n{code}\n{fence}")
+                let info = self.code_fence_info(block);
+                format!("{fence}{info}\n{code}\n{fence}")
             }
             block::TABLE => {
                 let (rows, columns) = (self.children(Some(block)).ok()?, self.columns(block).ok()?);

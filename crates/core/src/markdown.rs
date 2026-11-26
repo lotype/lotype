@@ -5,6 +5,8 @@ mod fence;
 mod read;
 mod write;
 
+pub(crate) use fence::normalize_line_ranges;
+
 /// What a page break is written as, since Markdown has none.
 const PAGE_BREAK: &str = "<!-- page-break -->";
 

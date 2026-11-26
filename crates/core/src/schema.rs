@@ -332,8 +332,14 @@ impl Schema {
         let hint = "alerts (`> [!NOTE]`, with their text added after them)";
         schema = schema.block(alert.with_hint(hint));
         let code = BlockSpec::new(block::CODE_BLOCK, Inline).without_style();
-        let code = code.with_role(Role::Code).with_attrs([attr::LANGUAGE]);
-        schema = schema.block(code.with_hint("fenced code"));
+        let code = code.with_role(Role::Code).with_attrs([
+            attr::LANGUAGE,
+            attr::TITLE,
+            attr::TWOSLASH,
+            attr::HIGHLIGHT_LINES,
+        ]);
+        let code_hint = "fenced code (` ```lang twoslash title=\"file\" {1,3-4} `)";
+        schema = schema.block(code.with_hint(code_hint));
         schema = schema.block(
             BlockSpec::new(block::TABLE, None)
                 .with_children()

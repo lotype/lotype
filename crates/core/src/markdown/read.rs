@@ -166,9 +166,7 @@ impl Reader {
             Tag::CodeBlock(kind) => {
                 let mut node = Node::new(block::CODE_BLOCK);
                 if let CodeBlockKind::Fenced(info) = kind {
-                    if let Some(language) = info.split_whitespace().next() {
-                        node.attrs.push(("language".into(), language.into()));
-                    }
+                    node.attrs = super::fence::parse_code_info(&info);
                     node.info = Some(info.to_string());
                 }
                 self.open(node);
