@@ -188,7 +188,7 @@ Design decisions:
 
 ## 5. UI layer (`lotype-ui`)
 
-Image and file references are ordinary document attributes. `Editor::set_image` and `Editor::set_file` change the reference and label as one undo step. `EditorView::with_media_importer` enables the native file picker and delegates storing the selected file to the application. `EditorView::with_media_resolver` maps a reference to an authorized local path or web URL. Without a resolver, the editor accepts HTTP and HTTPS for preview and opening. Remote previews use the host’s GPUI HTTP client. The demo uses an in-memory mapping to local paths.
+Image and file references are ordinary document attributes. `Editor::set_image` and `Editor::set_file` change the reference and label as one undo step. `EditorView::with_media_importer` enables the native file picker and delegates storing the selected file to the application when the user saves the form. `EditorView::with_media_resolver` maps a reference to an authorized local path or web URL. Without a resolver, the editor accepts HTTP and HTTPS for preview and opening. Remote previews use the host’s GPUI HTTP client. The demo uses an in-memory mapping to local paths.
 
 - **GPUI.** `gpui-component` 0.10.0 depends on `gpui-pre = "=0.3.12"`. This is a GPUI snapshot republished by the gpui-component maintainer, not by the Zed team.
 - **Platform.** `gpui-pre` holds no platform: the application picks one with `gpui-pre-platform`, so `lotype-ui` takes it only as a dev-dependency, for its example and visual checks. Its `runtime_shaders` feature compiles the Metal shaders at run time, so a Mac with only the Command Line Tools, without Xcode, can build and run the editor.
