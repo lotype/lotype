@@ -20,6 +20,9 @@ pub(crate) const EVERYONE: u64 = u64::MAX;
 /// What an update brought a room, and the client not to send it to.
 pub(crate) type Brought = (u64, Vec<u8>);
 
+/// An update or a presence on the relay, with the connection to skip.
+pub(crate) type Relayed = (u64, Bytes);
+
 /// A document with clients connected, kept in memory while any is.
 pub(crate) struct Room {
     /// `None` once Loro panicked in it.
@@ -33,7 +36,7 @@ pub(crate) struct Room {
     pub(crate) stored: tokio::sync::Mutex<()>,
     /// Messages for the clients, each with the number of the one not to
     /// send it to: the client it came of.
-    pub(crate) relay: broadcast::Sender<(u64, Bytes)>,
+    pub(crate) relay: broadcast::Sender<Relayed>,
     /// The room has what the store has not, or no document. See [`Room::fail`].
     failed: AtomicBool,
 }
@@ -135,14 +138,18 @@ impl Room {
         let _ = self.relay.send((client, message));
     }
 
-    /// What the clients here last said of themselves, unless so long ago
-    /// that the others have forgotten them.
-    pub(crate) fn present(&self) -> Vec<Bytes> {
+    /// Subscribes from the point at which the initial presence was read.
+    pub(crate) fn subscribe(&self) -> (broadcast::Receiver<Relayed>, Vec<Bytes>) {
         let present = lock(&self.present);
+        // publish holds the same lock through the send. Its event is either
+        // in the snapshot or queued after it, so an older event cannot
+        // overwrite a newer presence from the snapshot.
+        let receiver = self.relay.subscribe();
         let fresh = present
             .values()
             .filter(|(_, said)| said.elapsed() < PRESENCE_TIMEOUT);
-        fresh.map(|(message, _)| message.clone()).collect()
+        let snapshot = fresh.map(|(message, _)| message.clone()).collect();
+        (receiver, snapshot)
     }
 
     /// Gives the room up, as it has what the store does not. Its clients
@@ -192,5 +199,51 @@ impl Rooms {
         let room = Arc::new(room);
         *slot = Arc::downgrade(&room);
         Ok(room)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lotype_core::{Document, Presence, Schema, SyncMessage};
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    use super::Room;
+
+    #[test]
+    fn a_join_observes_a_concurrent_presence_in_the_snapshot_or_the_queue() {
+        let room = Room::new(Vec::new()).unwrap();
+        let doc = Document::new(Schema::new());
+        let presence = |name| {
+            let mut bytes = Presence::publish(&doc, name, 0, None);
+            Presence::readdress(&mut bytes, 1).unwrap();
+            bytes
+        };
+        for _ in 0..64 {
+            let original = presence("original");
+            room.publish(1, original.clone());
+            let latest = presence("latest");
+            std::thread::scope(|threads| {
+                let room = &room;
+                let update = latest.clone();
+                let publish = threads.spawn(move || room.publish(1, update));
+                let (mut updates, snapshot) = room.subscribe();
+                publish.join().unwrap();
+
+                assert_eq!(snapshot.len(), 1);
+                let read = SyncMessage::decode(&snapshot[0]).unwrap();
+                match updates.try_recv() {
+                    Ok((1, bytes)) => {
+                        assert_eq!(read, SyncMessage::Presence(original));
+                        assert_eq!(
+                            SyncMessage::decode(&bytes).unwrap(),
+                            SyncMessage::Presence(latest)
+                        );
+                        assert!(matches!(updates.try_recv(), Err(TryRecvError::Empty)));
+                    }
+                    Err(TryRecvError::Empty) => assert_eq!(read, SyncMessage::Presence(latest)),
+                    error => panic!("unexpected relay result: {error:?}"),
+                }
+            });
+        }
     }
 }

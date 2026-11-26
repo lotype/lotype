@@ -119,8 +119,7 @@ impl Client {
     /// Talks to the client until it leaves or is closed.
     async fn serve(&self, mut socket: WebSocket, store: &impl DocStore) {
         // Listening before the greeting, so nothing falls between them.
-        let mut relayed = self.room.relay.subscribe();
-        let mut greeting = self.room.present();
+        let (mut relayed, mut greeting) = self.room.subscribe();
         // The answer to the version is an update, which is not for a reader to send.
         if self.access == Access::Write {
             let _stored = self.room.stored.lock().await;
