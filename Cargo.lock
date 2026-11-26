@@ -4021,6 +4021,7 @@ dependencies = [
  "gpui-pre-platform",
  "lotype-ai",
  "lotype-core",
+ "lotype-storage",
  "lotype-ui",
  "unicode-segmentation",
  "url",

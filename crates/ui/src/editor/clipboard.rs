@@ -3,7 +3,8 @@
 //! editors like this one: Markdown would lose underline, colors and atoms.
 
 use gpui::{ClipboardItem, Context};
-use lotype_core::{Document, Selection};
+use lotype_core::Selection;
+use lotype_storage::restore_with_schema;
 
 use super::EditorView;
 
@@ -32,6 +33,10 @@ impl EditorView {
         let Ok(bytes) = slice.export_snapshot() else {
             return false;
         };
+        // A cut can only proceed if its complete contents can be pasted back.
+        if bytes.len() > MAX_HEX / 2 {
+            return false;
+        }
         let text = slice.to_plain_text();
         let mut metadata = String::with_capacity(TAG.len() + bytes.len() * 2);
         metadata.push_str(TAG);
@@ -60,9 +65,8 @@ impl EditorView {
             let hex = metadata
                 .strip_prefix(TAG)
                 .filter(|hex| hex.len() <= MAX_HEX)?;
-            let mut copied = Document::new(self.editor.document().schema().clone());
-            copied.import(&from_hex(hex)?).ok()?;
-            Some(copied)
+            let schema = self.editor.document().schema().clone();
+            restore_with_schema(schema, [from_hex(hex)?]).ok()
         });
         // A copy that cannot go here, as blocks too deep for it, goes in
         // as its plain text.

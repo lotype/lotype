@@ -17,6 +17,7 @@ gpui.workspace = true
 gpui-component.workspace = true
 lotype-ai.workspace = true
 lotype-core.workspace = true
+lotype-storage.workspace = true
 unicode-segmentation.workspace = true
 url = "2.5.9"
 

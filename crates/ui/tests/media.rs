@@ -111,7 +111,7 @@ fn the_host_can_resolve_an_image_to_a_local_preview(cx: &mut TestAppContext) {
         let model = editor(blocks![block("image", vec![]).attr("url", "assets:logo")]);
         EditorView::new(model, cx).with_media_resolver(|reference| {
             assert_eq!(reference, "assets:logo");
-            let logo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/logo.png");
+            let logo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/logo.png");
             Some(MediaSource::Path(logo))
         })
     });
@@ -287,7 +287,7 @@ fn editing_the_bottom_of_a_tall_image_scrolls_the_form_into_view(cx: &mut TestAp
         let mut blocks = blocks![block("image", vec![]).attr("url", "assets:logo")];
         blocks.extend((0..24).map(|_| p!["line"]));
         EditorView::new(editor(blocks), cx).with_media_resolver(|_| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/logo.png");
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/logo.png");
             Some(MediaSource::Path(path))
         })
     });

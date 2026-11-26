@@ -71,9 +71,10 @@ fn copy_and_paste_keep_what_markdown_cannot_say(cx: &mut TestAppContext) {
 #[gpui::test]
 fn broken_copied_bytes_paste_as_plain_text(cx: &mut TestAppContext) {
     let mut ed = EditorTestContext::new(cx, blocks![p!["<a>"]]);
-    let broken =
-        ClipboardItem::new_string_with_metadata("plain".into(), "lotype/loro\nzz01".into());
-    ed.cx.write_to_clipboard(broken);
-    ed.keys("cmd-v");
-    ed.assert(blocks![p!["plain<a>"]]);
+    for metadata in ["lotype/loro\nzz01", "lotype/loro\n00010203"] {
+        let broken = ClipboardItem::new_string_with_metadata("plain".into(), metadata.into());
+        ed.cx.write_to_clipboard(broken);
+        ed.keys("cmd-v");
+    }
+    ed.assert(blocks![p!["plainplain<a>"]]);
 }

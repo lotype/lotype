@@ -88,7 +88,7 @@ Pick Table in the slash menu for a 2 × 2 one. Hover it for the bars that add a 
 
 ### File
 
-[Project README](demo:readme "lotype-file")
+[SDK Cargo manifest](demo:manifest "lotype-file")
 
 Use `/image` or `/file`, then Choose file to attach a local file in this demo.
 
@@ -140,10 +140,10 @@ impl Render for Page {
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let paths = Rc::new(RefCell::new(HashMap::from([
-            ("demo:logo".to_owned(), repo.join("assets/logo.png")),
-            ("demo:readme".to_owned(), repo.join("README.md")),
+            ("demo:logo".to_owned(), crate_dir.join("assets/logo.png")),
+            ("demo:manifest".to_owned(), crate_dir.join("Cargo.toml")),
         ])));
         let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
         let mut doc = Document::new(schema);
