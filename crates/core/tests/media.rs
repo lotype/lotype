@@ -145,3 +145,73 @@ fn nested_markup_in_an_image_caption_keeps_the_outer_image_reference() {
         })
     );
 }
+
+#[test]
+fn an_unchanged_attachment_keeps_pending_typing_marks() {
+    let mut doc = Document::new(Schema::builtin());
+    let paragraph = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+    let image = doc.insert_block(None, 1, block::IMAGE).unwrap();
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(paragraph, 0))))
+        .unwrap();
+    editor.toggle_mark(mark::BOLD).unwrap();
+    editor.set_image(image, "", "").unwrap();
+    editor.insert_text("bold").unwrap();
+    assert_eq!(
+        editor.document().spans(paragraph).unwrap()[0].marks[mark::BOLD],
+        true.into()
+    );
+}
+
+#[test]
+fn a_preview_can_label_a_file_without_changing_its_destination() {
+    let mut doc = Document::new(Schema::builtin());
+    let block = doc
+        .insert_markdown(
+            None,
+            0,
+            "[![Preview](preview.png)](report.pdf \"lotype-file\")",
+        )
+        .unwrap()[0];
+    assert_eq!(
+        BlockKind::of(&doc, block),
+        Some(BlockKind::File {
+            url: "report.pdf".into(),
+            name: "Preview".into(),
+        })
+    );
+}
+
+#[test]
+fn marked_links_keep_their_labels_in_headings_fences_and_schemas_without_files() {
+    use lotype_core::{BlockSpec, Content, Expand, MarkSpec};
+    let link = "[Download](report.pdf \"lotype-file-unnamed\")";
+    let mut plain = Document::new(
+        Schema::new()
+            .block(BlockSpec::new(block::PARAGRAPH, Content::Inline))
+            .mark(MarkSpec::new(mark::LINK, Expand::None).with_value()),
+    );
+    let blocks = plain
+        .insert_markdown(
+            None,
+            0,
+            &format!("{link}\n\n[File](<> \"lotype-file-unnamed\")"),
+        )
+        .unwrap();
+    assert_eq!(plain.plain_text(blocks[0]).unwrap(), "Download");
+    assert_eq!(plain.plain_text(blocks[1]).unwrap(), "File");
+    let mut rich = Document::new(
+        Schema::builtin()
+            .block(BlockSpec::new("callout", Content::Inline).written_as_fence("callout")),
+    );
+    let blocks = rich
+        .insert_markdown(None, 0, &format!("- # {link}\n\n```callout\n{link}\n```"))
+        .unwrap();
+    assert!(rich.children(Some(blocks[0])).unwrap().is_empty());
+    for block in blocks {
+        let spans = rich.spans(block).unwrap();
+        assert_eq!(spans[0].text, "Download");
+        assert_eq!(spans[0].marks[mark::LINK], "report.pdf".into());
+    }
+}

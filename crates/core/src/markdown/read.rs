@@ -56,6 +56,7 @@ struct Leaf {
     node: Node,
     /// Text read so far outside a single image or file link.
     plain: bool,
+    heading: bool,
     media: Option<Media>,
 }
 
@@ -84,6 +85,7 @@ impl Reader {
         self.leaf = Some(Leaf {
             node,
             plain: false,
+            heading: false,
             media: None,
         });
     }
@@ -151,7 +153,12 @@ impl Reader {
             Tag::Paragraph => self.open(Node::new(block::PARAGRAPH)),
             // A heading goes in no list item, quote or alert: there it is
             // read as a paragraph, the text of a list item where it leads.
-            Tag::Heading { .. } if self.nested() => self.open(Node::new(block::PARAGRAPH)),
+            Tag::Heading { .. } if self.nested() => {
+                self.open(Node::new(block::PARAGRAPH));
+                if let Some(leaf) = &mut self.leaf {
+                    leaf.heading = true;
+                }
+            }
             Tag::Heading { level, .. } => {
                 let level = (level as i64).min(MAX_HEADING_LEVEL);
                 self.open(Node::new(block::HEADING).with(attr::LEVEL, level));
@@ -388,6 +395,10 @@ impl Document {
                     stack.extend(children.map(|child| (parent, depth, child)));
                     continue;
                 }
+            }
+            if node.block_type == block::FILE {
+                // The link spans are kept for text-only consumers of the reader.
+                node.spans.clear();
             }
             if node.block_type == block::TABLE {
                 let index = next.entry(parent).or_insert(0);

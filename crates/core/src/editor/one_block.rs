@@ -83,14 +83,30 @@ impl Editor {
         attrs: [(&str, &str); 2],
     ) -> Result<()> {
         check_type(&self.doc, block, kind)?;
+        let mut changes = Vec::with_capacity(attrs.len());
+        for (key, text) in attrs {
+            let value = if text.is_empty() {
+                if !self.doc.has_attr(block, key)? {
+                    continue;
+                }
+                None
+            } else {
+                let value = crate::Value::from(text);
+                if self.doc.attr(block, key)?.as_ref() == Some(&value) {
+                    continue;
+                }
+                Some(value)
+            };
+            changes.push((key, value));
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
         self.apply(|doc, selection| {
-            for (key, text) in attrs {
-                let wanted = (!text.is_empty()).then(|| crate::Value::from(text));
-                if doc.attr(block, key)? != wanted {
-                    match wanted {
-                        Some(value) => doc.set_attr(block, key, value)?,
-                        None => doc.remove_attr(block, key)?,
-                    }
+            for (key, value) in changes {
+                match value {
+                    Some(value) => doc.set_attr(block, key, value)?,
+                    None => doc.remove_attr(block, key)?,
                 }
             }
             Ok(selection.cloned())
@@ -173,11 +189,28 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use crate::Value;
+    use crate::{Document, Editor, Schema, Value, attr, block};
 
     #[test]
     fn values_are_stored_as_peers_read_them() {
         assert_eq!(super::Align::Center.value(), Some(Value::from("center")));
         assert_eq!(super::Align::Left.value(), None);
+    }
+
+    #[test]
+    fn clearing_media_removes_raw_attributes_the_sdk_cannot_decode() {
+        let mut doc = Document::new(Schema::builtin());
+        let image = doc.insert_block(None, 0, block::IMAGE).unwrap();
+        doc.tree
+            .get_meta(image.0)
+            .unwrap()
+            .insert(attr::URL, 0.5_f64)
+            .unwrap();
+        assert_eq!(doc.attr(image, attr::URL).unwrap(), None);
+        let mut editor = Editor::new(doc);
+        editor.set_image(image, "", "").unwrap();
+        assert!(!editor.document().has_attr(image, attr::URL).unwrap());
+        assert!(editor.undo().unwrap());
+        assert!(editor.document().has_attr(image, attr::URL).unwrap());
     }
 }

@@ -12,10 +12,10 @@ pub(super) enum Media {
 }
 
 /// Tracks text inside an image description, including descriptions of nested images.
-#[derive(Default)]
 pub(super) struct Description {
     pub(super) has_text: bool,
     nested: usize,
+    url: String,
 }
 
 impl Leaf {
@@ -31,10 +31,19 @@ impl Leaf {
         };
         let mut media = Node::new(kind).with(attr::URL, url);
         if has_label {
-            let label: String = self.node.spans.into_iter().map(|span| span.text).collect();
+            let label: String = self
+                .node
+                .spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect();
             if !label.is_empty() {
                 media = media.with(key, label);
             }
+        }
+        if kind == block::FILE {
+            // Preserve the original linked text for schemas without files and rich-text fences.
+            media.spans = self.node.spans;
         }
         media
     }
@@ -52,8 +61,9 @@ impl Reader {
             self.mark(LINK, image);
             return;
         }
-        self.in_file_link =
-            self.opened.is_empty() && matches!(title, FILE_TITLE | UNNAMED_FILE_TITLE);
+        self.in_file_link = self.opened.is_empty()
+            && self.leaf.as_ref().is_none_or(|leaf| !leaf.heading)
+            && matches!(title, FILE_TITLE | UNNAMED_FILE_TITLE);
         if self.in_file_link {
             self.media_candidate(
                 Media::File {
@@ -84,15 +94,21 @@ impl Reader {
         }
         // A linked image stays text pointing at the outer link.
         let outer = self.marks[LINK].last().cloned();
-        self.media_candidate(
-            Media::Image {
-                url: url.to_owned(),
-                caption: false,
-            },
-            outer.is_some(),
-        );
+        if !self.in_file_link {
+            self.media_candidate(
+                Media::Image {
+                    url: url.to_owned(),
+                    caption: false,
+                },
+                outer.is_some(),
+            );
+        }
         self.mark(LINK, outer.unwrap_or_else(|| url.into()));
-        self.described = Some(Description::default());
+        self.described = Some(Description {
+            url: url.to_owned(),
+            has_text: false,
+            nested: 0,
+        });
     }
 
     /// Closes an image description and supplies link text for an unlabeled inline image.
@@ -104,18 +120,17 @@ impl Reader {
             description.nested -= 1;
             return;
         }
-        let has_text = description.has_text;
-        self.described = None;
-        let link = self.unmark();
-        let media = self.leaf.as_mut().and_then(|leaf| leaf.media.as_mut());
-        let Some(Media::Image { url, caption }) = media else {
+        let Some(description) = self.described.take() else {
             return;
         };
-        *caption = has_text;
-        if let Some(link) = link.filter(|_| !has_text) {
-            let url = url.clone();
+        let link = self.unmark();
+        let media = self.leaf.as_mut().and_then(|leaf| leaf.media.as_mut());
+        if let Some(Media::Image { caption, .. }) = media {
+            *caption = description.has_text;
+        }
+        if let Some(link) = link.filter(|_| !description.has_text) {
             self.mark(LINK, link);
-            self.text(&url, false);
+            self.text(&description.url, false);
             self.unmark();
         }
     }
@@ -137,7 +152,6 @@ impl Node {
     pub(super) fn keep_attachment_as_link(&mut self) {
         let key = match self.block_type.as_ref() {
             block::IMAGE => attr::CAPTION,
-            block::FILE => attr::NAME,
             _ => return,
         };
         let text = |wanted| match self.attrs.iter().find(|(key, _)| *key == wanted) {

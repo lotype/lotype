@@ -340,6 +340,11 @@ impl Document {
         Ok(value.as_ref().and_then(Value::from_loro))
     }
 
+    /// Checks whether an attribute exists, including values the SDK cannot decode.
+    pub(crate) fn has_attr(&self, block: BlockId, key: &str) -> Result<bool> {
+        Ok(self.meta(block)?.get(attr_key(key)?).is_some())
+    }
+
     /// All of `block`'s attributes, by key.
     pub fn attrs(&self, block: BlockId) -> Result<BTreeMap<String, Value>> {
         let mut attrs = BTreeMap::new();
