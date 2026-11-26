@@ -129,42 +129,92 @@ struct DemoProvider {
     executor: BackgroundExecutor,
 }
 
+const DEMO_NESTED_HEADING: &str = "Headings can only go at the top level. Try `sample` on a top-level empty line, or send `paragraph` or `alert` here.";
+
 impl DemoProvider {
-    /// Writes the sample at the caret in the request context.
-    fn edit(request: &LlmRequest) -> Option<LlmEvent> {
+    /// Builds the scripted reply and edits for the caret in the request context.
+    fn plan(request: &LlmRequest) -> (&'static str, Vec<LlmEvent>) {
         if !request.tools.iter().any(|tool| tool.name == "update") {
-            return None;
+            return (
+                "Press Space on an empty line to preview a sample edit.",
+                Vec::new(),
+            );
         }
-        let message = &request.messages.last()?.text;
-        let (document, prompt) = message
-            .strip_prefix("<document>\n")?
-            .split_once("\n</document>\n\n")?;
-        let document: JsonValue = serde_json::from_str(document).ok()?;
-        let cursor = document.get("cursor")?.as_str()?;
+        let Some(message) = request.messages.last() else {
+            return (
+                "Press Space on an empty line to preview a sample edit.",
+                Vec::new(),
+            );
+        };
+        let Some((document, prompt)) = message
+            .text
+            .strip_prefix("<document>\n")
+            .and_then(|text| text.split_once("\n</document>\n\n"))
+        else {
+            return (
+                "Press Space on an empty line to preview a sample edit.",
+                Vec::new(),
+            );
+        };
+        let Ok(document) = serde_json::from_str::<JsonValue>(document) else {
+            return (
+                "Press Space on an empty line to preview a sample edit.",
+                Vec::new(),
+            );
+        };
+        let Some(cursor) = document.get("cursor").and_then(JsonValue::as_str) else {
+            return (
+                "Press Space on an empty line to preview a sample edit.",
+                Vec::new(),
+            );
+        };
+        let depth = document
+            .get("blocks")
+            .and_then(JsonValue::as_array)
+            .and_then(|blocks| {
+                blocks.iter().find_map(|entry| {
+                    (entry.get("id").and_then(JsonValue::as_str) == Some(cursor))
+                        .then(|| entry.get("depth").and_then(JsonValue::as_u64))
+                        .flatten()
+                })
+            })
+            .unwrap_or(0);
         let blocks: &[&str] = match prompt.trim().to_ascii_lowercase().as_str() {
             "heading 3" | "heading3" => &[DEMO_HEADING],
             "paragraph" => &[DEMO_TEXT],
             "alert" => &[DEMO_ALERT],
             _ => &[DEMO_HEADING, DEMO_TEXT, DEMO_ALERT],
         };
-        Some(LlmEvent::ToolCallDelta {
+        if depth > 0 && blocks.contains(&DEMO_HEADING) {
+            return (DEMO_NESTED_HEADING, Vec::new());
+        }
+        let mut events = vec![LlmEvent::ToolCallDelta {
             id: "demo-write".into(),
             name: "update".into(),
-            args_delta: json!({"id": cursor, "block": blocks.join("\n\n")}).to_string(),
-        })
+            args_delta: json!({"id": cursor, "block": blocks[0]}).to_string(),
+        }];
+        if blocks.len() > 1 {
+            events.push(LlmEvent::ToolCallDelta {
+                id: "demo-add".into(),
+                name: "add".into(),
+                args_delta: json!({
+                    "referenceId": cursor,
+                    "position": "after",
+                    "blocks": &blocks[1..],
+                })
+                .to_string(),
+            });
+        }
+        ("Here's the sample.", events)
     }
 }
 
 impl LlmProvider for DemoProvider {
     fn stream(&self, request: LlmRequest) -> LlmStream {
-        let edit = Self::edit(&request);
-        let reply = match edit {
-            Some(_) => "Here's the sample.",
-            None => "Press Space on an empty line to preview a sample edit.",
-        };
+        let (reply, edits) = Self::plan(&request);
         let events = [LlmEvent::TextDelta(reply.into())]
             .into_iter()
-            .chain(edit)
+            .chain(edits)
             .chain([LlmEvent::Done]);
         let executor = self.executor.clone();
         Box::pin(stream::unfold(
@@ -286,7 +336,7 @@ mod tests {
     fn submit_prompt(ed: &mut EditorTestContext, prompt: &str) {
         ed.type_text(prompt);
         ed.keys("enter");
-        for _ in 0..3 {
+        for _ in 0..4 {
             ed.cx.executor().advance_clock(DEMO_EVENT_DELAY);
             ed.settle();
         }
@@ -365,34 +415,120 @@ mod tests {
 
     #[gpui::test]
     fn the_demo_previews_and_accepts_the_blocks_in_order(cx: &mut TestAppContext) {
+        let editor = editor(blocks![
+            p!["First"],
+            p!["Second"],
+            p!["Above"],
+            p!["<a>"],
+            p!["Below"]
+        ]);
+        let ids = editor.document().blocks();
+        let (above, target, below) = (ids[2], ids[3], ids[4]);
         let mut ed = EditorTestContext::with_view(cx, |cx| {
             let provider = Arc::new(DemoProvider {
                 executor: cx.background_executor().clone(),
             });
-            EditorView::new(editor(blocks![p!["<a>"]]), cx).with_ai(provider)
+            EditorView::new(editor, cx).with_ai(provider)
         });
+        let height = ed
+            .view
+            .update(ed.cx, |view, _| view.text_bounds(target).unwrap().bottom())
+            + px(8.);
+        ed.cx.simulate_resize(size(px(400.), height));
+        ed.settle();
         let check_blocks = |doc: &Document| {
-            let kinds: Vec<_> = doc
-                .children(None)
-                .unwrap()
-                .into_iter()
-                .map(|block| doc.block_type(block).unwrap())
+            let top = doc.children(None).unwrap();
+            let kinds: Vec<_> = top
+                .iter()
+                .map(|block| doc.block_type(*block).unwrap())
                 .collect();
-            assert_eq!(kinds, [block::HEADING, block::PARAGRAPH, block::ALERT]);
             assert_eq!(
-                doc.to_markdown().trim(),
-                [DEMO_HEADING, DEMO_TEXT, DEMO_ALERT].join("\n\n")
+                kinds,
+                [
+                    block::PARAGRAPH,
+                    block::PARAGRAPH,
+                    block::PARAGRAPH,
+                    block::HEADING,
+                    block::PARAGRAPH,
+                    block::ALERT,
+                    block::PARAGRAPH,
+                ]
             );
+            assert_eq!(top[2], above);
+            assert_eq!(top[3], target);
+            assert_eq!(top[6], below);
+            doc.children(Some(top[5])).unwrap()[0]
         };
         for action in ["ai-reject", "ai-accept"] {
             ed.type_text(" ");
             submit_prompt(&mut ed, "sample");
-            ed.view.update(ed.cx, |view, _| {
+            let alert_body = ed.view.update(ed.cx, |view, _| {
                 check_blocks(view.ai_document().expect("the preview is open"))
             });
-            ed.assert(blocks![p!["<a>"]]);
+            let (alert_bounds, below_bounds) = ed.view.update(ed.cx, |view, _| {
+                (
+                    view.text_bounds(alert_body).unwrap(),
+                    view.text_bounds(below).unwrap(),
+                )
+            });
+            let bar = ed
+                .cx
+                .debug_bounds("ai-bar")
+                .expect("the AI card is visible");
+            assert!(alert_bounds.bottom() <= bar.top() && bar.bottom() <= below_bounds.top());
+            assert!(bar.top() >= px(0.) && bar.bottom() <= height);
+            ed.assert(blocks![
+                p!["First"],
+                p!["Second"],
+                p!["Above"],
+                p!["<a>"],
+                p!["Below"]
+            ]);
             click_review(&mut ed, action);
         }
-        ed.editor(|editor| check_blocks(editor.document()));
+        ed.editor(|editor| {
+            check_blocks(editor.document());
+        });
+        ed.type_text("!");
+        assert_eq!(
+            ed.editor(|editor| editor.document().plain_text(target).unwrap()),
+            "!A heading from the offline demo"
+        );
+    }
+
+    #[gpui::test]
+    fn nested_empty_paragraphs_explain_heading_limits_and_allow_nested_edits(
+        cx: &mut TestAppContext,
+    ) {
+        let mut doc = Document::new(Schema::builtin());
+        let top = doc.insert_markdown(None, 0, "- Open toggle").unwrap();
+        doc.set_block_type(top[0], block::TOGGLE_LIST_ITEM).unwrap();
+        let nested = doc.insert_block(Some(top[0]), 0, block::PARAGRAPH).unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(nested, 0))))
+            .unwrap();
+        let mut ed = EditorTestContext::with_view(cx, |cx| {
+            let provider = Arc::new(DemoProvider {
+                executor: cx.background_executor().clone(),
+            });
+            EditorView::new(editor, cx).with_ai(provider)
+        });
+
+        ed.type_text(" ");
+        submit_prompt(&mut ed, "sample");
+        assert!(ed.cx.debug_bounds("ai-accept").is_none());
+        assert!(ed.cx.debug_bounds("ai-status").is_some());
+        let reply = ed.view.update(ed.cx, |view, _| {
+            view.ai_transcript().messages[1].text.clone()
+        });
+        assert_eq!(reply, DEMO_NESTED_HEADING);
+
+        submit_prompt(&mut ed, "paragraph");
+        click_review(&mut ed, "ai-accept");
+        assert_eq!(
+            ed.editor(|editor| editor.document().plain_text(nested).unwrap()),
+            DEMO_TEXT
+        );
     }
 }

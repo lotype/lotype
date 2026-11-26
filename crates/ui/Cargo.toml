@@ -25,6 +25,10 @@ url = "2.5.9"
 # Test contexts for views built on this crate.
 test-support = ["gpui/test-support", "lotype-core/test-support"]
 
+[[example]]
+name = "editor"
+test = true
+
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false }
 lotype-ai = { workspace = true, features = ["test-support"] }
