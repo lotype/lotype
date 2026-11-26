@@ -87,3 +87,34 @@ async fn an_update_stored_before_the_one_it_comes_after_waits_for_it() {
     let loaded = opened(&store.load(&id).await.unwrap());
     assert_document(&loaded, None, blocks![p!["base one two"]]);
 }
+
+#[tokio::test]
+async fn a_compaction_and_an_append_keep_the_same_document_history() {
+    let store = SqliteStore::open(":memory:").unwrap();
+    let id = DocId::new("notes");
+    let (mut doc, _) = build(blocks![p!["one"]]);
+    store
+        .append_update(&id, &doc.export_snapshot().unwrap())
+        .await
+        .unwrap();
+
+    let block = doc.blocks()[0];
+    let before = doc.version();
+    doc.insert_text(block, 3, " two").unwrap();
+    store
+        .append_update(&id, &doc.export_updates(&before).unwrap())
+        .await
+        .unwrap();
+    let before = doc.version();
+    doc.insert_text(block, 7, " three").unwrap();
+    let update = doc.export_updates(&before).unwrap();
+
+    let writer = store.clone();
+    let (compacted, appended) = tokio::join!(store.load(&id), writer.append_update(&id, &update));
+    compacted.unwrap();
+    appended.unwrap();
+
+    let restored = opened(&store.load(&id).await.unwrap());
+    assert_document(&restored, None, blocks![p!["one two three"]]);
+    assert_eq!(restored.version(), doc.version());
+}
