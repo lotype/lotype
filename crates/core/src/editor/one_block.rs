@@ -87,9 +87,13 @@ impl Editor {
 
     /// Sets or clears a code block's highlighted line ranges in one undo step.
     pub fn set_code_highlights(&mut self, block: BlockId, lines: Option<&str>) -> Result<()> {
-        let normalized = lines
-            .and_then(crate::markdown::normalize_line_ranges)
-            .unwrap_or_default();
+        let normalized = match lines {
+            Some(lines) if !lines.trim().is_empty() => {
+                crate::markdown::normalize_line_ranges(lines)
+                    .ok_or(crate::Error::InvalidLineRanges)?
+            }
+            Some(_) | None => String::new(),
+        };
         self.set_code_text_attr(block, attr::HIGHLIGHT_LINES, &normalized)
     }
 

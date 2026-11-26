@@ -50,6 +50,8 @@ pub enum Error {
         /// Where it ends.
         end: usize,
     },
+    /// Code line highlight ranges are not valid.
+    InvalidLineRanges,
     /// A text offset falls inside a UTF-8 character.
     NotCharBoundary(usize),
     /// Attribute keys starting with `$` are reserved.
@@ -99,6 +101,7 @@ impl fmt::Display for Error {
             Self::InvalidRange { start, end } => {
                 write!(f, "range start {start} is after its end {end}")
             }
+            Self::InvalidLineRanges => f.write_str("invalid code highlight line ranges"),
             Self::OutOfBounds { index, len } => {
                 write!(f, "index {index} is out of bounds (len {len})")
             }

@@ -115,3 +115,16 @@ fn code_block_editor_commands_and_colon_input_rule_are_single_undo_steps() {
     assert!(editor.document().is_twoslash(code));
     assert_eq!(editor.document().attr(code, attr::TWOSLASH).unwrap(), None);
 }
+
+#[test]
+fn invalid_highlight_ranges_leave_existing_highlights_unchanged() {
+    let doc = read("```rs {2-4}\nlet x = 1;\n```\n");
+    let code = doc.blocks()[0];
+    let mut editor = Editor::new(doc);
+
+    assert!(editor.set_code_highlights(code, Some("bad range")).is_err());
+    assert_eq!(
+        editor.document().code_highlights(code).as_deref(),
+        Some("2-4")
+    );
+}
