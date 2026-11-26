@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use gpui::{
-    AppContext, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px,
+    AppContext, BackgroundExecutor, Focusable, Modifiers, MouseButton, TestAppContext,
+    VisualTestContext, point, px, size,
 };
 use lotype_ai::test_support::{MockProvider, tool_call};
 use lotype_ai::{AiState, LlmError, LlmEvent, LlmProvider, LlmRequest, LlmStream, Role};
@@ -249,6 +250,60 @@ fn the_label_rides_the_live_caret_while_the_model_writes_text(cx: &mut TestAppCo
     assert!(!shows(&mut ed, "ai-cursor") && shows(&mut ed, "ai-stop"));
     assert_eq!(state(&mut ed), Some(AiState::Writing));
     assert_eq!(first(&mut ed), ("one".into(), Some("ON".into())));
+}
+
+#[gpui::test]
+fn streaming_edits_scroll_to_the_writing_caret_when_text_wraps(cx: &mut TestAppContext) {
+    const DELAY: Duration = Duration::from_millis(100);
+    struct Writing(BlockId, BackgroundExecutor);
+
+    impl LlmProvider for Writing {
+        fn stream(&self, _: LlmRequest) -> LlmStream {
+            let first = format!(r#"{{"id":"{}","block":"Start"#, self.0);
+            let executor = self.1.clone();
+            let more = stream::once(async move {
+                executor.timer(DELAY).await;
+                Ok(LlmEvent::ToolCallDelta {
+                    id: "write".into(),
+                    name: "update".into(),
+                    args_delta: " and carry on writing".repeat(48),
+                })
+            });
+            Box::pin(
+                stream::iter(tool_call("write", "update", &first, 99))
+                    .chain(more)
+                    .chain(stream::pending()),
+            )
+        }
+    }
+
+    let doc = editor(blocks![p!["one<a>"], p!["Below"]]);
+    let target = doc.document().blocks()[0];
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        let provider = Arc::new(Writing(target, cx.background_executor().clone()));
+        EditorView::new(doc, cx).with_ai(provider)
+    });
+    let height = px(120.);
+    ed.cx.simulate_resize(size(px(360.), height));
+    ed.settle();
+    ed.view.update(ed.cx, |view, cx| view.ai_ask("Write", cx));
+    ed.settle();
+    ed.cx.executor().advance_clock(Duration::from_millis(20));
+    ed.settle();
+    assert_eq!(first(&mut ed).1.as_deref(), Some("Start"));
+
+    ed.cx.executor().advance_clock(DELAY);
+    ed.settle();
+    assert_eq!(state(&mut ed), Some(AiState::Writing));
+    let (paragraph, caret) = ed.view.update(ed.cx, |view, _| {
+        let end = view.ai_document().unwrap().text_len(target).unwrap();
+        (
+            view.text_bounds(target).unwrap(),
+            view.caret_bounds(Pos::new(target, end)).unwrap(),
+        )
+    });
+    assert!(paragraph.size.height > height);
+    assert!(caret.top() >= px(0.) && caret.bottom() <= height);
 }
 
 #[gpui::test]

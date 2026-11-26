@@ -85,15 +85,17 @@ pub(super) fn selection(view: Entity<EditorView>) -> impl IntoElement {
     canvas(|_, _, _| (), paint).absolute().size_full()
 }
 
-/// Brings the selection's head into view after layout.
+/// Brings the active writing caret or the selection's head into view after layout.
 fn reveal(view: &Entity<EditorView>, window: &mut Window, cx: &mut App) {
     let id = view.entity_id();
     let view = view.read(cx);
-    if !view.reveal.replace(false) {
-        return;
-    }
-    if let Some(target) = selection_head(view)
-        && reveal_bounds(&view.scroll, target)
+    let follow_write = view.ai.reveal_write.replace(false);
+    let follow_selection = view.reveal.replace(false);
+    let target = follow_write.then(|| view.ai_writing_caret()).flatten();
+    let scroll = &view.scroll;
+    let target = target.or_else(|| follow_selection.then(|| selection_head(view)).flatten());
+    if let Some(target) = target
+        && reveal_bounds(scroll, target)
     {
         // Everything is placed already: draw again in the next frame.
         window.on_next_frame(move |_, cx| cx.notify(id));

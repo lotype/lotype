@@ -70,6 +70,8 @@ pub(crate) struct Ai {
     pub(super) bar_after: Option<BlockId>,
     /// The layout for which the card was last brought into view.
     pub(super) bar_layout: Rc<Cell<Option<BarLayout>>>,
+    /// A draft edit advanced the live caret since the last layout.
+    pub(super) reveal_write: Cell<bool>,
     /// The blocks the session changed, as of the last frame.
     pub(super) changes: Vec<Change>,
     /// Those of them this frame shows the changed words of, which need
@@ -348,6 +350,9 @@ impl EditorView {
         if let Ok(updates) = session.document().export_updates(&shown) {
             self.editor.import(&updates).ok();
         }
+        if *session.state() == AiState::Writing && self.editor.document().version() != shown {
+            self.ai.reveal_write.set(true);
+        }
         self.ai.changes = session.changes();
         if *session.state() == AiState::UserInput {
             self.ai_close();
@@ -359,6 +364,7 @@ impl EditorView {
         self.ai.reading = None;
         self.ai.working = None;
         self.ai.flush = None;
+        self.ai.reveal_write.set(false);
         self.ai.arrived.clear();
         self.ai.changes.clear();
         if let Some(session) = self.ai.session.take() {

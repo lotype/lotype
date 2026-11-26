@@ -320,6 +320,7 @@ impl Render for EditorView {
         self.keep_media_form(&all, window, cx);
         let candidates: Vec<BlockId> = all.iter().map(|row| row.block).collect();
         let ai_cursor = self.ai_cursor_row(&candidates);
+        let writing_block = self.ai_writing_block();
         let peers = self
             .presence
             .as_ref()
@@ -331,7 +332,7 @@ impl Render for EditorView {
             .collect();
         // The live cursor carries the label while the model writes text.
         if let Some(EditLocation::Block(block) | EditLocation::Removal(Some(block))) = ai_cursor
-            && self.ai_writing_block() != Some(block)
+            && writing_block != Some(block)
         {
             ai_cursor_blocks.insert(block);
         }
@@ -341,9 +342,12 @@ impl Render for EditorView {
         }
         // Rows far from the view lay out nothing: those next to each other
         // are one space as tall as they are.
-        let mut ai_bar = self.ai_bar(cx);
+        let reveal_row = writing_block.filter(|block| {
+            self.ai.reveal_write.get() && ai_cursor == Some(EditLocation::Block(*block))
+        });
+        let mut ai_bar = self.ai_bar(reveal_row.is_some(), cx);
         let ai_after = ai_bar.as_ref().and_then(|_| self.ai_bar_after(&candidates));
-        let plan = self.plan_rows(&candidates, ai_after, window);
+        let plan = self.plan_rows(&candidates, ai_after, reveal_row, window);
         let (mut rows, mut blocks, mut items) = (Vec::new(), Vec::new(), Vec::new());
         let mut space = Pixels::ZERO;
         let spacer = |height| div().h(height).w_full().flex_none().into_any_element();

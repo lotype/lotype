@@ -64,6 +64,12 @@ impl EditorView {
         (writes && self.editor.document().text_len(block).is_ok()).then_some(block)
     }
 
+    pub(super) fn ai_writing_caret(&self) -> Option<Bounds<Pixels>> {
+        let block = self.ai_writing_block()?;
+        let end = self.editor.document().text_len(block).ok()?;
+        self.layouts.get(&block)?.caret(end, Affinity::default())
+    }
+
     /// Finds the closest row in the view, including a collapsed block's ancestor.
     pub(super) fn visible_cursor_row(
         &self,
@@ -257,7 +263,7 @@ impl EditorView {
 
     /// The card next to the row a prompt was opened at: what the session
     /// says and offers, over the field to ask in.
-    pub(super) fn ai_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn ai_bar(&self, follow_write: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.ai.scope == Some(PromptScope::Document)
             || (self.ai.field.is_none() && self.ai.session.is_none())
             || self.ai_asks_selection()
@@ -288,6 +294,7 @@ impl EditorView {
                     review,
                 });
                 if measured.replace(layout) != layout
+                    && !follow_write
                     && super::paint::reveal_bounds(&scroll, bounds)
                 {
                     window.on_next_frame(move |_, cx| cx.notify(view));
@@ -402,11 +409,7 @@ pub(super) fn marks(view: Entity<EditorView>) -> impl IntoElement {
                 window.paint_quad(fill(bounds, tint(color)));
             }
         }
-        let caret = editor.ai_writing_block().and_then(|block| {
-            let end = editor.editor.document().text_len(block).ok()?;
-            editor.layouts.get(&block)?.caret(end, Affinity::default())
-        });
-        if let Some(caret) = caret {
+        if let Some(caret) = editor.ai_writing_caret() {
             window.paint_quad(fill(caret, cx.theme().primary));
             caret_tag(caret, window, cx);
         }

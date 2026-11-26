@@ -195,6 +195,7 @@ impl EditorView {
         &mut self,
         rows: &[BlockId],
         ai_after: Option<BlockId>,
+        ai_writing: Option<BlockId>,
         window: &mut Window,
     ) -> Vec<Plan> {
         let previous = std::mem::replace(&mut self.ai.bar_after, ai_after);
@@ -245,8 +246,10 @@ impl EditorView {
         for (at, block) in rows.iter().enumerate() {
             let tall = height(at);
             let near = y + tall >= from && y <= to;
-            let wanted =
-                wanted.contains(&at) || Some(*block) == editing_media || Some(*block) == ai_after;
+            let wanted = wanted.contains(&at)
+                || Some(*block) == editing_media
+                || Some(*block) == ai_after
+                || Some(*block) == ai_writing;
             y += tall;
             if !(near || wanted) {
                 plan.push(Plan::Space(tall));
