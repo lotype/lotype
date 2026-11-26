@@ -75,7 +75,7 @@ Workspace members today:
 | Crate | Role | Main dependencies |
 | :--- | :--- | :--- |
 | `lotype-core` | Block tree, schema, commands, selection, local undo, sync updates, awareness, Markdown | `loro`, `pulldown-cmark` |
-| `lotype-ui` | GPUI editor and built-in block views | `core`, `ai`, `gpui-pre`, `gpui-component` |
+| `lotype-ui` | GPUI editor and built-in block views | `core`, `ai`, `storage`, `gpui-pre`, `gpui-component` |
 | `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum`, `tokio` |
 | `lotype-storage` | The `DocStore` trait a server saves through, and one in SQLite (feature `sqlite`, on by default); debounced auto-save and the migrator for legacy Tiptap/BlockNote JSON come with the reference app | `core`, `rusqlite`, `tokio` |
 | `lotype-ai` | A chat with a model about a document: the provider trait, the tools, and the private copy the model edits until its edits are accepted | `core`, `storage` (for `DocId`), `futures-core`, `serde_json` |
@@ -100,7 +100,7 @@ flowchart TD
     AI["lotype-ai<br/>LlmProvider • private draft • replay"]
     CORE["lotype-core<br/>Loro • WYSIWYM • collaboration"]
 
-    UI --> CORE & AI
+    UI --> CORE & AI & STORAGE
     SERVER --> CORE & STORAGE
     STORAGE --> CORE
     AI --> CORE & STORAGE
@@ -271,7 +271,7 @@ trait DocStore {     // lotype-storage, which has one in SQLite
 | `Part` | A chunk of an update before the final `Update` | The relay splits large updates into messages of at most 1 MiB |
 | `Presence` | The client's own state, or its leaving | Everyone's when the client connects, then the others' as they send it or leave, each under the number of its client |
 
-The relay's 64 MiB multipart receive limit applies only to buffered `Part` payloads. `SyncParts::join` does not yet count the final `Update` against that limit. The relay does not apply this cap on outbound updates either; 64 MiB is not an end-to-end limit.
+The relay caps each incoming update payload at 64 MiB, including every buffered `Part` and the final `Update`. Outbound updates are split into transport messages and can describe larger documents.
 
 **The relay.** A document with clients connected is a *room*: the document in memory, what each client last said of itself, and a channel between its clients. The first client loads it from the store, clients of other documents not waiting, and the last to leave drops it. Clients are untrusted, so the server imports each update into the room's document before anything else, which is how it knows the bytes are an update and what a client lacks; that, exporting and loading run where they hold up no other task. What an update brought the room is exported from the room's document, appended to the store and only then passed to the other clients, and until it is stored the room neither takes another update nor says what it has, to a client that asks or to one that connects: never the client's bytes, so the store and the clients get what Loro wrote, with everything that came into the document at that point, as an earlier update that waited for this one; when something did wait, the client that sent the update gets it too, and otherwise every client but that one. An update that brought nothing is dropped, which also ends any echo between clients. The server **closes a client that sends an update with `Read` access**, one that sends what is no message, and one whose update or presence does not read (close code 1008). A presence goes on under the number of the client that sent it, a client that disconnects is taken out for the others at once, and one that comes is told of those heard of within `PRESENCE_TIMEOUT`. A client more than 1024 messages behind the others is closed (1013), one that takes no message for 30 seconds is dropped, and both get what they lack when they connect again.
 
