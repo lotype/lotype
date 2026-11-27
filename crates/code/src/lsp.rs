@@ -25,8 +25,8 @@ use crate::analyzer::{
 use crate::infer::BuiltInAnalyzer;
 use crate::languages::canonical_language;
 use protocol::{
-    IncomingFrame, classify_frame, create_private_workspace, read_msg, sanitize_path_token,
-    write_msg, write_null_response, write_private_file,
+    IncomingFrame, classify_frame, create_private_workspace, extract_hover, path_to_file_uri,
+    read_msg, sanitize_path_token, write_msg, write_null_response, write_private_file,
 };
 
 const LSP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -107,7 +107,7 @@ impl Future for ReplyFuture {
 /// Multi-language stdio LSP [`CodeAnalyzer`] with [`BuiltInAnalyzer`] fallback.
 pub struct LspAnalyzer {
     configs: HashMap<String, LspServerConfig>,
-    workers: Mutex<HashMap<String, mpsc::SyncSender<(AnalysisRequest, ReplySlot)>>>,
+    workers: Mutex<HashMap<String, mpsc::Sender<(AnalysisRequest, ReplySlot)>>>,
 }
 
 impl Default for LspAnalyzer {
@@ -143,28 +143,27 @@ impl CodeAnalyzer for LspAnalyzer {
             return BuiltInAnalyzer.analyze(request);
         };
 
-        let sender = {
-            let mut guard = self
-                .workers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(tx) = guard.get(&canonical) {
-                tx.clone()
-            } else {
-                let (tx, rx) = mpsc::sync_channel::<(AnalysisRequest, ReplySlot)>(1);
-                let cfg = config;
-                std::thread::spawn(move || run_lsp_worker(cfg, rx));
-                guard.insert(canonical, tx.clone());
-                tx
-            }
-        };
-
         let slot: ReplySlot = Arc::new(Mutex::new((None, None)));
-        match sender.try_send((request.clone(), slot.clone())) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_) | mpsc::TrySendError::Disconnected(_)) => {
-                return BuiltInAnalyzer.analyze(request);
+        let mut guard = self
+            .workers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut pending = (request, slot.clone());
+        if let Some(tx) = guard.get(&canonical) {
+            match tx.send(pending) {
+                Ok(()) => return Box::pin(ReplyFuture { slot }),
+                Err(mpsc::SendError(returned)) => {
+                    pending = returned;
+                    guard.remove(&canonical);
+                }
             }
+        }
+        let (tx, rx) = mpsc::channel::<(AnalysisRequest, ReplySlot)>();
+        std::thread::spawn(move || run_lsp_worker(config, rx));
+        guard.insert(canonical.clone(), tx.clone());
+        if let Err(mpsc::SendError((req, _))) = tx.send(pending) {
+            guard.remove(&canonical);
+            return BuiltInAnalyzer.analyze(req);
         }
         Box::pin(ReplyFuture { slot })
     }
@@ -283,7 +282,7 @@ fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
         opened: false,
         config: config.clone(),
     };
-    let root_uri = format!("file://{}", sess.workspace.display());
+    let root_uri = path_to_file_uri(&sess.workspace);
     let _ = sess.request(
         "initialize",
         json!({
@@ -291,7 +290,7 @@ fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
             "rootUri": root_uri,
             "capabilities": {
                 "textDocument": {
-                    "hover": { "contentFormat": ["plaintext", "markdown"] },
+                    "hover": { "contentFormat": ["markdown", "plaintext"] },
                     "completion": { "completionItem": { "snippetSupport": false } }
                 }
             }
@@ -306,7 +305,7 @@ fn query_session(sess: &mut LspSession, req: &AnalysisRequest) -> Result<CodeAna
     let filename = format!("snippet.{ext}");
     let path = sess.workspace.join(&filename);
     write_private_file(&path, &req.code)?;
-    let uri = format!("file://{}", path.display());
+    let uri = path_to_file_uri(&path);
     sess.doc_version += 1;
     if !sess.opened {
         sess.notify(
@@ -407,58 +406,13 @@ impl LspSession {
 }
 
 fn lsp_character(code: &str, line: usize, character: usize) -> usize {
-    code.split('\n')
-        .nth(line)
-        .unwrap_or_default()
+    let raw = code.split('\n').nth(line).unwrap_or_default();
+    raw.strip_suffix('\r')
+        .unwrap_or(raw)
         .chars()
         .take(character)
         .map(char::len_utf16)
         .sum()
-}
-
-fn extract_hover(result: &Value) -> Option<(String, Option<String>)> {
-    let contents = result.get("contents")?;
-    let raw = if let Some(val) = contents.get("value").and_then(Value::as_str) {
-        val.to_owned()
-    } else if let Some(s) = contents.as_str() {
-        s.to_owned()
-    } else {
-        contents
-            .as_array()?
-            .iter()
-            .filter_map(|v| {
-                v.get("value")
-                    .and_then(Value::as_str)
-                    .or_else(|| v.as_str())
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    };
-    // Strip markdown code fences from LSP hover text.
-    let mut code_lines = Vec::new();
-    let mut doc_lines = Vec::new();
-    let mut in_fence = false;
-    for line in raw.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if line.trim() == "---" {
-            continue;
-        }
-        if in_fence || code_lines.is_empty() {
-            if !line.trim().is_empty() {
-                code_lines.push(line.trim());
-            }
-        } else if !line.trim().is_empty() {
-            doc_lines.push(line.trim());
-        }
-    }
-    let sig = code_lines.join(" ");
-    (!sig.is_empty()).then(|| {
-        let docs = (!doc_lines.is_empty()).then(|| doc_lines.join(" "));
-        (sig, docs)
-    })
 }
 
 fn extract_completions(result: &Value, prefix: &str) -> Vec<CompletionItem> {
@@ -510,47 +464,46 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn server_request_with_colliding_id_is_replied_and_does_not_corrupt_hover() {
-        // Minimal stdio mock LSP server that sends a server-to-client request (`id: 2`)
-        // and blocks waiting for our null reply before returning the real `id: 2` hover.
-        let script = r#"
+    fn mock_lsp_config(hover_handler: &str) -> LspServerConfig {
+        let script = format!(
+            r#"
 import json, sys
-
 def read_msg():
     length = 0
     while True:
         line = sys.stdin.buffer.readline()
-        if not line:
-            return None
+        if not line: return None
         s = line.decode('utf-8').strip()
-        if not s:
-            break
+        if not s: break
         if s.lower().startswith('content-length:'):
             length = int(s.split(':', 1)[1].strip())
     return json.loads(sys.stdin.buffer.read(length).decode('utf-8'))
-
 def write_msg(obj):
     data = json.dumps(obj).encode('utf-8')
-    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode('utf-8') + data)
+    sys.stdout.buffer.write(f"Content-Length: {{len(data)}}\r\n\r\n".encode('utf-8') + data)
     sys.stdout.buffer.flush()
-
 while True:
     msg = read_msg()
-    if msg is None:
-        break
+    if msg is None: break
     method = msg.get('method')
     if method == 'initialize':
-        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': {}}})
+        write_msg({{'jsonrpc': '2.0', 'id': msg['id'], 'result': {{'capabilities': {{}}}}}})
     elif method == 'textDocument/hover':
-        # Emit server-to-client request using the SAME id as the hover request and wait for reply.
-        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'method': 'window/workDoneProgress/create', 'params': {'token': 't'}})
-        reply = read_msg()
-        if reply is None or reply.get('id') != msg['id'] or 'result' not in reply:
-            sys.exit(2)
-        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'contents': {'kind': 'markdown', 'value': '```ts\nconst answer: 42\n```'}}})
-"#;
-        let config = LspServerConfig::new("python3", ["-c", script], "ts", "typescript");
+{hover_handler}
+"#
+        );
+        LspServerConfig::new("python3", ["-c", &script], "ts", "typescript")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_request_with_colliding_id_is_replied_and_does_not_corrupt_hover() {
+        let config = mock_lsp_config(
+            "        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'method': 'window/workDoneProgress/create', 'params': {'token': 't'}})\n\
+             \x20       reply = read_msg()\n\
+             \x20       if reply is None or reply.get('id') != msg['id'] or 'result' not in reply: sys.exit(2)\n\
+             \x20       write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'contents': {'kind': 'markdown', 'value': '```ts\\nconst answer: 42\\n```'}}})",
+        );
         let mut sess = start_session(&config).expect("mock LSP session starts");
         let req = AnalysisRequest {
             language: Some("typescript".into()),
@@ -569,5 +522,61 @@ while True:
         };
         let out = query_session(&mut sess, &req).expect("hover succeeds after server request");
         assert_eq!(out.queries, vec![(6..12, "const answer: 42".to_owned())]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lsp_analyzer_queues_many_concurrent_requests_and_recovers_dead_worker() {
+        let config = mock_lsp_config(
+            "        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'contents': {'kind': 'markdown', 'value': '```ts\\nconst fromLsp: number\\n```'}}})",
+        );
+        let analyzer = LspAnalyzer::new().with_server("typescript", config);
+        let make_req = || AnalysisRequest {
+            language: Some("typescript".into()),
+            title: None,
+            code: "const fromLsp = 1;".into(),
+            queries: vec![crate::QuerySite {
+                target_range: 6..13,
+                line: 0,
+                character: 6,
+                symbol: "fromLsp".into(),
+            }],
+            completions: Vec::new(),
+            files: Vec::new(),
+            no_errors: false,
+            expected_errors: Vec::new(),
+        };
+        let block_on = |mut fut: AnalysisFuture| -> CodeAnalysis {
+            let waker = std::task::Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            loop {
+                if let Poll::Ready(res) = fut.as_mut().poll(&mut cx) {
+                    return res.expect("LSP analysis succeeds");
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        let futures: Vec<_> = (0..4).map(|_| analyzer.analyze(make_req())).collect();
+        for fut in futures {
+            let out = block_on(fut);
+            assert_eq!(
+                out.queries,
+                vec![(6..13, "const fromLsp: number".to_owned())]
+            );
+        }
+
+        let (dead_tx, dead_rx) = mpsc::channel();
+        drop(dead_rx);
+        analyzer
+            .workers
+            .lock()
+            .unwrap()
+            .insert("typescript".into(), dead_tx);
+        let recovered = block_on(analyzer.analyze(make_req()));
+        assert_eq!(
+            recovered.queries,
+            vec![(6..13, "const fromLsp: number".to_owned())]
+        );
     }
 }

@@ -154,6 +154,192 @@ pub(super) fn write_private_file(path: &Path, content: &str) -> Result<(), Strin
         .map_err(|e| e.to_string())
 }
 
+/// Converts a filesystem path into an RFC 8089 `file://` URI with percent-encoding.
+pub(super) fn path_to_file_uri(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        format_windows_file_uri(&path.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        format_unix_file_uri(path.as_os_str().as_encoded_bytes())
+    }
+}
+
+#[cfg_attr(windows, allow(dead_code))]
+pub(super) fn format_unix_file_uri(bytes: &[u8]) -> String {
+    let mut uri = String::from("file://");
+    if !bytes.starts_with(b"/") {
+        uri.push('/');
+    }
+    encode_uri_path_bytes(&mut uri, bytes);
+    uri
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn format_windows_file_uri(raw: &str) -> String {
+    if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+        return format_unc_file_uri(unc);
+    }
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw);
+    if let Some(unc) = stripped
+        .strip_prefix(r"\\")
+        .or_else(|| stripped.strip_prefix("//"))
+    {
+        return format_unc_file_uri(unc);
+    }
+    let normalized = stripped.replace('\\', "/");
+    let mut uri = String::from("file://");
+    if !normalized.starts_with('/') {
+        uri.push('/');
+    }
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        uri.push(bytes[0] as char);
+        uri.push(':');
+        encode_uri_path_bytes(&mut uri, &bytes[2..]);
+    } else {
+        encode_uri_path_bytes(&mut uri, bytes);
+    }
+    uri
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn format_unc_file_uri(unc: &str) -> String {
+    let normalized = unc.replace('\\', "/");
+    let trimmed = normalized.trim_start_matches('/');
+    let mut uri = String::from("file://");
+    match trimmed.split_once('/') {
+        Some((host, rest)) => {
+            encode_uri_path_bytes(&mut uri, host.as_bytes());
+            uri.push('/');
+            encode_uri_path_bytes(&mut uri, rest.as_bytes());
+        }
+        None => encode_uri_path_bytes(&mut uri, trimmed.as_bytes()),
+    }
+    uri
+}
+
+fn encode_uri_path_bytes(out: &mut String, bytes: &[u8]) {
+    use std::fmt::Write as _;
+    for &b in bytes {
+        if b == b'/' || b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+}
+
+/// Extracts `(signature, docs)` from an LSP `textDocument/hover` result,
+/// splitting on `---` and keeping only the first fenced code block as the signature.
+pub(super) fn extract_hover(result: &Value) -> Option<(String, Option<String>)> {
+    let contents = result.get("contents")?;
+    let raw = if let Some(val) = contents.get("value").and_then(Value::as_str) {
+        val.to_owned()
+    } else if let Some(s) = contents.as_str() {
+        s.to_owned()
+    } else {
+        contents
+            .as_array()?
+            .iter()
+            .filter_map(|v| {
+                v.get("value")
+                    .and_then(Value::as_str)
+                    .or_else(|| v.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+
+    let mut head_lines = Vec::new();
+    let mut tail_lines = Vec::new();
+    let mut saw_rule = false;
+    for line in raw.lines() {
+        if !saw_rule && matches!(line.trim(), "---" | "***") {
+            saw_rule = true;
+            continue;
+        }
+        if saw_rule {
+            tail_lines.push(line);
+        } else {
+            head_lines.push(line);
+        }
+    }
+
+    let has_fence = head_lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("```"));
+    let mut code_lines = Vec::new();
+    let mut doc_lines = Vec::new();
+
+    if has_fence {
+        let mut in_first_fence = false;
+        let mut captured_first_fence = false;
+        for line in head_lines {
+            if line.trim_start().starts_with("```") {
+                if !captured_first_fence {
+                    if in_first_fence {
+                        in_first_fence = false;
+                        captured_first_fence = true;
+                    } else {
+                        in_first_fence = true;
+                    }
+                }
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if in_first_fence {
+                code_lines.push(trimmed);
+            } else if captured_first_fence {
+                doc_lines.push(trimmed);
+            }
+        }
+    } else if saw_rule {
+        for line in head_lines {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                code_lines.push(trimmed);
+            }
+        }
+    } else {
+        let mut in_docs = false;
+        for line in head_lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                if !code_lines.is_empty() {
+                    in_docs = true;
+                }
+                continue;
+            }
+            if in_docs {
+                doc_lines.push(trimmed);
+            } else {
+                code_lines.push(trimmed);
+            }
+        }
+    }
+
+    for line in tail_lines {
+        if line.trim_start().starts_with("```") {
+            continue;
+        }
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            doc_lines.push(trimmed);
+        }
+    }
+
+    let sig = code_lines.join(" ");
+    (!sig.is_empty()).then(|| {
+        let docs = (!doc_lines.is_empty()).then(|| doc_lines.join(" "));
+        (sig, docs)
+    })
+}
+
 fn random_u64(seq: u64) -> u64 {
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u64(seq);
@@ -240,5 +426,68 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_uri_encodes_spaces_special_chars_utf8_and_windows_paths() {
+        assert_eq!(
+            format_unix_file_uri("/tmp/my dir/foo#1%20bar/日本語.ts".as_bytes()),
+            "file:///tmp/my%20dir/foo%231%2520bar/%E6%97%A5%E6%9C%AC%E8%AA%9E.ts"
+        );
+        assert_eq!(
+            format_windows_file_uri(r"C:\Users\Alice Smith\dir #1\snippet.rs"),
+            "file:///C:/Users/Alice%20Smith/dir%20%231/snippet.rs"
+        );
+        assert_eq!(
+            format_windows_file_uri(r"\\?\C:\tmp\a b.ts"),
+            "file:///C:/tmp/a%20b.ts"
+        );
+        assert_eq!(
+            format_windows_file_uri(r"\\srv\share\a b.ts"),
+            "file://srv/share/a%20b.ts"
+        );
+    }
+
+    #[test]
+    fn extract_hover_splits_on_hr_takes_first_fence_and_keeps_plaintext_signatures() {
+        let md_with_example = json!({
+            "contents": {
+                "kind": "markdown",
+                "value": "```ts\nfunction add(a: number, b: number): number\n```\n\nAdds two numbers.\n\n```ts\nadd(1, 2)\n```"
+            }
+        });
+        let (sig, docs) = extract_hover(&md_with_example).expect("markdown hover");
+        assert_eq!(sig, "function add(a: number, b: number): number");
+        assert_eq!(docs.as_deref(), Some("Adds two numbers. add(1, 2)"));
+
+        let ra_hover = json!({
+            "contents": {
+                "kind": "markdown",
+                "value": "```rust\npub fn len(&self) -> usize\n```\n---\nReturns the number of elements.\n```rust\nassert_eq!(v.len(), 0);\n```"
+            }
+        });
+        let (sig, docs) = extract_hover(&ra_hover).expect("rust-analyzer hover");
+        assert_eq!(sig, "pub fn len(&self) -> usize");
+        assert_eq!(
+            docs.as_deref(),
+            Some("Returns the number of elements. assert_eq!(v.len(), 0);")
+        );
+
+        let plain_hr = json!({
+            "contents": {
+                "kind": "plaintext",
+                "value": "fn add(\n    a: i32,\n    b: i32,\n) -> i32\n---\nAdds two integers."
+            }
+        });
+        let (sig, docs) = extract_hover(&plain_hr).expect("plaintext hr hover");
+        assert_eq!(sig, "fn add( a: i32, b: i32, ) -> i32");
+        assert_eq!(docs.as_deref(), Some("Adds two integers."));
+
+        let plain_para = json!({
+            "contents": "fn sub(\n    a: i32,\n) -> i32\n\nSubtracts."
+        });
+        let (sig, docs) = extract_hover(&plain_para).expect("plaintext paragraph hover");
+        assert_eq!(sig, "fn sub( a: i32, ) -> i32");
+        assert_eq!(docs.as_deref(), Some("Subtracts."));
     }
 }

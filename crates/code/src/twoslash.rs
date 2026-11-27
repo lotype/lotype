@@ -211,7 +211,13 @@ impl ParsedCode {
                 if on_completion_line || !matches_expected(&self.expected_errors, diagnostic) {
                     continue;
                 }
-                if !self.diagnostics.contains(diagnostic) {
+                let overlaps_existing = self.diagnostics.iter().any(|existing| {
+                    existing == diagnostic
+                        || existing.target_range == diagnostic.target_range
+                        || (existing.target_range.start < diagnostic.target_range.end
+                            && diagnostic.target_range.start < existing.target_range.end)
+                });
+                if !overlaps_existing {
                     self.diagnostics.push(diagnostic.clone());
                 }
             }
@@ -250,13 +256,14 @@ pub fn parse_code_annotations(
 
     let mut raw_lines: Vec<SourceLine<'_>> = Vec::new();
     let mut offset = 0;
-    for text in code.split('\n') {
+    for raw in code.split('\n') {
+        let text = raw.strip_suffix('\r').unwrap_or(raw);
         raw_lines.push(SourceLine {
             start: offset,
             text,
             directive_only: false,
         });
-        offset += text.len() + 1;
+        offset += raw.len() + 1;
     }
 
     let mut pending_hovers: Vec<(Option<usize>, String, String, Option<String>)> = Vec::new();
@@ -318,7 +325,10 @@ pub fn parse_code_annotations(
         }
         if let Some(filename) = parse_filename_directive(trimmed) {
             raw_lines[i].directive_only = true;
-            let body_start = (line_start + line_text.len() + 1).min(code.len());
+            let body_start = raw_lines
+                .get(i + 1)
+                .map_or(code.len(), |next| next.start)
+                .min(code.len());
             file_headers.push((i, filename, body_start));
             continue;
         }
@@ -444,7 +454,12 @@ pub fn parse_code_annotations(
         let body_end = file_headers
             .get(pos + 1)
             .map_or(code.len(), |(next_header, _, _)| {
-                raw_lines[*next_header].start.saturating_sub(1)
+                let before_nl = raw_lines[*next_header].start.saturating_sub(1);
+                if before_nl > 0 && code.as_bytes()[before_nl - 1] == b'\r' {
+                    before_nl - 1
+                } else {
+                    before_nl
+                }
             });
         parsed.files.push(VirtualFile {
             name: name.clone(),
@@ -540,12 +555,12 @@ fn build_cut_mask(total_lines: usize, cuts: &[(usize, CutKind)]) -> Vec<bool> {
 /// cut regions, and `[!code ...]` tags.
 pub fn clean_copy_text(code: &str, twoslash: bool) -> String {
     let parsed = parse_code_annotations(code, None, twoslash);
-    let lines: Vec<&str> = code.split('\n').collect();
     let mut out = Vec::new();
-    for (idx, &line) in lines.iter().enumerate() {
+    for (idx, raw) in code.split('\n').enumerate() {
         if parsed.hidden_in_preview.contains(&idx) {
             continue;
         }
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
         if let Some((cleaned, standalone)) = strip_inline_code_tag(line) {
             if standalone {
                 continue;

@@ -250,3 +250,76 @@ fn inline_code_tags_require_comment_markers_and_handle_html_comments() {
     assert_eq!(block_parsed.hidden_in_preview, vec![0]);
     assert_eq!(clean_copy_text(block_comment, false), "let kept = 2;");
 }
+
+#[test]
+fn inline_error_directive_deduplicates_overlapping_analyzer_diagnostic() {
+    let code = "const bad: number = \"oops\";\n//                  ^^^^^^ @error(2322): Custom inline error";
+    let mut parsed = parse_code_annotations(code, None, true);
+    assert_eq!(parsed.diagnostics.len(), 1);
+
+    let req = lotype_code::AnalysisRequest {
+        language: Some("ts".into()),
+        title: None,
+        code: code.to_owned(),
+        queries: parsed.query_sites(),
+        completions: parsed.completion_sites(),
+        files: parsed.files.clone(),
+        no_errors: parsed.no_errors,
+        expected_errors: parsed.expected_errors.clone(),
+    };
+    let analysis = lotype_code::BuiltInAnalyzer::analyze_sync(&req);
+    assert!(
+        !analysis.diagnostics.is_empty(),
+        "BuiltInAnalyzer should produce a TS2322 diagnostic"
+    );
+
+    parsed.merge_analysis(&analysis);
+    assert_eq!(parsed.diagnostics.len(), 1);
+    assert_eq!(parsed.diagnostics[0].message, "Custom inline error");
+}
+
+#[test]
+fn crlf_input_preserves_queries_completions_virtual_files_and_clean_copy() {
+    let code = concat!(
+        "// @filename: a.ts\r\n",
+        "const total = 42;\r\n",
+        "//    ^?\r\n",
+        "// @filename: b.ts\r\n",
+        "total.toF\r\n",
+        "//       ^|\r\n",
+        "const kept = 1; // [!code ++]\r\n",
+    );
+    let mut parsed = parse_code_annotations(code, None, true);
+
+    assert_eq!(parsed.queries.len(), 1);
+    assert_eq!(parsed.queries[0].symbol, "total");
+    assert_eq!(&code[parsed.queries[0].target_range.clone()], "total");
+
+    assert_eq!(parsed.completions.len(), 1);
+    assert_eq!(parsed.completions[0].receiver.as_deref(), Some("total"));
+    assert_eq!(parsed.completions[0].prefix, "toF");
+    let expected_end = code.find("total.toF").unwrap() + "total.toF".len();
+    assert_eq!(parsed.completions[0].offset, expected_end);
+
+    assert_eq!(parsed.files.len(), 2);
+    assert_eq!(parsed.files[0].name, "a.ts");
+    assert!(!code[parsed.files[0].range.clone()].starts_with('\n'));
+    assert!(!code[parsed.files[0].range.clone()].ends_with('\r'));
+
+    let req = lotype_code::AnalysisRequest {
+        language: Some("ts".into()),
+        title: None,
+        code: code.to_owned(),
+        queries: parsed.query_sites(),
+        completions: parsed.completion_sites(),
+        files: parsed.files.clone(),
+        no_errors: parsed.no_errors,
+        expected_errors: parsed.expected_errors.clone(),
+    };
+    parsed.merge_analysis(&lotype_code::BuiltInAnalyzer::analyze_sync(&req));
+    assert_eq!(parsed.completions[0].items[0].label, "toFixed");
+
+    let copied = clean_copy_text(code, true);
+    assert!(!copied.contains('\r'), "CRLF residue in copied: {copied:?}");
+    assert_eq!(copied, "const total = 42;\ntotal.toF\nconst kept = 1;\n");
+}
