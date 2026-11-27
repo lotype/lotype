@@ -1,7 +1,7 @@
 //! Keys, bound to editor commands by the core's keymap.
 
 use gpui::{Context, KeyDownEvent, Keystroke, Window};
-use lotype_core::{Command, Role, Selection};
+use lotype_core::{Command, Pos, Role, Selection};
 
 use super::{EditorView, motion};
 
@@ -95,34 +95,6 @@ impl EditorView {
             return;
         }
         let name = key_name(&event.keystroke);
-        if name == "Enter"
-            && let Some(Selection::Text { anchor, head }) = self.editor.selection().cloned()
-            && self.editor.document().role(head.block) == Role::Code
-        {
-            let text = self
-                .editor
-                .document()
-                .plain_text(head.block)
-                .unwrap_or_default();
-            let before = &text[..head.offset];
-            let after = &text[head.offset..];
-            let line_before = before.rsplit('\n').next().unwrap_or_default();
-            let line_after = after.split('\n').next().unwrap_or_default();
-            if anchor == head
-                && head.offset == text.len()
-                && before.contains('\n')
-                && line_before.is_empty()
-                && line_after.is_empty()
-            {
-                self.editor.add_text_block_after(head.block).ok();
-            } else {
-                self.editor.insert_line_break().ok();
-            }
-            cx.stop_propagation();
-            window.notify_text_input_changed(&self.focus);
-            self.selection_changed(window, cx);
-            return;
-        }
         if self.start_writing() {
             self.selection_changed(window, cx);
         }
@@ -184,23 +156,53 @@ impl EditorView {
             return;
         };
         let command = binding.command.clone();
-        // Enter in a toggle goes by whether it is open, which is the view's.
-        let toggle = match self.editor.selection() {
-            Some(Selection::Text { head, .. }) if command == Command::SplitBlock => {
-                let toggle = self.editor.document().role(head.block) == Role::Toggle;
-                toggle.then_some(head.block)
+        if command == Command::SplitBlock
+            && let Some(Selection::Text { anchor, head }) = self.editor.selection().cloned()
+            && let Ok((start, _)) = self.editor.document().ordered(anchor, head)
+        {
+            match self.editor.document().role(start.block) {
+                // Enter in a toggle goes by whether it is open, which is the view's.
+                Role::Toggle => {
+                    self.editor
+                        .split_toggle(!self.closed.contains(&start.block))
+                        .ok();
+                }
+                Role::Code => {
+                    self.split_code(anchor, head);
+                }
+                _ => {
+                    self.editor.run(&command).ok();
+                }
             }
-            _ => None,
-        };
-        match toggle {
-            Some(toggle) => self.editor.split_toggle(!self.closed.contains(&toggle)),
-            None => self.editor.run(&command),
+        } else {
+            self.editor.run(&command).ok();
         }
-        .ok();
         cx.stop_propagation();
         // A command may move the caret, and the IME's window with it.
         window.notify_text_input_changed(&self.focus);
         self.selection_changed(window, cx);
+    }
+
+    /// Enter in a code block inserts a newline, except when the caret sits on a
+    /// trailing empty line after a newline, which exits into a new text block.
+    fn split_code(&mut self, anchor: Pos, head: Pos) {
+        let leave = anchor == head
+            && self
+                .editor
+                .document()
+                .text(head.block)
+                .ok()
+                .is_some_and(|text| {
+                    head.offset == text.len()
+                        && text
+                            .get(..head.offset)
+                            .is_some_and(|before| before.ends_with('\n'))
+                });
+        if leave {
+            self.editor.add_text_block_after(head.block).ok();
+        } else {
+            self.editor.insert_line_break().ok();
+        }
     }
 }
 
