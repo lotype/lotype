@@ -4,22 +4,19 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, ClipboardItem, Entity, Focusable as _,
-    KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Window, anchored, deferred, div,
-    point, prelude::*, px,
+    KeyDownEvent, MouseButton, Window, div, prelude::*, px,
 };
 use gpui_component::Icon;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::list::ListItem;
-use gpui_component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, ThemeStyled as _, h_flex, v_flex,
-};
+use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use lotype_core::BlockId;
 use lotype_ui::EditorView;
 
 use super::controls::scroll_reconciler;
+use super::language_menu::initial_language_index;
 use super::{BlockRenderArgs, CODE_FONT, COPIED_FEEDBACK, CodeState, TitleForm, elem_id};
-use crate::languages::{LANGUAGES, canonical_language, language_label};
+use crate::languages::{canonical_language, language_label};
 use crate::twoslash::clean_copy_text;
 
 impl CodeState {
@@ -39,6 +36,11 @@ impl CodeState {
         } else {
             label
         };
+        let current_lang = args
+            .language
+            .as_deref()
+            .map(canonical_language)
+            .unwrap_or_else(|| "text".to_owned());
         let lang_button = Button::new(elem_id("code-lang", block_id))
             .ghost()
             .xsmall()
@@ -47,17 +49,17 @@ impl CodeState {
             .debug_selector(|| "code-language".to_owned())
             .on_click(move |_: &ClickEvent, window, cx| {
                 if state_entity.read(cx).language_menu == Some(block_id) {
-                    state_entity.update(cx, |state, _| {
-                        state.language_menu = None;
-                        state.language_query.clear();
-                    });
+                    state_entity.update(cx, |state, _| state.close_language_menu());
                     window.focus(&editor_for_lang.read(cx).focus_handle(cx), cx);
                 } else {
+                    let initial_idx = initial_language_index(&current_lang);
                     state_entity.update(cx, |state, cx| {
                         state.ensure_observers(&editor_for_lang, window, cx);
                         state.hovered = None;
                         state.language_menu = Some(block_id);
                         state.language_query.clear();
+                        state.language_highlighted = initial_idx;
+                        state.language_scroll.scroll_to_item(initial_idx);
                     });
                     let focus = state_entity.read(cx).language_focus.clone();
                     window.focus(&focus, cx);
@@ -240,170 +242,6 @@ impl CodeState {
             })
             .into_any_element()
     }
-
-    pub(super) fn render_language_menu(
-        &self,
-        args: &BlockRenderArgs,
-        cx: &gpui::Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.language_menu != Some(args.block) || !args.editable {
-            return None;
-        }
-        let current = args
-            .language
-            .as_deref()
-            .map(canonical_language)
-            .unwrap_or_else(|| "text".to_owned());
-        let block_id = args.block;
-        let state_entity = cx.entity();
-        let editor_view = args.editor_view.clone();
-        let query = self.language_query.trim().to_lowercase();
-
-        let items: Vec<AnyElement> = LANGUAGES
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| query.is_empty() || language_matches(entry, &query))
-            .map(|(index, entry)| {
-                let selected = entry.id == current;
-                let chosen = (entry.id != "text").then_some(entry.id);
-                let state = state_entity.clone();
-                let view = editor_view.clone();
-                let id = entry.id;
-                let option_id = SharedString::from(format!("code-lang-option-{block_id}-{index}"));
-                div()
-                    .debug_selector(move || format!("code-lang-{id}"))
-                    .child(
-                        ListItem::new(option_id)
-                            .selected(selected)
-                            .child(div().text_xs().child(entry.label))
-                            .on_click(move |_: &ClickEvent, window, cx| {
-                                state.update(cx, |state, _| {
-                                    state.language_menu = None;
-                                    state.language_query.clear();
-                                });
-                                view.update(cx, |view, cx| {
-                                    let _ = view.update_editor(cx, |editor| {
-                                        editor.set_code_language(block_id, chosen)
-                                    });
-                                    window.focus(&view.focus_handle(cx), cx);
-                                });
-                            }),
-                    )
-                    .into_any_element()
-            })
-            .collect();
-
-        let state_for_close = state_entity.clone();
-        let editor_for_close = editor_view.clone();
-        let state_for_escape = state_entity.clone();
-        let editor_for_escape = editor_view.clone();
-        let menu = v_flex()
-            .track_focus(&self.language_focus)
-            .popover_style(cx)
-            .occlude()
-            .w(px(168.))
-            .p_1()
-            .debug_selector(|| "code-language-menu".to_owned())
-            .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                let key = event.keystroke.key.as_str();
-                match key {
-                    "escape" => {
-                        cx.stop_propagation();
-                        state_for_escape.update(cx, |state, _| {
-                            state.language_menu = None;
-                            state.language_query.clear();
-                        });
-                        editor_for_escape.update(cx, |view, cx| {
-                            window.focus(&view.focus_handle(cx), cx);
-                            cx.notify();
-                        });
-                    }
-                    "backspace" => {
-                        cx.stop_propagation();
-                        state_for_escape.update(cx, |state, _| {
-                            state.language_query.pop();
-                        });
-                        editor_for_escape.update(cx, |_, cx| cx.notify());
-                    }
-                    "enter" => {
-                        let query = state_for_escape.read(cx).language_query.to_lowercase();
-                        if let Some(language) = LANGUAGES
-                            .iter()
-                            .find(|language| query.is_empty() || language_matches(language, &query))
-                        {
-                            cx.stop_propagation();
-                            let chosen = (language.id != "text").then_some(language.id);
-                            state_for_escape.update(cx, |state, _| {
-                                state.language_menu = None;
-                                state.language_query.clear();
-                            });
-                            editor_for_escape.update(cx, |view, cx| {
-                                let _ = view.update_editor(cx, |editor| {
-                                    editor.set_code_language(block_id, chosen)
-                                });
-                                window.focus(&view.focus_handle(cx), cx);
-                            });
-                        }
-                    }
-                    _ if key.chars().count() == 1
-                        && !event.keystroke.modifiers.platform
-                        && !event.keystroke.modifiers.control
-                        && !event.keystroke.modifiers.alt =>
-                    {
-                        cx.stop_propagation();
-                        state_for_escape.update(cx, |state, _| {
-                            state.language_query.push_str(&key.to_lowercase());
-                        });
-                        editor_for_escape.update(cx, |_, cx| cx.notify());
-                    }
-                    _ => {}
-                }
-            })
-            .on_mouse_down_out(move |_: &MouseDownEvent, window, cx| {
-                let closed = state_for_close.update(cx, |state, _| {
-                    if state.language_menu == Some(block_id) {
-                        state.language_menu = None;
-                        state.language_query.clear();
-                        true
-                    } else {
-                        false
-                    }
-                });
-                if closed {
-                    if state_for_close.read(cx).language_focus.is_focused(window) {
-                        window.focus(&editor_for_close.read(cx).focus_handle(cx), cx);
-                    }
-                    editor_for_close.update(cx, |_, cx| cx.notify());
-                }
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(scroll_reconciler(state_entity, editor_view))
-            .child(
-                div()
-                    .id(elem_id("code-language-scroll", block_id))
-                    .track_scroll(&self.language_scroll)
-                    .overflow_y_scroll()
-                    .max_h(px(240.))
-                    .children(if items.is_empty() {
-                        vec![
-                            div()
-                                .px_2()
-                                .py_1()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("No matching languages")
-                                .into_any_element(),
-                        ]
-                    } else {
-                        items
-                    }),
-            );
-        let placed = anchored()
-            .offset(point(px(0.), px(4.)))
-            .snap_to_window_with_margin(px(8.))
-            .child(menu);
-        Some(deferred(placed).with_priority(3).into_any_element())
-    }
 }
 
 fn commit_title_form(
@@ -462,8 +300,7 @@ fn open_title_editor(
     let view_for_sub = editor_view.clone();
     state_entity.update(cx, |state, cx| {
         state.ensure_observers(editor_view, window, cx);
-        state.language_menu = None;
-        state.language_query.clear();
+        state.close_language_menu();
         let sub =
             cx.subscribe_in(
                 &input,
@@ -503,13 +340,4 @@ fn open_title_editor(
         });
     });
     editor_view.update(cx, |_, cx| cx.notify());
-}
-
-fn language_matches(language: &crate::languages::CodeLanguage, query: &str) -> bool {
-    language.id.to_lowercase().contains(query)
-        || language.label.to_lowercase().contains(query)
-        || language
-            .aliases
-            .iter()
-            .any(|alias| alias.to_lowercase().contains(query))
 }

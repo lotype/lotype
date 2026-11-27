@@ -3,6 +3,7 @@
 
 mod controls;
 mod header;
+mod language_menu;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -163,6 +164,7 @@ pub(super) struct CodeState {
     pub(super) language_menu: Option<BlockId>,
     pub(super) language_scroll: ScrollHandle,
     pub(super) language_query: String,
+    pub(super) language_highlighted: usize,
     pub(super) title_form: Option<TitleForm>,
     pub(super) copied: Option<(BlockId, Task<()>)>,
     pub(super) hovered: Option<ActiveHover>,
@@ -183,10 +185,17 @@ impl CodeState {
             language_menu: None,
             language_scroll: ScrollHandle::new(),
             language_query: String::new(),
+            language_highlighted: 0,
             title_form: None,
             copied: None,
             hovered: None,
         }
+    }
+
+    pub(super) fn close_language_menu(&mut self) {
+        self.language_menu = None;
+        self.language_query.clear();
+        self.language_highlighted = 0;
     }
 
     fn decorate(

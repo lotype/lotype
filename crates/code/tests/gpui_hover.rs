@@ -118,3 +118,58 @@ function describe(name: string) {
     ed.settle();
     assert!(ed.cx.debug_bounds("twoslash-hover").is_none());
 }
+
+#[gpui::test]
+fn language_picker_highlights_top_match_on_typing_and_supports_arrow_navigation(
+    cx: &mut TestAppContext,
+) {
+    let mut doc = Document::new(Schema::builtin());
+    let code = doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+    doc.set_attr(code, lotype_core::attr::LANGUAGE, "rs")
+        .unwrap();
+    doc.insert_text(code, 0, "fn main() {}").unwrap();
+
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(code, 0))))
+        .unwrap();
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(editor, cx), cx)
+    });
+    ed.settle();
+
+    let open_picker = |ed: &mut EditorTestContext| {
+        let bounds = ed.cx.debug_bounds("code-language").expect("lang button");
+        ed.cx.simulate_click(bounds.center(), Modifiers::none());
+        ed.settle();
+    };
+
+    // Initially highlights the block's current language (`rust`).
+    open_picker(&mut ed);
+    assert!(ed.cx.debug_bounds("code-lang-query").is_some());
+    assert!(ed.cx.debug_bounds("code-lang-active-rust").is_some());
+
+    // Typing `"c"` ranks exact ID `C` first and highlights it immediately.
+    ed.keys("c");
+    assert!(ed.cx.debug_bounds("code-lang-active-c").is_some());
+
+    // ArrowDown moves the highlight to `CSS`, and Enter commits the highlighted item.
+    ed.keys("down");
+    assert!(ed.cx.debug_bounds("code-lang-active-css").is_some());
+    ed.keys("enter");
+    assert_eq!(
+        ed.editor(|e| e.document().code_language(code)),
+        Some("css".to_owned())
+    );
+
+    // Reopening and typing alias `"ts"` highlights `TypeScript` immediately and commits on Enter.
+    open_picker(&mut ed);
+    assert!(ed.cx.debug_bounds("code-lang-active-css").is_some());
+    ed.keys("t s");
+    assert!(ed.cx.debug_bounds("code-lang-active-typescript").is_some());
+    ed.keys("enter");
+    assert_eq!(
+        ed.editor(|e| e.document().code_language(code)),
+        Some("typescript".to_owned())
+    );
+}

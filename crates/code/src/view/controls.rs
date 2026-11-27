@@ -25,8 +25,8 @@ impl CodeState {
         }
         let editor_for_blur = editor_view.clone();
         let blur = cx.on_blur(&self.language_focus, window, move |state, window, _cx| {
-            if state.language_menu.take().is_some() {
-                state.language_query.clear();
+            if state.language_menu.is_some() {
+                state.close_language_menu();
                 let editor = editor_for_blur.clone();
                 // Focus listeners run during `Window::draw`, while immediate refreshes
                 // are suppressed; queue a next-frame notify so the menu disappears.
@@ -47,9 +47,9 @@ impl CodeState {
         cx: &mut gpui::Context<Self>,
     ) {
         let mut restore_focus = false;
-        if self.language_menu.take().is_some() {
+        if self.language_menu.is_some() {
             restore_focus |= self.language_focus.is_focused(window);
-            self.language_query.clear();
+            self.close_language_menu();
         }
         if let Some(form) = self.title_form.take() {
             restore_focus |= form.input.read(cx).focus_handle(cx).is_focused(window);
@@ -137,8 +137,7 @@ impl CodeState {
             && !keep(editor_view.read(cx), block)
         {
             restore_focus |= self.language_focus.is_focused(window);
-            self.language_menu = None;
-            self.language_query.clear();
+            self.close_language_menu();
             closed = true;
         }
         if let Some(block) = self.title_form.as_ref().map(|form| form.block)
