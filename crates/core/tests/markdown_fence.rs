@@ -176,3 +176,32 @@ fn the_types_are_listed_in_the_order_they_were_added() {
     let hints: Vec<_> = schema.block_specs().filter_map(BlockSpec::hint).collect();
     assert!(hints.contains(&"headings (`# Title`)") && hints.contains(&"callouts"));
 }
+
+#[test]
+fn code_block_title_with_braces_round_trips_without_spurious_highlights() {
+    for title in ["app/{1}/page.tsx", "routes/{id}/{2-4}.ts", "{1}"] {
+        let mut doc = Document::new(Schema::builtin());
+        let code = doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+        doc.set_attr(code, attr::LANGUAGE, "tsx").unwrap();
+        doc.set_attr(code, attr::TITLE, title).unwrap();
+        doc.insert_text(code, 0, "export default 1;\nexport const x = 2;")
+            .unwrap();
+
+        let markdown = doc.to_markdown();
+        assert!(
+            markdown.contains(&format!("title=\"{title}\"")),
+            "expected quoted title in fence info: {markdown}"
+        );
+
+        let mut back = Document::new(Schema::builtin());
+        let made = back.insert_markdown(None, 0, &markdown).unwrap();
+        assert_eq!(made.len(), 1, "{markdown}");
+        assert_eq!(
+            back.code_title(made[0]).as_deref(),
+            Some(title),
+            "{markdown}"
+        );
+        assert_eq!(back.code_highlights(made[0]), None, "{markdown}");
+        assert_eq!(back.code_language(made[0]).as_deref(), Some("tsx"));
+    }
+}

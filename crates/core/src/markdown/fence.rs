@@ -107,7 +107,7 @@ fn written(value: &Value) -> String {
         Value::Int(number) => return number.to_string(),
         Value::Str(text) => text,
     };
-    let kept = |c: char| !c.is_whitespace() && c != '=' && !escaped(c);
+    let kept = |c: char| !c.is_whitespace() && !matches!(c, '=' | '{' | '}') && !escaped(c);
     if !text.is_empty() && text.chars().all(kept) && bare(text) == *value {
         return text.clone();
     }
