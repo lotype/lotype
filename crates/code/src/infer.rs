@@ -50,12 +50,13 @@ impl BuiltInAnalyzer {
         let mut type_members: HashMap<String, Vec<CompletionItem>> = HashMap::new();
         let mut diagnostics: Vec<DiagnosticAnnotation> = Vec::new();
 
-        let lines: Vec<&str> = request.code.split('\n').collect();
-        let mut line_starts = Vec::with_capacity(lines.len());
+        let mut lines: Vec<&str> = Vec::new();
+        let mut line_starts = Vec::new();
         let mut byte_cursor = 0;
-        for line in &lines {
+        for raw in request.code.split('\n') {
+            lines.push(raw.strip_suffix('\r').unwrap_or(raw));
             line_starts.push(byte_cursor);
-            byte_cursor += line.len() + 1;
+            byte_cursor += raw.len() + 1;
         }
 
         // Pass 1: declarations, doc comments, interface/struct fields, and assignment checks.

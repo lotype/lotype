@@ -525,10 +525,16 @@ impl CodeState {
             .debug_selector(|| "twoslash-hover".to_owned())
             .child(div().text_xs().font_family(CODE_FONT).child(signature))
             .children(docs);
+        let place_below = active.bounds.top() < px(72.);
+        let (card_anchor, attach_anchor, y_offset) = if place_below {
+            (Anchor::TopLeft, Anchor::BottomLeft, px(4.))
+        } else {
+            (Anchor::BottomLeft, Anchor::TopLeft, px(-4.))
+        };
         let placed = anchored()
-            .anchor(Anchor::BottomLeft)
-            .attach(active.bounds, Anchor::TopLeft)
-            .offset(point(px(0.), px(-4.)))
+            .anchor(card_anchor)
+            .attach(active.bounds, attach_anchor)
+            .offset(point(px(0.), y_offset))
             .snap_to_window_with_margin(px(8.))
             .child(card);
         Some(deferred(placed).with_priority(2).into_any_element())

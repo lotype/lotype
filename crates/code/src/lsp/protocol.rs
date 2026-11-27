@@ -274,17 +274,17 @@ pub(super) fn extract_hover(result: &Value) -> Option<(String, Option<String>)> 
     let mut doc_lines = Vec::new();
 
     if has_fence {
-        let mut in_first_fence = false;
-        let mut captured_first_fence = false;
+        let mut fences: Vec<Vec<&str>> = Vec::new();
+        let mut current_fence: Option<Vec<&str>> = None;
+        let mut prose_after_first = Vec::new();
         for line in head_lines {
             if line.trim_start().starts_with("```") {
-                if !captured_first_fence {
-                    if in_first_fence {
-                        in_first_fence = false;
-                        captured_first_fence = true;
-                    } else {
-                        in_first_fence = true;
+                if let Some(done) = current_fence.take() {
+                    if !done.is_empty() {
+                        fences.push(done);
                     }
+                } else {
+                    current_fence = Some(Vec::new());
                 }
                 continue;
             }
@@ -292,10 +292,31 @@ pub(super) fn extract_hover(result: &Value) -> Option<(String, Option<String>)> 
             if trimmed.is_empty() {
                 continue;
             }
-            if in_first_fence {
-                code_lines.push(trimmed);
-            } else if captured_first_fence {
-                doc_lines.push(trimmed);
+            if let Some(buf) = &mut current_fence {
+                buf.push(trimmed);
+            } else if !fences.is_empty() {
+                prose_after_first.push(trimmed);
+            }
+        }
+        if let Some(done) = current_fence.take()
+            && !done.is_empty()
+        {
+            fences.push(done);
+        }
+        // When `---` separates header from docs (as in `rust-analyzer`, which emits a
+        // module-path fence followed by the item signature fence before `---`), take the
+        // last header fence; when there is no `---` (TS/Deno), take the first fence and
+        // treat subsequent fences/prose as documentation examples.
+        if saw_rule {
+            if let Some(sig_fence) = fences.pop() {
+                code_lines = sig_fence;
+            }
+            doc_lines.extend(prose_after_first);
+        } else if !fences.is_empty() {
+            code_lines = fences.remove(0);
+            doc_lines.extend(prose_after_first);
+            for extra_fence in fences {
+                doc_lines.extend(extra_fence);
             }
         }
     } else if saw_rule {
@@ -463,15 +484,12 @@ mod tests {
         let ra_hover = json!({
             "contents": {
                 "kind": "markdown",
-                "value": "```rust\npub fn len(&self) -> usize\n```\n---\nReturns the number of elements.\n```rust\nassert_eq!(v.len(), 0);\n```"
+                "value": "```rust\nalloc::vec::Vec\n```\n\n```rust\npub fn push(&mut self, value: T)\n```\n---\nAppends an element.\n```rust\nv.push(1);\n```"
             }
         });
         let (sig, docs) = extract_hover(&ra_hover).expect("rust-analyzer hover");
-        assert_eq!(sig, "pub fn len(&self) -> usize");
-        assert_eq!(
-            docs.as_deref(),
-            Some("Returns the number of elements. assert_eq!(v.len(), 0);")
-        );
+        assert_eq!(sig, "pub fn push(&mut self, value: T)");
+        assert_eq!(docs.as_deref(), Some("Appends an element. v.push(1);"));
 
         let plain_hr = json!({
             "contents": {
