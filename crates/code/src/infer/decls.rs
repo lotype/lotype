@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use super::SymbolInfo;
-use super::builtins::{LangFamily, infer_expr_type, split_top_level, widen_literal};
+use super::builtins::{
+    LangFamily, infer_expr_type, rust_char_literal_end, split_top_level, widen_literal,
+};
 use crate::analyzer::{CompletionKind, DiagnosticAnnotation, Severity};
 
 pub(super) fn parse_type_decl(
@@ -95,13 +97,12 @@ pub(super) fn parse_fn_decl(
     if !is_ident_name(raw_name) {
         return false;
     }
-    let Some(close_rel) = rest[open..].find(')') else {
+    let Some(close) = find_matching_paren(family, rest, open) else {
         return false;
     };
-    let close = open + close_rel;
     let params_str = &rest[open + 1..close];
     let mut local_params = symbols.clone();
-    for param in split_top_level(params_str, ',') {
+    for param in split_top_level(family, params_str, ',') {
         let param = param.trim().strip_prefix("mut ").unwrap_or(param.trim());
         if let Some((pname, pty)) = param.split_once(':') {
             let pname = pname.trim().trim_end_matches('?');
@@ -129,7 +130,7 @@ pub(super) fn parse_fn_decl(
 
     let ret_ty = explicit_ret.or_else(|| {
         for body_line in lines.iter().skip(line_idx + 1).take(12) {
-            let t = strip_trailing_comment(body_line.trim());
+            let t = strip_trailing_comment(family, body_line.trim());
             if t.starts_with('}') {
                 break;
             }
@@ -189,12 +190,11 @@ pub(super) fn parse_var_decl(
         return;
     };
 
-    let Some((lhs, rhs)) = rest.split_once('=') else {
+    let Some(eq_idx) = find_top_level_assignment_eq(family, rest) else {
         return;
     };
-    if rhs.starts_with('=') {
-        return;
-    }
+    let lhs = &rest[..eq_idx];
+    let rhs = &rest[eq_idx + 1..];
     let rhs_expr = rhs.trim().trim_end_matches(';').trim();
     let (name, explicit_ty) = match lhs.split_once(':') {
         Some((n, t)) => (n.trim(), Some(t.trim().to_owned())),
@@ -209,7 +209,8 @@ pub(super) fn parse_var_decl(
     if let (Some(exp), Some(actual)) = (&explicit_ty, &inferred_rhs)
         && is_incompatible_primitive(family, exp, actual)
     {
-        let rhs_rel = raw_line.rfind(rhs_expr).unwrap_or(0);
+        let code_slice = strip_trailing_comment_preserving_len(family, raw_line);
+        let rhs_rel = code_slice.rfind(rhs_expr).unwrap_or(0);
         let range = line_start + rhs_rel..line_start + rhs_rel + rhs_expr.len();
         let (code_id, message) = match family {
             LangFamily::Rust => (
@@ -279,17 +280,31 @@ pub(super) fn is_ident_name(s: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
-pub(super) fn strip_trailing_comment(line: &str) -> &str {
-    strip_trailing_comment_preserving_len(line).trim_end()
+pub(super) fn strip_trailing_comment(family: LangFamily, line: &str) -> &str {
+    strip_trailing_comment_preserving_len(family, line).trim_end()
 }
 
-pub(super) fn strip_trailing_comment_preserving_len(line: &str) -> &str {
+pub(super) fn strip_trailing_comment_preserving_len(family: LangFamily, line: &str) -> &str {
     let mut in_quote: Option<char> = None;
-    let bytes = line.as_bytes();
-    for (idx, ch) in line.char_indices() {
+    let mut chars = line.char_indices();
+    while let Some((idx, ch)) = chars.next() {
         if let Some(q) = in_quote {
-            if ch == q && (idx == 0 || bytes[idx - 1] != b'\\') {
+            if ch == '\\' {
+                let _ = chars.next();
+                continue;
+            }
+            if ch == q {
                 in_quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' && family == LangFamily::Rust {
+            if let Some(end) = rust_char_literal_end(line, idx) {
+                for (next_idx, _) in chars.by_ref() {
+                    if next_idx + 1 >= end {
+                        break;
+                    }
+                }
             }
             continue;
         }
@@ -300,4 +315,96 @@ pub(super) fn strip_trailing_comment_preserving_len(line: &str) -> &str {
         }
     }
     line
+}
+
+fn find_matching_paren(family: LangFamily, input: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_quote: Option<char> = None;
+    let slice = input.get(open..)?;
+    let mut chars = slice.char_indices();
+    while let Some((rel, ch)) = chars.next() {
+        if let Some(q) = in_quote {
+            if ch == '\\' {
+                let _ = chars.next();
+                continue;
+            }
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' && family == LangFamily::Rust {
+            if let Some(end) = rust_char_literal_end(slice, rel) {
+                for (next_rel, _) in chars.by_ref() {
+                    if next_rel + 1 >= end {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => in_quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open + rel);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_top_level_assignment_eq(family: LangFamily, input: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_quote: Option<char> = None;
+    let bytes = input.as_bytes();
+    let mut chars = input.char_indices();
+    while let Some((idx, ch)) = chars.next() {
+        if let Some(q) = in_quote {
+            if ch == '\\' {
+                let _ = chars.next();
+                continue;
+            }
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' && family == LangFamily::Rust {
+            if let Some(end) = rust_char_literal_end(input, idx) {
+                for (next_idx, _) in chars.by_ref() {
+                    if next_idx + 1 >= end {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => in_quote = Some(ch),
+            '(' | '[' | '{' | '<' => depth += 1,
+            '>' => {
+                let is_arrow = idx > 0 && matches!(bytes[idx - 1], b'=' | b'-');
+                if !is_arrow {
+                    depth = (depth - 1).max(0);
+                }
+            }
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
+            '=' if depth == 0 => {
+                let prev = idx.checked_sub(1).and_then(|i| bytes.get(i).copied());
+                let next = bytes.get(idx + 1).copied();
+                if !matches!(prev, Some(b'=' | b'!' | b'<' | b'>'))
+                    && !matches!(next, Some(b'=' | b'>'))
+                {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }

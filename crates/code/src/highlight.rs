@@ -29,7 +29,7 @@ pub(crate) const CODE_FONT: &str = "Menlo";
 struct CachedHighlight {
     language: String,
     text: String,
-    theme_ptr: usize,
+    theme: Arc<HighlightTheme>,
     highlighter: SyntaxHighlighter,
     styles: Vec<(Range<usize>, HighlightStyle)>,
 }
@@ -42,6 +42,11 @@ pub(crate) struct HighlightCache {
 }
 
 impl HighlightCache {
+    /// Drops cached highlighters for blocks that no longer exist in the document.
+    pub(crate) fn retain_blocks(&mut self, keep: impl Fn(&BlockId) -> bool) {
+        self.blocks.retain(|id, _| keep(id));
+    }
+
     /// Highlights `text` in `language`, reusing the incremental syntax tree when edited.
     pub(crate) fn highlight_block(
         &mut self,
@@ -57,11 +62,10 @@ impl HighlightCache {
             self.blocks.remove(&block);
             return Vec::new();
         }
-        let theme_ptr = Arc::as_ptr(theme) as usize;
         if let Some(entry) = self.blocks.get_mut(&block)
             && entry.language == canonical
         {
-            if entry.text == text && entry.theme_ptr == theme_ptr {
+            if entry.text == text && Arc::ptr_eq(&entry.theme, theme) {
                 return entry.styles.clone();
             }
             if entry.text != text {
@@ -71,7 +75,7 @@ impl HighlightCache {
                 entry.text.clear();
                 entry.text.push_str(text);
             }
-            entry.theme_ptr = theme_ptr;
+            entry.theme = Arc::clone(theme);
             entry.styles = entry.highlighter.styles(&(0..text.len()), theme.as_ref());
             return entry.styles.clone();
         }
@@ -85,7 +89,7 @@ impl HighlightCache {
             CachedHighlight {
                 language: canonical,
                 text: text.to_owned(),
-                theme_ptr,
+                theme: Arc::clone(theme),
                 highlighter,
                 styles: styles.clone(),
             },

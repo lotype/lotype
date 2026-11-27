@@ -16,6 +16,7 @@ use crate::analyzer::{
 use crate::languages::canonical_language;
 use builtins::{
     LangFamily, builtin_members_for_type, infer_expr_type, language_keywords, lookup_member,
+    rust_char_literal_end,
 };
 use decls::{
     is_ident_name, parse_fn_decl, parse_type_decl, parse_var_decl, strip_trailing_comment,
@@ -79,6 +80,16 @@ impl BuiltInAnalyzer {
                 }
                 continue;
             }
+            let trimmed = if let Some(after_empty) = trimmed.strip_prefix("/**/") {
+                pending_doc.clear();
+                let rest = after_empty.trim();
+                if rest.is_empty() {
+                    continue;
+                }
+                rest
+            } else {
+                trimmed
+            };
             if let Some(after_open) = trimmed.strip_prefix("/**") {
                 pending_doc.clear();
                 if let Some(end_idx) = after_open.find("*/") {
@@ -113,7 +124,7 @@ impl BuiltInAnalyzer {
                     active_type_body = None;
                     continue;
                 }
-                let clean = strip_trailing_comment(trimmed)
+                let clean = strip_trailing_comment(family, trimmed)
                     .trim_end_matches([',', ';'])
                     .trim();
                 let clean = clean.strip_prefix("pub ").unwrap_or(clean);
@@ -135,7 +146,7 @@ impl BuiltInAnalyzer {
 
             let docs = (!pending_doc.is_empty()).then(|| pending_doc.join(" "));
             pending_doc.clear();
-            let code_only = strip_trailing_comment(trimmed);
+            let code_only = strip_trailing_comment(family, trimmed);
 
             if let Some(name) = parse_type_decl(family, code_only, &docs, &mut symbols) {
                 if code_only.ends_with('{') {
@@ -167,7 +178,7 @@ impl BuiltInAnalyzer {
             {
                 continue;
             }
-            let code_slice = strip_trailing_comment_preserving_len(raw_line);
+            let code_slice = strip_trailing_comment_preserving_len(family, raw_line);
             collect_line_hovers(
                 family,
                 code_slice,
@@ -260,13 +271,24 @@ fn collect_line_hovers(
         let b = bytes[idx];
         if let Some(q) = in_quote {
             if b == b'\\' {
-                idx = (idx + 2).min(bytes.len());
+                idx += 1;
+                if let Some(escaped) = code_slice[idx..].chars().next() {
+                    idx += escaped.len_utf8();
+                }
                 continue;
             }
             if b == q {
                 in_quote = None;
             }
-            idx += 1;
+            idx += code_slice[idx..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        if b == b'\'' && family == LangFamily::Rust {
+            if let Some(end) = rust_char_literal_end(code_slice, idx) {
+                idx = end;
+            } else {
+                idx += 1;
+            }
             continue;
         }
         if matches!(b, b'"' | b'\'' | b'`') {

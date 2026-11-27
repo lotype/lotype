@@ -65,7 +65,7 @@ impl CodeState {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.language_menu.is_none() && self.title_form.is_none() {
+        if self.language_menu.is_none() && self.title_form.is_none() && self.hovered.is_none() {
             return;
         }
         if self.reconcile_with(&editor_view, window, cx, |view, block| {
@@ -76,7 +76,9 @@ impl CodeState {
         }) {
             editor_view.update(cx, |_, cx| cx.notify());
         }
-        if (self.language_menu.is_none() && self.title_form.is_none()) || self.reconcile_scheduled {
+        if (self.language_menu.is_none() && self.title_form.is_none() && self.hovered.is_none())
+            || self.reconcile_scheduled
+        {
             return;
         }
         self.reconcile_scheduled = true;
@@ -98,13 +100,28 @@ impl CodeState {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
-        self.reconcile_with(editor_view, window, cx, |view, block| {
+        let mut changed = self.reconcile_with(editor_view, window, cx, |view, block| {
             view.editor()
                 .document()
                 .block_type(block)
                 .is_ok_and(|kind| kind == block::CODE_BLOCK)
                 && view.text_bounds(block).is_some()
-        })
+        });
+        if let Some(active) = &mut self.hovered {
+            let view = editor_view.read(cx);
+            match view.range_bounds(active.block, active.hover.range.clone()) {
+                Some(bounds) if bounds != active.bounds => {
+                    active.bounds = bounds;
+                    changed = true;
+                }
+                Some(_) => {}
+                None => {
+                    self.hovered = None;
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     fn reconcile_with(

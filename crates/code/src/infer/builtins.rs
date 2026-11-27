@@ -91,7 +91,7 @@ pub(super) fn infer_expr_type(
     }
     // Array / list literals `[a, b]`.
     if let Some(inner) = expr.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let items: Vec<&str> = split_top_level(inner, ',');
+        let items: Vec<&str> = split_top_level(family, inner, ',');
         let elem = items
             .first()
             .and_then(|first| infer_expr_type(family, first, false, symbols))
@@ -109,7 +109,7 @@ pub(super) fn infer_expr_type(
         && let Some(inner) = expr.strip_prefix('{').and_then(|s| s.strip_suffix('}'))
     {
         let mut fields = Vec::new();
-        for part in split_top_level(inner, ',') {
+        for part in split_top_level(family, inner, ',') {
             let part = part.trim();
             if part.is_empty() {
                 continue;
@@ -229,22 +229,72 @@ fn infer_number_literal(family: LangFamily, expr: &str, is_const: bool) -> Optio
     None
 }
 
-pub(super) fn split_top_level(input: &str, sep: char) -> Vec<&str> {
+/// If `s[quote_idx..]` begins a Rust character literal (such as `'a'`, `'\n'`,
+/// `'\\'`, `'\''`, or `'\u{1F600}'`), returns the byte index right after its
+/// closing `'`. Returns `None` for Rust lifetimes and loop labels (`'a`, `'static`).
+pub(super) fn rust_char_literal_end(s: &str, quote_idx: usize) -> Option<usize> {
+    let rest = s.get(quote_idx + 1..)?;
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if first == '\'' {
+        return None;
+    }
+    if first == '\\' {
+        let _ = chars.next()?;
+        for (rel, ch) in chars {
+            if ch == '\'' {
+                return Some(quote_idx + 1 + rel + 1);
+            }
+            if rel > 12 || ch == '\n' {
+                return None;
+            }
+        }
+        return None;
+    }
+    match chars.next() {
+        Some((rel, '\'')) => Some(quote_idx + 1 + rel + 1),
+        _ => None,
+    }
+}
+
+pub(super) fn split_top_level(family: LangFamily, input: &str, sep: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
     let mut start = 0;
     let mut in_quote: Option<char> = None;
-    for (idx, ch) in input.char_indices() {
+    let bytes = input.as_bytes();
+    let mut chars = input.char_indices();
+    while let Some((idx, ch)) = chars.next() {
         if let Some(q) = in_quote {
+            if ch == '\\' {
+                let _ = chars.next();
+                continue;
+            }
             if ch == q {
                 in_quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' && family == LangFamily::Rust {
+            if let Some(end) = rust_char_literal_end(input, idx) {
+                for (next_idx, _) in chars.by_ref() {
+                    if next_idx + 1 >= end {
+                        break;
+                    }
+                }
             }
             continue;
         }
         match ch {
             '"' | '\'' | '`' => in_quote = Some(ch),
             '(' | '[' | '{' | '<' => depth += 1,
-            ')' | ']' | '}' | '>' => depth = (depth - 1).max(0),
+            '>' => {
+                let is_arrow = idx > 0 && matches!(bytes[idx - 1], b'=' | b'-');
+                if !is_arrow {
+                    depth = (depth - 1).max(0);
+                }
+            }
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
             c if c == sep && depth == 0 => {
                 parts.push(input[start..idx].trim());
                 start = idx + ch.len_utf8();

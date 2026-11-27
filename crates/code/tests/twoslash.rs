@@ -323,3 +323,92 @@ fn crlf_input_preserves_queries_completions_virtual_files_and_clean_copy() {
     assert!(!copied.contains('\r'), "CRLF residue in copied: {copied:?}");
     assert_eq!(copied, "const total = 42;\ntotal.toF\nconst kept = 1;\n");
 }
+
+#[test]
+fn builtin_analyzer_handles_empty_comments_rust_lifetimes_escapes_and_fn_types() {
+    // 1. Empty `/**/` does not swallow subsequent declarations as JSDoc.
+    let ts_code = "\
+/**/
+const dir = \"\\\\\"; // trailing \"comment\"
+function apply(fn: (x: number) => number, value: number): number {
+  return fn(value);
+}
+const mapper: (x: number) => number = (x) => x;
+const bad: number = \"oops\"; // ignore \"oops\"";
+    let ts_req = lotype_code::AnalysisRequest {
+        language: Some("ts".into()),
+        title: None,
+        code: ts_code.to_owned(),
+        queries: Vec::new(),
+        completions: Vec::new(),
+        files: Vec::new(),
+        no_errors: false,
+        expected_errors: Vec::new(),
+    };
+    let ts_out = lotype_code::BuiltInAnalyzer::analyze_sync(&ts_req);
+    fn hover_sig<'a>(out: &'a CodeAnalysis, sym: &str) -> Option<&'a str> {
+        out.hovers
+            .iter()
+            .find(|h| h.symbol == sym)
+            .map(|h| h.signature.as_str())
+    }
+    assert_eq!(hover_sig(&ts_out, "dir"), Some("const dir: \"\\\\\""));
+    assert_eq!(
+        hover_sig(&ts_out, "apply"),
+        Some("function apply(fn: (x: number) => number, value: number): number")
+    );
+    assert_eq!(
+        hover_sig(&ts_out, "value"),
+        Some("(parameter) value: number")
+    );
+    assert_eq!(
+        hover_sig(&ts_out, "mapper"),
+        Some("const mapper: (x: number) => number")
+    );
+    assert_eq!(ts_out.diagnostics.len(), 1);
+    let diag_range = ts_out.diagnostics[0].target_range.clone();
+    assert_eq!(&ts_code[diag_range.clone()], "\"oops\"");
+    let comment_start = ts_code.find("// ignore").unwrap();
+    assert!(
+        diag_range.end < comment_start,
+        "diagnostic underlined comment instead of RHS: {diag_range:?}"
+    );
+
+    // 2. Rust lifetimes (`'a`, `'static`) and escaped char literals (`'\\'`) do not
+    //    break parameter splitting or hover scanning on the rest of the line.
+    let rs_code = "\
+fn greet<'a>(name: &'a str, count: usize) -> &'static str {
+    let sep = '\\\\'; // comment
+    let out: &'static str = name;
+    out
+}";
+    let rs_req = lotype_code::AnalysisRequest {
+        language: Some("rust".into()),
+        title: None,
+        code: rs_code.to_owned(),
+        queries: Vec::new(),
+        completions: Vec::new(),
+        files: Vec::new(),
+        no_errors: false,
+        expected_errors: Vec::new(),
+    };
+    let rs_out = lotype_code::BuiltInAnalyzer::analyze_sync(&rs_req);
+    assert_eq!(
+        hover_sig(&rs_out, "greet"),
+        Some("fn greet(name: &'a str, count: usize) -> &'static str")
+    );
+    assert_eq!(
+        hover_sig(&rs_out, "count"),
+        Some("(parameter) count: usize")
+    );
+    // `name` appears AFTER `'static` on `let out: &'static str = name;`:
+    // hover scanning must still detect it.
+    let assign_line_start = rs_code.find("let out").unwrap();
+    assert!(
+        rs_out
+            .hovers
+            .iter()
+            .any(|h| h.symbol == "name" && h.range.start > assign_line_start),
+        "expected hover for `name` after `'static` lifetime"
+    );
+}

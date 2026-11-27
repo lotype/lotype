@@ -138,8 +138,16 @@ pub(super) struct TitleForm {
 pub(super) struct ActiveHover {
     pub(super) block: BlockId,
     pub(super) language: Option<String>,
+    pub(super) text: String,
+    pub(super) editing: bool,
     pub(super) hover: HoverAnnotation,
     pub(super) bounds: Bounds<Pixels>,
+}
+
+struct CachedParsed {
+    text: String,
+    editing: bool,
+    parsed: ParsedCode,
 }
 
 pub(super) struct CodeState {
@@ -149,7 +157,7 @@ pub(super) struct CodeState {
     pub(super) control_subs: Vec<Subscription>,
     pub(super) reconcile_scheduled: bool,
     highlights: HighlightCache,
-    parsed: HashMap<BlockId, (String, ParsedCode)>,
+    parsed: HashMap<BlockId, CachedParsed>,
     builtin_cache: HashMap<BlockId, BuiltinCacheEntry>,
     analyses: HashMap<BlockId, AnalysisCacheEntry>,
     pub(super) language_menu: Option<BlockId>,
@@ -189,10 +197,16 @@ impl CodeState {
         editing: bool,
         cx: &mut gpui::Context<Self>,
     ) -> TextDecoration {
+        self.prune_caches(doc);
         let language = doc.code_language(block);
         let title = doc.code_title(block);
         let twoslash = doc.is_twoslash(block);
         let fence_lines = doc.code_highlights(block);
+        if self.hovered.as_ref().is_some_and(|h| {
+            h.block == block && (!twoslash || h.text != text || h.editing != editing)
+        }) {
+            self.hovered = None;
+        }
         let mut parsed = parse_code_annotations(text, fence_lines.as_deref(), twoslash);
 
         if twoslash {
@@ -218,8 +232,29 @@ impl CodeState {
             editing,
             cx,
         );
-        self.parsed.insert(block, (text.to_owned(), parsed));
+        self.parsed.insert(
+            block,
+            CachedParsed {
+                text: text.to_owned(),
+                editing,
+                parsed,
+            },
+        );
         decoration
+    }
+
+    fn prune_caches(&mut self, doc: &Document) {
+        let alive = |id: &BlockId| {
+            doc.block_type(*id)
+                .is_ok_and(|kind| kind == block::CODE_BLOCK)
+        };
+        self.highlights.retain_blocks(alive);
+        self.parsed.retain(|id, _| alive(id));
+        self.builtin_cache.retain(|id, _| alive(id));
+        self.analyses.retain(|id, _| alive(id));
+        if self.hovered.as_ref().is_some_and(|h| !alive(&h.block)) {
+            self.hovered = None;
+        }
     }
 
     fn builtin_analysis(
@@ -291,7 +326,7 @@ impl CodeState {
         }
         let fresh;
         let parsed = match self.parsed.get(&args.block) {
-            Some((cached_text, parsed)) if cached_text == &args.code => parsed,
+            Some(entry) if entry.text == args.code => &entry.parsed,
             _ => {
                 fresh = parse_code_annotations(&args.code, None, args.twoslash);
                 &fresh
@@ -307,13 +342,15 @@ impl CodeState {
             no_errors: parsed.no_errors,
             expected_errors: parsed.expected_errors.clone(),
         };
+        let fallback_req = request.clone();
         let block_id = args.block;
         let editor_view = args.editor_view.clone();
         let expected_key = key.clone();
         let task = cx.spawn(async move |state, cx| {
             cx.background_executor().timer(ANALYZE_DEBOUNCE).await;
-            let Ok(analysis) = analyzer.analyze(request).await else {
-                return;
+            let analysis = match analyzer.analyze(request).await {
+                Ok(analysis) => analysis,
+                Err(_) => BuiltInAnalyzer::analyze_sync(&fallback_req),
             };
             let updated = state.update(cx, |state, _| {
                 let Some(entry) = state.analyses.get_mut(&block_id) else {
@@ -347,6 +384,9 @@ impl CodeState {
     ) -> AnyElement {
         if !args.editable {
             self.close_controls_if_readonly(window, cx);
+            self.hovered = None;
+        } else if !args.twoslash && self.hovered.as_ref().is_some_and(|h| h.block == args.block) {
+            self.hovered = None;
         }
         self.ensure_analysis(&args, cx);
 
@@ -381,18 +421,23 @@ impl CodeState {
                         return cleared;
                     }
                     let next = hit.and_then(|offset| {
-                        let (_, parsed) = state.parsed.get(&block_id)?;
-                        let hover = parsed.hover_at(offset)?.clone();
+                        let entry = state.parsed.get(&block_id)?;
+                        let hover = entry.parsed.hover_at(offset)?.clone();
                         let bounds = editor_for_move
                             .read(cx)
                             .range_bounds(block_id, hover.range.clone())?;
                         Some(ActiveHover {
                             block: block_id,
                             language: language_for_hover.clone(),
+                            text: entry.text.clone(),
+                            editing: entry.editing,
                             hover,
                             bounds,
                         })
                     });
+                    if next.is_some() {
+                        state.ensure_observers(&editor_for_move, window, cx);
+                    }
                     if state.hovered != next {
                         state.hovered = next;
                         true
@@ -474,7 +519,6 @@ impl CodeState {
         });
         let card = v_flex()
             .popover_style(cx)
-            .occlude()
             .px_2p5()
             .py_1p5()
             .max_w(px(420.))
