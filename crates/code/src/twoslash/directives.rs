@@ -205,9 +205,21 @@ pub(super) fn parse_inline_completions(raw: &str) -> Vec<CompletionItem> {
 pub(super) fn parse_code_notation(line: &str, line_start: usize) -> Option<CodeNotation> {
     let tag_pos = line.rfind("[!code ")?;
     let rest = &line[tag_pos + "[!code ".len()..];
-    let inner = rest.split_once(']')?.0.trim();
+    let (inner, after_bracket) = rest.split_once(']')?;
+    let after_bracket = after_bracket.trim();
     let before = line[..tag_pos].trim_end();
-    let stripped_len = strip_comment_marker(before).len();
+    let (cleaned_before, opener) = strip_comment_marker(before)?;
+    let closing_ok = match opener {
+        "/*" => after_bracket == "*/",
+        "<!--" => after_bracket == "-->",
+        _ => after_bracket.is_empty(),
+    };
+    if !closing_ok {
+        return None;
+    }
+
+    let inner = inner.trim();
+    let stripped_len = cleaned_before.len();
     let standalone = stripped_len == 0;
     let trimmed_end = line_start + stripped_len;
 
@@ -220,6 +232,7 @@ pub(super) fn parse_code_notation(line: &str, line_start: usize) -> Option<CodeN
                 trimmed_end,
             });
         }
+        return None;
     }
 
     let (kind_str, count) = match inner.split_once(':') {
@@ -243,23 +256,29 @@ pub(super) fn parse_code_notation(line: &str, line_start: usize) -> Option<CodeN
 }
 
 pub(super) fn strip_inline_code_tag(line: &str) -> Option<(String, bool)> {
-    let tag_pos = line.rfind("[!code ")?;
-    if !line[tag_pos..].contains(']') {
-        return None;
-    }
-    let before = line[..tag_pos].trim_end();
-    let cleaned = strip_comment_marker(before);
-    let standalone = cleaned.trim().is_empty();
-    Some((cleaned.to_owned(), standalone))
+    let (standalone, trimmed_end) = match parse_code_notation(line, 0)? {
+        CodeNotation::Line {
+            standalone,
+            trimmed_end,
+            ..
+        }
+        | CodeNotation::Word {
+            standalone,
+            trimmed_end,
+            ..
+        } => (standalone, trimmed_end),
+    };
+    Some((line[..trimmed_end].to_owned(), standalone))
 }
 
-fn strip_comment_marker(before: &str) -> &str {
-    for marker in ["//", "#", "--", "/*"] {
+fn strip_comment_marker(before: &str) -> Option<(&str, &'static str)> {
+    // Check `<!--` before `--` so HTML comments are not truncated to `<!`.
+    for marker in ["<!--", "//", "#", "--", "/*"] {
         if let Some(stripped) = before.strip_suffix(marker) {
-            return stripped.trim_end();
+            return Some((stripped.trim_end(), marker));
         }
     }
-    before
+    None
 }
 
 pub(super) fn completion_context_at(

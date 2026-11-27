@@ -221,3 +221,32 @@ total.toF
     assert!(!copied.contains("[!code"));
     assert!(copied.contains("function countNames(items: string[])"));
 }
+
+#[test]
+fn inline_code_tags_require_comment_markers_and_handle_html_comments() {
+    let strings = "const doc = \"[!code highlight]\";\nconst raw = \"[!code custom]\";";
+    let parsed = parse_code_annotations(strings, None, true);
+    assert!(parsed.lines.is_empty());
+    assert!(parsed.trimmed_in_preview.is_empty());
+    assert_eq!(clean_copy_text(strings, false), strings);
+    assert_eq!(clean_copy_text(strings, true), strings);
+
+    let unknown_comment = "// [!code custom]\nlet ok = 1;";
+    assert_eq!(clean_copy_text(unknown_comment, true), unknown_comment);
+
+    let html = "<!-- [!code highlight] -->\n<div>Hi</div> <!-- [!code ++] -->";
+    let html_parsed = parse_code_annotations(html, None, false);
+    assert_eq!(html_parsed.hidden_in_preview, vec![0]);
+    assert!(
+        html_parsed
+            .lines
+            .iter()
+            .any(|m| m.line == 1 && m.tag == LineTag::Added)
+    );
+    assert_eq!(clean_copy_text(html, false), "<div>Hi</div>");
+
+    let block_comment = "/* [!code highlight] */\nlet kept = 2; /* [!code --] */";
+    let block_parsed = parse_code_annotations(block_comment, None, false);
+    assert_eq!(block_parsed.hidden_in_preview, vec![0]);
+    assert_eq!(clean_copy_text(block_comment, false), "let kept = 2;");
+}

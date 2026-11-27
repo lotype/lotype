@@ -4,13 +4,14 @@
 //! `vtsls --stdio`, `deno lsp`, or `rust-analyzer`) on a background thread and merges
 //! their hover/completion results with [`BuiltInAnalyzer`] fallback.
 
+mod protocol;
+
 use std::collections::HashMap;
 use std::future::Future;
-use std::io::{BufRead, BufReader, Write};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
@@ -23,8 +24,11 @@ use crate::analyzer::{
 };
 use crate::infer::BuiltInAnalyzer;
 use crate::languages::canonical_language;
+use protocol::{
+    IncomingFrame, classify_frame, create_private_workspace, read_msg, sanitize_path_token,
+    write_msg, write_null_response, write_private_file,
+};
 
-static NEXT_LSP_SESSION: AtomicU64 = AtomicU64::new(0);
 const LSP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Command-line configuration for launching a stdio LSP server for a language.
@@ -168,7 +172,7 @@ impl CodeAnalyzer for LspAnalyzer {
 
 struct LspSession {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Arc<Mutex<ChildStdin>>,
     responses: mpsc::Receiver<Result<Value, String>>,
     workspace: PathBuf,
     next_id: i64,
@@ -225,35 +229,43 @@ fn run_lsp_worker(config: LspServerConfig, rx: mpsc::Receiver<(AnalysisRequest, 
 }
 
 fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
-    let session_id = NEXT_LSP_SESSION.fetch_add(1, Ordering::Relaxed);
-    let workspace = std::env::temp_dir().join(format!(
-        "lotype-lsp-{}-{}-{}",
-        config.language_id,
-        std::process::id(),
-        session_id,
-    ));
-    std::fs::create_dir(&workspace).map_err(|e| e.to_string())?;
-    let mut child = Command::new(&config.program)
+    let workspace = create_private_workspace(&config.language_id)?;
+    let mut child = match Command::new(&config.program)
         .args(&config.args)
         .current_dir(&workspace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| e.to_string())?;
-    let stdin = child.stdin.take().ok_or("missing stdin")?;
+    {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&workspace);
+            return Err(err.to_string());
+        }
+    };
+    let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("missing stdin")?));
     let stdout = child.stdout.take().ok_or("missing stdout")?;
     let (response_tx, responses) = mpsc::channel();
+    let reply_stdin = stdin.clone();
     std::thread::spawn(move || {
         let mut stdout = BufReader::new(stdout);
         loop {
             match read_msg(&mut stdout) {
-                Ok(message) if message.get("id").is_some() => {
-                    if response_tx.send(Ok(message)).is_err() {
-                        break;
+                Ok(message) => match classify_frame(message) {
+                    IncomingFrame::Response(resp) => {
+                        if response_tx.send(Ok(resp)).is_err() {
+                            break;
+                        }
                     }
-                }
-                Ok(_) => {}
+                    IncomingFrame::ServerRequest { id } => {
+                        let mut guard = reply_stdin
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let _ = write_null_response(&mut *guard, &id);
+                    }
+                    IncomingFrame::Notification => {}
+                },
                 Err(error) => {
                     let _ = response_tx.send(Err(error));
                     break;
@@ -290,9 +302,10 @@ fn start_session(config: &LspServerConfig) -> Result<LspSession, String> {
 }
 
 fn query_session(sess: &mut LspSession, req: &AnalysisRequest) -> Result<CodeAnalysis, String> {
-    let filename = format!("snippet.{}", sess.config.extension);
+    let ext = sanitize_path_token(&sess.config.extension, "txt");
+    let filename = format!("snippet.{ext}");
     let path = sess.workspace.join(&filename);
-    std::fs::write(&path, &req.code).map_err(|e| e.to_string())?;
+    write_private_file(&path, &req.code)?;
     let uri = format!("file://{}", path.display());
     sess.doc_version += 1;
     if !sess.opened {
@@ -357,14 +370,14 @@ fn query_session(sess: &mut LspSession, req: &AnalysisRequest) -> Result<CodeAna
 impl LspSession {
     fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
         let msg = json!({ "jsonrpc": "2.0", "method": method, "params": params });
-        self.write_msg(&msg)
+        self.send(&msg)
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        self.write_msg(&msg)?;
+        self.send(&msg)?;
         for _ in 0..64 {
             let incoming = self.responses.recv_timeout(LSP_RESPONSE_TIMEOUT).map_err(
                 |error| match error {
@@ -372,7 +385,9 @@ impl LspSession {
                     mpsc::RecvTimeoutError::Disconnected => "LSP response stream closed".to_owned(),
                 },
             )??;
-            if incoming.get("id").and_then(Value::as_i64) == Some(id) {
+            if incoming.get("method").is_none()
+                && incoming.get("id").and_then(Value::as_i64) == Some(id)
+            {
                 if let Some(error) = incoming.get("error") {
                     return Err(format!("LSP request failed: {error}"));
                 }
@@ -382,34 +397,13 @@ impl LspSession {
         Err("LSP response limit exceeded".into())
     }
 
-    fn write_msg(&mut self, msg: &Value) -> Result<(), String> {
-        let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
-        write!(self.stdin, "Content-Length: {}\r\n\r\n", body.len()).map_err(|e| e.to_string())?;
-        self.stdin.write_all(&body).map_err(|e| e.to_string())?;
-        self.stdin.flush().map_err(|e| e.to_string())
+    fn send(&mut self, msg: &Value) -> Result<(), String> {
+        let mut guard = self
+            .stdin
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        write_msg(&mut *guard, msg)
     }
-}
-
-fn read_msg(stdout: &mut impl BufRead) -> Result<Value, String> {
-    let mut content_len = None;
-    loop {
-        let mut header = String::new();
-        let read = stdout.read_line(&mut header).map_err(|e| e.to_string())?;
-        if read == 0 {
-            return Err("LSP EOF".into());
-        }
-        let trimmed = header.trim();
-        if trimmed.is_empty() {
-            break;
-        }
-        if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-            content_len = len_str.trim().parse::<usize>().ok();
-        }
-    }
-    let len = content_len.ok_or("missing Content-Length")?;
-    let mut buf = vec![0u8; len];
-    stdout.read_exact(&mut buf).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&buf).map_err(|e| e.to_string())
 }
 
 fn lsp_character(code: &str, line: usize, character: usize) -> usize {
@@ -420,17 +414,6 @@ fn lsp_character(code: &str, line: usize, character: usize) -> usize {
         .take(character)
         .map(char::len_utf16)
         .sum()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::lsp_character;
-
-    #[test]
-    fn lsp_character_counts_utf16_code_units() {
-        assert_eq!(lsp_character("a😀b\nçx", 0, 2), 3);
-        assert_eq!(lsp_character("a😀b\nçx", 1, 1), 1);
-    }
 }
 
 fn extract_hover(result: &Value) -> Option<(String, Option<String>)> {
@@ -514,4 +497,77 @@ fn extract_completions(result: &Value, prefix: &str) -> Vec<CompletionItem> {
         .collect();
     items.truncate(8);
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsp_character_counts_utf16_code_units() {
+        assert_eq!(lsp_character("a😀b\nçx", 0, 2), 3);
+        assert_eq!(lsp_character("a😀b\nçx", 1, 1), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_request_with_colliding_id_is_replied_and_does_not_corrupt_hover() {
+        // Minimal stdio mock LSP server that sends a server-to-client request (`id: 2`)
+        // and blocks waiting for our null reply before returning the real `id: 2` hover.
+        let script = r#"
+import json, sys
+
+def read_msg():
+    length = 0
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        s = line.decode('utf-8').strip()
+        if not s:
+            break
+        if s.lower().startswith('content-length:'):
+            length = int(s.split(':', 1)[1].strip())
+    return json.loads(sys.stdin.buffer.read(length).decode('utf-8'))
+
+def write_msg(obj):
+    data = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode('utf-8') + data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_msg()
+    if msg is None:
+        break
+    method = msg.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': {}}})
+    elif method == 'textDocument/hover':
+        # Emit server-to-client request using the SAME id as the hover request and wait for reply.
+        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'method': 'window/workDoneProgress/create', 'params': {'token': 't'}})
+        reply = read_msg()
+        if reply is None or reply.get('id') != msg['id'] or 'result' not in reply:
+            sys.exit(2)
+        write_msg({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'contents': {'kind': 'markdown', 'value': '```ts\nconst answer: 42\n```'}}})
+"#;
+        let config = LspServerConfig::new("python3", ["-c", script], "ts", "typescript");
+        let mut sess = start_session(&config).expect("mock LSP session starts");
+        let req = AnalysisRequest {
+            language: Some("typescript".into()),
+            title: None,
+            code: "const answer = 42;".into(),
+            queries: vec![crate::QuerySite {
+                target_range: 6..12,
+                line: 0,
+                character: 6,
+                symbol: "answer".into(),
+            }],
+            completions: Vec::new(),
+            files: Vec::new(),
+            no_errors: false,
+            expected_errors: Vec::new(),
+        };
+        let out = query_session(&mut sess, &req).expect("hover succeeds after server request");
+        assert_eq!(out.queries, vec![(6..12, "const answer: 42".to_owned())]);
+    }
 }

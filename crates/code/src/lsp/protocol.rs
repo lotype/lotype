@@ -1,0 +1,244 @@
+//! Bounded JSON-RPC stdio framing and private temporary workspace helpers for [`LspAnalyzer`].
+
+use std::collections::hash_map::RandomState;
+use std::fs::{DirBuilder, OpenOptions};
+use std::hash::{BuildHasher, Hasher};
+use std::io::{BufRead, ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde_json::{Value, json};
+
+pub(super) const MAX_LSP_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_LSP_HEADER_LINE_BYTES: usize = 8 * 1024;
+const MAX_LSP_HEADERS: usize = 64;
+const WORKSPACE_ATTEMPTS: usize = 16;
+
+static NEXT_LSP_SESSION: AtomicU64 = AtomicU64::new(0);
+
+/// Incoming JSON-RPC frame classified into client response, server request, or notification.
+#[derive(Debug, PartialEq)]
+pub(super) enum IncomingFrame {
+    Response(Value),
+    ServerRequest { id: Value },
+    Notification,
+}
+
+pub(super) fn classify_frame(message: Value) -> IncomingFrame {
+    if let Some(id) = message.get("id").cloned() {
+        if message.get("method").is_some() {
+            IncomingFrame::ServerRequest { id }
+        } else {
+            IncomingFrame::Response(message)
+        }
+    } else {
+        IncomingFrame::Notification
+    }
+}
+
+pub(super) fn write_msg(writer: &mut impl Write, msg: &Value) -> Result<(), String> {
+    let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
+    write!(writer, "Content-Length: {}\r\n\r\n", body.len()).map_err(|e| e.to_string())?;
+    writer.write_all(&body).map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())
+}
+
+pub(super) fn write_null_response(writer: &mut impl Write, id: &Value) -> Result<(), String> {
+    let reply = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": Value::Null,
+    });
+    write_msg(writer, &reply)
+}
+
+pub(super) fn read_msg(stdout: &mut impl BufRead) -> Result<Value, String> {
+    let mut content_len = None;
+    let mut header_count = 0usize;
+    loop {
+        let mut header = String::new();
+        let read = stdout
+            .take((MAX_LSP_HEADER_LINE_BYTES + 1) as u64)
+            .read_line(&mut header)
+            .map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Err("LSP EOF".into());
+        }
+        if read > MAX_LSP_HEADER_LINE_BYTES {
+            return Err("LSP header line exceeds limit".into());
+        }
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        header_count += 1;
+        if header_count > MAX_LSP_HEADERS {
+            return Err("LSP header count exceeds limit".into());
+        }
+        if let Some((name, value)) = trimmed.split_once(':')
+            && name.trim().eq_ignore_ascii_case("content-length")
+        {
+            content_len = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "invalid Content-Length".to_owned())?,
+            );
+        }
+    }
+    let len = content_len.ok_or("missing Content-Length")?;
+    if len > MAX_LSP_MESSAGE_BYTES {
+        return Err(format!("LSP message exceeds limit ({len} bytes)"));
+    }
+    let mut buf = vec![0u8; len];
+    stdout.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&buf).map_err(|e| e.to_string())
+}
+
+/// Restricts a language ID or extension to safe ASCII path characters.
+pub(super) fn sanitize_path_token(raw: &str, fallback: &str) -> String {
+    let clean: String = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+        .take(32)
+        .collect();
+    if clean.is_empty() {
+        fallback.to_owned()
+    } else {
+        clean
+    }
+}
+
+/// Creates a private, unpredictable workspace directory under `base_dir` (0700 on Unix).
+pub(super) fn create_private_workspace_in(
+    base_dir: &Path,
+    language_id: &str,
+) -> Result<PathBuf, String> {
+    let lang = sanitize_path_token(language_id, "lang");
+    let pid = std::process::id();
+    for _ in 0..WORKSPACE_ATTEMPTS {
+        let seq = NEXT_LSP_SESSION.fetch_add(1, Ordering::Relaxed);
+        let token = random_u64(seq);
+        let candidate = base_dir.join(format!("lotype-lsp-{lang}-{pid}-{token:016x}"));
+        let mut builder = DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    Err("failed to allocate private LSP workspace directory".into())
+}
+
+pub(super) fn create_private_workspace(language_id: &str) -> Result<PathBuf, String> {
+    create_private_workspace_in(&std::env::temp_dir(), language_id)
+}
+
+/// Writes `content` to `path` with owner-only (`0600`) permissions on Unix.
+pub(super) fn write_private_file(path: &Path, content: &str) -> Result<(), String> {
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path).map_err(|e| e.to_string())?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+fn random_u64(seq: u64) -> u64 {
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(seq);
+    hasher.write_u32(std::process::id());
+    if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        hasher.write_u128(elapsed.as_nanos());
+    }
+    hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn read_msg_rejects_oversized_content_length_and_headers_without_allocating() {
+        let huge = b"Content-Length: 1099511627776\r\n\r\n";
+        let err = read_msg(&mut Cursor::new(&huge[..])).unwrap_err();
+        assert!(err.contains("exceeds limit"), "{err}");
+
+        let long_header = format!(
+            "X-Pad: {}\r\n\r\n",
+            "a".repeat(MAX_LSP_HEADER_LINE_BYTES + 16)
+        );
+        let err = read_msg(&mut Cursor::new(long_header.as_bytes())).unwrap_err();
+        assert!(err.contains("header line exceeds limit"), "{err}");
+
+        let mut many_headers = String::new();
+        for i in 0..=MAX_LSP_HEADERS {
+            many_headers.push_str(&format!("X-H-{i}: 1\r\n"));
+        }
+        many_headers.push_str("Content-Length: 2\r\n\r\n{}");
+        let err = read_msg(&mut Cursor::new(many_headers.as_bytes())).unwrap_err();
+        assert!(err.contains("header count exceeds limit"), "{err}");
+
+        let lowercase = b"content-length: 11\r\n\r\n{\"id\":1,\"x\":2}";
+        let parsed = read_msg(&mut Cursor::new(
+            &b"content-length: 14\r\n\r\n{\"id\":1,\"x\":2}"[..],
+        ))
+        .expect("case-insensitive Content-Length");
+        assert_eq!(parsed["id"], 1);
+        assert!(read_msg(&mut Cursor::new(&lowercase[..])).is_err());
+    }
+
+    #[test]
+    fn classify_frame_distinguishes_server_requests_from_responses() {
+        let srv_req = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "window/workDoneProgress/create",
+            "params": { "token": "1" }
+        });
+        assert_eq!(
+            classify_frame(srv_req),
+            IncomingFrame::ServerRequest { id: json!(2) }
+        );
+
+        let resp = json!({ "jsonrpc": "2.0", "id": 2, "result": { "contents": "let x: i32" } });
+        assert!(matches!(classify_frame(resp), IncomingFrame::Response(_)));
+
+        let notif = json!({ "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics" });
+        assert_eq!(classify_frame(notif), IncomingFrame::Notification);
+    }
+
+    #[test]
+    fn workspace_path_sanitizes_tokens_and_uses_owner_only_permissions() {
+        assert_eq!(sanitize_path_token("pl/sql/../x", "lang"), "plsqlx");
+        assert_eq!(sanitize_path_token("../../../", "txt"), "txt");
+
+        let dir = create_private_workspace("pl/sql/../rust").expect("private workspace");
+        assert!(dir.is_dir());
+        let file = dir.join(format!("snippet.{}", sanitize_path_token("../rs", "txt")));
+        write_private_file(&file, "let x = 1;").expect("write snippet");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            let file_mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(dir_mode, 0o700);
+            assert_eq!(file_mode, 0o600);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
