@@ -177,6 +177,10 @@ impl Input {
                     .find_map(|&(line_idx, end)| (line_idx == hard_line).then_some(end))
                     .unwrap_or(full_range.end)
                     .clamp(full_range.start, full_range.end);
+                let visible_end = self
+                    .text
+                    .floor_char_boundary(visible_end)
+                    .max(full_range.start);
                 let range = full_range.start..visible_end;
                 let line = self.hard(range.clone(), window);
                 for (sub_idx, range) in self

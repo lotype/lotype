@@ -90,21 +90,22 @@ impl EditorView {
         } else {
             None
         };
-        if let Some(decoration) = &decoration {
-            runs = apply_highlights(text.len(), runs, &decoration.highlights);
-        }
-        // Text being composed is underlined, and is a span of its own.
+        // Text being composed is underlined, and is a span of its own; mark it
+        // before `apply_highlights` so merging equal-colored tokens cannot
+        // swallow or widen the preedit underline.
         let mut at = 0;
         for run in &mut runs {
             if composed.as_ref().is_some_and(|range| range.contains(&at)) {
-                let color = Some(run.color);
                 run.underline = Some(UnderlineStyle {
-                    color,
+                    color: None,
                     thickness: px(1.),
                     wavy: false,
                 });
             }
             at += run.len;
+        }
+        if let Some(decoration) = &decoration {
+            runs = apply_highlights(&text, runs, &decoration.highlights);
         }
         if let Some(marks) = &marks {
             super::ai_review::mark_runs(&mut runs, marks, cx);

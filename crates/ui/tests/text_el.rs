@@ -271,3 +271,41 @@ fn byte_offset_at_hits_enclosing_glyph_and_utf8_boundaries(cx: &mut TestAppConte
         );
     });
 }
+
+#[gpui::test]
+fn text_decoration_with_mid_utf8_offsets_does_not_panic(cx: &mut TestAppContext) {
+    use gpui::{HighlightStyle, Hsla, rgb};
+    use lotype_core::block;
+    use lotype_ui::TextDecoration;
+
+    let build = |cx: &mut gpui::Context<EditorView>| {
+        let mut doc = Document::new(Schema::builtin());
+        let p = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+        doc.insert_text(p, 0, "日本語\nabc").unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(p, 0))))
+            .unwrap();
+        EditorView::new(editor, cx).with_text_decorator(block::PARAGRAPH, |_, _, _, _, _, _| {
+            TextDecoration {
+                highlights: vec![(
+                    1..5,
+                    HighlightStyle {
+                        color: Some(Hsla::from(rgb(0x006d9a))),
+                        ..Default::default()
+                    },
+                )],
+                trimmed_lines: vec![(0, 2)],
+                ..TextDecoration::default()
+            }
+        })
+    };
+    let mut ed = EditorTestContext::with_view(cx, build);
+    ed.settle();
+    let block = head(&mut ed).block;
+    assert!(
+        ed.view
+            .update(ed.cx, |view, _| view.text_bounds(block))
+            .is_some()
+    );
+}

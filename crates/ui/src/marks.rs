@@ -80,16 +80,29 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
 }
 
 /// Splits and styles `runs` with `highlights`, preserving existing run properties
-/// where a highlight leaves a field unset.
+/// where a highlight leaves a field unset. Offsets that fall inside a UTF-8
+/// code point are snapped down with `floor_char_boundary`.
 pub(crate) fn apply_highlights(
-    text_len: usize,
+    text: &str,
     runs: Vec<TextRun>,
     highlights: &[(std::ops::Range<usize>, HighlightStyle)],
 ) -> Vec<TextRun> {
+    let text_len = text.len();
     if highlights.is_empty() || runs.is_empty() || text_len == 0 {
         return runs;
     }
-    let mut cuts = Vec::with_capacity(runs.len() * 2 + highlights.len() * 2 + 2);
+    let normalized: Vec<(std::ops::Range<usize>, &HighlightStyle)> = highlights
+        .iter()
+        .filter_map(|(range, style)| {
+            let start = text.floor_char_boundary(range.start.min(text_len));
+            let end = text.floor_char_boundary(range.end.min(text_len));
+            (start < end).then_some((start..end, style))
+        })
+        .collect();
+    if normalized.is_empty() {
+        return runs;
+    }
+    let mut cuts = Vec::with_capacity(runs.len() * 2 + normalized.len() * 2 + 2);
     cuts.push(0);
     cuts.push(text_len);
     let mut pos = 0;
@@ -97,9 +110,9 @@ pub(crate) fn apply_highlights(
         pos += run.len;
         cuts.push(pos.min(text_len));
     }
-    for (range, _) in highlights {
-        cuts.push(range.start.min(text_len));
-        cuts.push(range.end.min(text_len));
+    for (range, _) in &normalized {
+        cuts.push(range.start);
+        cuts.push(range.end);
     }
     cuts.sort_unstable();
     cuts.dedup();
@@ -124,7 +137,7 @@ pub(crate) fn apply_highlights(
             len: end - start,
             ..runs[base_idx].clone()
         };
-        for (range, style) in highlights {
+        for (range, style) in &normalized {
             if range.start <= start && end <= range.end {
                 if let Some(color) = style.color {
                     run.color = color;
@@ -251,5 +264,75 @@ mod tests {
             )[0];
             assert_eq!(run.color, base.color);
         }
+    }
+
+    #[test]
+    fn apply_highlights_snaps_utf8_boundaries_and_preserves_composed_underline() {
+        let base = TextStyle::default();
+        let text = "a日本語b";
+        let initial = vec![base.to_run(text.len())];
+        let tint = Hsla::from(rgb(0x006d9a));
+        let styled = apply_highlights(
+            text,
+            initial,
+            &[
+                (
+                    1..5,
+                    HighlightStyle {
+                        color: Some(tint),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    2..3,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    8..99,
+                    HighlightStyle {
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    },
+                ),
+            ],
+        );
+        let mut at = 0;
+        for run in &styled {
+            at += run.len;
+            assert!(text.is_char_boundary(at), "invalid boundary {at}");
+        }
+        assert_eq!(at, text.len());
+
+        // A pre-marked IME underline run in the middle must stay distinct from
+        // neighbors even when a single highlight colors the entire line uniformly.
+        let comment = "// abcd";
+        let mut ime_run = base.to_run(2);
+        ime_run.underline = Some(UnderlineStyle {
+            color: None,
+            thickness: px(1.),
+            wavy: false,
+        });
+        let runs = vec![base.to_run(3), ime_run, base.to_run(2)];
+        let colored = apply_highlights(
+            comment,
+            runs,
+            &[(
+                0..comment.len(),
+                HighlightStyle {
+                    color: Some(tint),
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            colored
+                .iter()
+                .map(|r| (r.len, r.color == tint, r.underline.is_some()))
+                .collect::<Vec<_>>(),
+            vec![(3, true, false), (2, true, true), (2, true, false)]
+        );
     }
 }
