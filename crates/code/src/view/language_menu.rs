@@ -63,6 +63,26 @@ fn match_rank(language: &CodeLanguage, query: &str) -> Option<u8> {
     None
 }
 
+fn typed_filter_text(keystroke: &gpui::Keystroke) -> Option<&str> {
+    if keystroke.modifiers.platform || keystroke.modifiers.control {
+        return None;
+    }
+    if let Some(ch) = keystroke.key_char.as_deref()
+        && !ch.is_empty()
+        && !ch.chars().any(char::is_control)
+    {
+        return Some(ch);
+    }
+    if keystroke.modifiers.alt {
+        return None;
+    }
+    if keystroke.key == "space" {
+        return Some(" ");
+    }
+    (keystroke.key.chars().count() == 1 && !keystroke.key.chars().any(char::is_control))
+        .then_some(keystroke.key.as_str())
+}
+
 impl CodeState {
     pub(super) fn render_language_menu(
         &self,
@@ -186,8 +206,10 @@ impl CodeState {
             .debug_selector(|| "code-language-menu".to_owned())
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
+                let mods = event.keystroke.modifiers;
+                let has_cmd = mods.platform || mods.control || mods.alt;
                 match key {
-                    "escape" => {
+                    "escape" if !has_cmd => {
                         cx.stop_propagation();
                         state_for_keys.update(cx, |state, _| state.close_language_menu());
                         editor_for_keys.update(cx, |view, cx| {
@@ -195,7 +217,7 @@ impl CodeState {
                             cx.notify();
                         });
                     }
-                    "down" => {
+                    "down" if !has_cmd => {
                         cx.stop_propagation();
                         state_for_keys.update(cx, |state, _| {
                             let count = filtered_languages(&state.language_query).len();
@@ -207,7 +229,7 @@ impl CodeState {
                         });
                         editor_for_keys.update(cx, |_, cx| cx.notify());
                     }
-                    "up" => {
+                    "up" if !has_cmd => {
                         cx.stop_propagation();
                         state_for_keys.update(cx, |state, _| {
                             let count = filtered_languages(&state.language_query).len();
@@ -220,17 +242,38 @@ impl CodeState {
                         });
                         editor_for_keys.update(cx, |_, cx| cx.notify());
                     }
-                    "backspace" => {
+                    "tab" if !has_cmd && mods.shift => {
                         cx.stop_propagation();
                         state_for_keys.update(cx, |state, _| {
-                            if state.language_query.pop().is_some() {
+                            let count = filtered_languages(&state.language_query).len();
+                            if count > 0 {
+                                let cur = state.language_highlighted.min(count - 1);
+                                let prev = (cur + count - 1) % count;
+                                state.language_highlighted = prev;
+                                state.language_scroll.scroll_to_item(prev);
+                            }
+                        });
+                        editor_for_keys.update(cx, |_, cx| cx.notify());
+                    }
+                    "backspace" if !mods.control => {
+                        cx.stop_propagation();
+                        state_for_keys.update(cx, |state, _| {
+                            let changed = if mods.platform {
+                                let had = !state.language_query.is_empty();
+                                state.language_query.clear();
+                                had
+                            } else {
+                                state.language_query.pop().is_some()
+                            };
+                            if changed {
                                 state.language_highlighted = 0;
                                 state.language_scroll.scroll_to_item(0);
                             }
                         });
                         editor_for_keys.update(cx, |_, cx| cx.notify());
                     }
-                    "enter" | "tab" => {
+                    "enter" | "tab" if !has_cmd && !mods.shift => {
+                        cx.stop_propagation();
                         let chosen = {
                             let state = state_for_keys.read(cx);
                             let list = filtered_languages(&state.language_query);
@@ -238,7 +281,6 @@ impl CodeState {
                                 .map(|lang| (lang.id != "text").then_some(lang.id))
                         };
                         if let Some(chosen) = chosen {
-                            cx.stop_propagation();
                             state_for_keys.update(cx, |state, _| state.close_language_menu());
                             editor_for_keys.update(cx, |view, cx| {
                                 let _ = view.update_editor(cx, |editor| {
@@ -248,20 +290,17 @@ impl CodeState {
                             });
                         }
                     }
-                    _ if key.chars().count() == 1
-                        && !event.keystroke.modifiers.platform
-                        && !event.keystroke.modifiers.control
-                        && !event.keystroke.modifiers.alt =>
-                    {
-                        cx.stop_propagation();
-                        state_for_keys.update(cx, |state, _| {
-                            state.language_query.push_str(&key.to_lowercase());
-                            state.language_highlighted = 0;
-                            state.language_scroll.scroll_to_item(0);
-                        });
-                        editor_for_keys.update(cx, |_, cx| cx.notify());
+                    _ => {
+                        if let Some(typed) = typed_filter_text(&event.keystroke) {
+                            cx.stop_propagation();
+                            state_for_keys.update(cx, |state, _| {
+                                state.language_query.push_str(&typed.to_lowercase());
+                                state.language_highlighted = 0;
+                                state.language_scroll.scroll_to_item(0);
+                            });
+                            editor_for_keys.update(cx, |_, cx| cx.notify());
+                        }
                     }
-                    _ => {}
                 }
             })
             .on_mouse_down_out(move |_: &MouseDownEvent, window, cx| {
@@ -330,5 +369,48 @@ mod tests {
 
         let sh_matches: Vec<&str> = filtered_languages("sh").into_iter().map(|l| l.id).collect();
         assert_eq!(sh_matches[0], "bash");
+
+        let plain_matches: Vec<&str> = filtered_languages("plain text")
+            .into_iter()
+            .map(|l| l.id)
+            .collect();
+        assert_eq!(plain_matches[0], "text");
+    }
+
+    #[test]
+    fn typed_filter_text_prefers_key_char_handles_space_and_rejects_cmd_shortcuts() {
+        let shifted_plus = gpui::Keystroke {
+            modifiers: gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            key: "=".to_owned(),
+            key_char: Some("+".to_owned()),
+        };
+        assert_eq!(typed_filter_text(&shifted_plus), Some("+"));
+
+        let space = gpui::Keystroke {
+            modifiers: gpui::Modifiers::default(),
+            key: "space".to_owned(),
+            key_char: None,
+        };
+        assert_eq!(typed_filter_text(&space), Some(" "));
+
+        let cmd_c = gpui::Keystroke {
+            modifiers: gpui::Modifiers {
+                platform: true,
+                ..Default::default()
+            },
+            key: "c".to_owned(),
+            key_char: Some("c".to_owned()),
+        };
+        assert_eq!(typed_filter_text(&cmd_c), None);
+
+        let enter_ctrl = gpui::Keystroke {
+            modifiers: gpui::Modifiers::default(),
+            key: "enter".to_owned(),
+            key_char: Some("\n".to_owned()),
+        };
+        assert_eq!(typed_filter_text(&enter_ctrl), None);
     }
 }

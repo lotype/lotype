@@ -167,9 +167,24 @@ fn language_picker_highlights_top_match_on_typing_and_supports_arrow_navigation(
     assert!(ed.cx.debug_bounds("code-lang-active-css").is_some());
     ed.keys("t s");
     assert!(ed.cx.debug_bounds("code-lang-active-typescript").is_some());
+    // Cmd-Enter must not commit the selection, while plain Enter commits it.
+    ed.keys("cmd-enter");
+    assert!(ed.cx.debug_bounds("code-language-menu").is_some());
     ed.keys("enter");
     assert_eq!(
         ed.editor(|e| e.document().code_language(code)),
         Some("typescript".to_owned())
     );
+
+    // Spacebar works in filter queries ("plain text"), Shift-Tab navigates up,
+    // and Cmd-Backspace clears the query back to all languages.
+    open_picker(&mut ed);
+    ed.keys("p l a i n space t e x t");
+    assert!(ed.cx.debug_bounds("code-lang-active-text").is_some());
+    ed.keys("cmd-backspace");
+    assert!(ed.cx.debug_bounds("code-lang-active-rust").is_some());
+    ed.keys("down shift-tab");
+    assert!(ed.cx.debug_bounds("code-lang-active-rust").is_some());
+    ed.keys("escape");
+    assert!(ed.cx.debug_bounds("code-language-menu").is_none());
 }
