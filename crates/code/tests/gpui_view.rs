@@ -1,13 +1,15 @@
 #![cfg(feature = "test-support")]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gpui::{Modifiers, MouseMoveEvent, ScrollDelta, ScrollEvent, TestAppContext, point, px};
+use gpui::{
+    Focusable as _, Modifiers, MouseMoveEvent, ScrollDelta, ScrollEvent, TestAppContext, point, px,
+};
 use lotype_code::{
     AnalysisFuture, AnalysisRequest, CodeAnalysis, CodeAnalyzer, CodeBlocks, HoverAnnotation,
 };
-use lotype_core::{Document, Editor, Pos, Schema, Selection};
+use lotype_core::{Document, Editor, Pos, Schema, Selection, block};
 use lotype_ui::EditorView;
 use lotype_ui::test_support::EditorTestContext;
 
@@ -284,4 +286,215 @@ out.to
     ed.cx.simulate_click(intro_bounds.center(), Modifiers::none());
     ed.settle();
     assert!(ed.cx.debug_bounds("twoslash-cut").is_none());
+}
+
+#[gpui::test]
+fn analyzer_receives_exact_queries_during_ime_composition(cx: &mut TestAppContext) {
+    struct RecordingAnalyzer(Arc<Mutex<Vec<AnalysisRequest>>>);
+
+    impl CodeAnalyzer for RecordingAnalyzer {
+        fn analyze(&self, request: AnalysisRequest) -> AnalysisFuture {
+            let log = self.0.clone();
+            Box::pin(async move {
+                log.lock().unwrap().push(request);
+                Ok(CodeAnalysis::default())
+            })
+        }
+    }
+
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let mut doc = Document::new(Schema::builtin());
+    let code = doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+    doc.set_attr(code, lotype_core::attr::LANGUAGE, "ts")
+        .unwrap();
+    doc.insert_text(code, 0, "const alpha = 1;\n//    ^?")
+        .unwrap();
+    let end = doc.text_len(code).unwrap();
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(code, end))))
+        .unwrap();
+
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new()
+            .with_analyzer(Arc::new(RecordingAnalyzer(recorded.clone())))
+            .install(EditorView::new(editor, cx), cx)
+    });
+    ed.cx.executor().advance_clock(Duration::from_millis(120));
+    ed.settle();
+
+    // Start IME composition so `decorate` caches the composed string rather
+    // than `plain_text`, then simulate a peer update changing the code block.
+    ed.ime_compose("draft", None);
+    let mut peer = Document::new(Schema::builtin());
+    let snap = ed.editor(|e| e.document().export_snapshot().unwrap());
+    peer.import(&snap).unwrap();
+    let peer_code = peer.blocks()[0];
+    peer.delete_text(peer_code, 6..11).unwrap();
+    peer.insert_text(peer_code, 6, "renamed").unwrap();
+    let update = ed.editor(|e| peer.export_updates(&e.document().version()).unwrap());
+    ed.view
+        .update(ed.cx, |view, cx| {
+            view.update_editor(cx, |editor| editor.import(&update))
+        })
+        .unwrap();
+    ed.cx.executor().advance_clock(Duration::from_millis(120));
+    ed.settle();
+
+    let log = recorded.lock().unwrap();
+    let latest = log
+        .iter()
+        .rev()
+        .find(|req| req.code.contains("renamed"))
+        .expect("recorded analysis request for updated code");
+    assert_eq!(latest.queries.len(), 1);
+    assert_eq!(latest.queries[0].symbol, "renamed");
+    assert_eq!(
+        &latest.code[latest.queries[0].target_range.clone()],
+        "renamed"
+    );
+}
+
+#[gpui::test]
+fn unmounted_code_controls_restore_focus_and_keep_twoslash_hover_working(cx: &mut TestAppContext) {
+    let mut doc = Document::new(Schema::builtin());
+    let hover_code = doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+    doc.set_attr(hover_code, lotype_core::attr::LANGUAGE, "ts")
+        .unwrap();
+    let hover_src = "/** Says hello. */\nfunction greet() { return 1; }";
+    doc.insert_text(hover_code, 0, hover_src).unwrap();
+    let greet_pos = hover_src.find("greet").unwrap();
+
+    // Placed last so `debug_bounds("code-language")` targets `doomed_code`.
+    let doomed_code = doc.insert_block(None, 1, block::CODE_BLOCK).unwrap();
+    doc.set_attr(doomed_code, lotype_core::attr::LANGUAGE, "ts")
+        .unwrap();
+    doc.insert_text(doomed_code, 0, "const doomed = 2;").unwrap();
+
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(hover_code, 0))))
+        .unwrap();
+
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(editor, cx), cx)
+    });
+    ed.settle();
+
+    let editor_is_focused = |ed: &mut EditorTestContext| {
+        ed.view.update_in(ed.cx, |view, window, cx| {
+            view.focus_handle(cx).is_focused(window)
+        })
+    };
+
+    // 1. Open language menu on `doomed_code`, then delete it via peer import
+    //    (no mouse click, so `on_mouse_down_out` does not fire).
+    let hover_bottom = ed
+        .view
+        .update(ed.cx, |view, _| view.text_bounds(hover_code).unwrap())
+        .bottom();
+    click(&mut ed, "code-language");
+    let menu_bounds = ed
+        .cx
+        .debug_bounds("code-language-menu")
+        .expect("language menu opens on doomed_code");
+    assert!(menu_bounds.top() > hover_bottom);
+    assert!(!editor_is_focused(&mut ed));
+
+    let mut peer = Document::new(Schema::builtin());
+    let snap = ed.editor(|e| e.document().export_snapshot().unwrap());
+    peer.import(&snap).unwrap();
+    peer.remove_block(doomed_code).unwrap();
+    let update = ed.editor(|e| peer.export_updates(&e.document().version()).unwrap());
+    ed.view
+        .update(ed.cx, |view, cx| {
+            view.update_editor(cx, |editor| editor.import(&update))
+        })
+        .unwrap();
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-language-menu").is_none());
+    assert!(editor_is_focused(&mut ed));
+
+    // Twoslash hover on `hover_code` must still work after the deleted block's menu closed.
+    let greet_bounds = ed.view.update(ed.cx, |view, _| {
+        view.range_bounds(hover_code, greet_pos..greet_pos + 5)
+            .unwrap()
+    });
+    ed.cx.simulate_event(MouseMoveEvent {
+        position: greet_bounds.center(),
+        pressed_button: None,
+        modifiers: Modifiers::none(),
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("twoslash-hover").is_some());
+
+    // 2. Blurring `language_focus` directly closes the language menu via `on_blur`.
+    ed.cx.update(|window, _| window.activate_window());
+    click(&mut ed, "code-language");
+    assert!(ed.cx.debug_bounds("code-language-menu").is_some());
+    ed.view.update_in(ed.cx, |view, window, cx| {
+        window.focus(&view.focus_handle(cx), cx);
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-language-menu").is_none());
+
+    // 3. Open title editor on `hover_code`, then turn it into a paragraph.
+    click(&mut ed, "code-add-title");
+    assert!(ed.cx.debug_bounds("code-title-input").is_some());
+    assert!(!editor_is_focused(&mut ed));
+    ed.view
+        .update(ed.cx, |view, cx| {
+            view.update_editor(cx, |editor| {
+                editor.set_selection(Some(Selection::caret(Pos::new(hover_code, 0))))?;
+                editor.set_block(block::PARAGRAPH, &[])
+            })
+        })
+        .unwrap();
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-title-input").is_none());
+    assert!(editor_is_focused(&mut ed));
+
+    // 4. Open language menu on a code block, then scroll it off-screen until virtualized.
+    let mut long_doc = Document::new(Schema::builtin());
+    let top_code = long_doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+    long_doc
+        .set_attr(top_code, lotype_core::attr::LANGUAGE, "rs")
+        .unwrap();
+    long_doc.insert_text(top_code, 0, "fn main() {}").unwrap();
+    let mut last_para = top_code;
+    for i in 1..=80 {
+        let p = long_doc.insert_block(None, i, block::PARAGRAPH).unwrap();
+        long_doc.insert_text(p, 0, &format!("Line {i}")).unwrap();
+        last_para = p;
+    }
+    // Keep the caret at the bottom so scrolling down allows `top_code` to virtualize.
+    let mut long_editor = Editor::new(long_doc);
+    long_editor
+        .set_selection(Some(Selection::caret(Pos::new(last_para, 0))))
+        .unwrap();
+    let mut long_ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(long_editor, cx), cx)
+    });
+    long_ed.settle();
+    click(&mut long_ed, "code-language");
+    assert!(long_ed.cx.debug_bounds("code-language-menu").is_some());
+    assert!(!editor_is_focused(&mut long_ed));
+
+    // Scroll downward far enough that `top_code` is virtualized out of view.
+    for _ in 0..8 {
+        long_ed.cx.simulate_event(ScrollEvent {
+            position: point(px(300.), px(300.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            ..Default::default()
+        });
+        long_ed.settle();
+    }
+    assert!(
+        long_ed
+            .view
+            .update(long_ed.cx, |view, _| view.text_bounds(top_code))
+            .is_none()
+    );
+    assert!(long_ed.cx.debug_bounds("code-language-menu").is_none());
+    assert!(editor_is_focused(&mut long_ed));
 }

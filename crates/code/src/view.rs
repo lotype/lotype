@@ -1,6 +1,7 @@
 //! GPUI block view for code blocks: Tree-sitter highlighting, built-in & async
 //! semantic analysis, folded Shiki Twoslash preview, and hover popovers.
 
+mod controls;
 mod header;
 
 use std::collections::HashMap;
@@ -143,8 +144,11 @@ pub(super) struct ActiveHover {
 pub(super) struct CodeState {
     analyzer: Option<Arc<dyn CodeAnalyzer>>,
     pub(super) language_focus: FocusHandle,
+    pub(super) editor_focus: Option<FocusHandle>,
+    pub(super) control_subs: Vec<Subscription>,
+    pub(super) reconcile_scheduled: bool,
     highlights: HighlightCache,
-    parsed: HashMap<BlockId, ParsedCode>,
+    parsed: HashMap<BlockId, (String, ParsedCode)>,
     builtin_cache: HashMap<BlockId, BuiltinCacheEntry>,
     analyses: HashMap<BlockId, AnalysisCacheEntry>,
     pub(super) language_menu: Option<BlockId>,
@@ -160,6 +164,9 @@ impl CodeState {
         Self {
             analyzer,
             language_focus,
+            editor_focus: None,
+            control_subs: Vec::new(),
+            reconcile_scheduled: false,
             highlights: HighlightCache::default(),
             parsed: HashMap::new(),
             builtin_cache: HashMap::new(),
@@ -210,7 +217,7 @@ impl CodeState {
             editing,
             cx,
         );
-        self.parsed.insert(block, parsed);
+        self.parsed.insert(block, (text.to_owned(), parsed));
         decoration
     }
 
@@ -263,6 +270,9 @@ impl CodeState {
     }
 
     fn ensure_analysis(&mut self, args: &BlockRenderArgs, cx: &mut gpui::Context<Self>) {
+        if !args.editable {
+            return;
+        }
         if !args.twoslash {
             self.analyses.remove(&args.block);
             return;
@@ -278,28 +288,23 @@ impl CodeState {
         {
             return;
         }
-        let request = if let Some(parsed) = self.parsed.get(&args.block) {
-            AnalysisRequest {
-                language: args.language.clone(),
-                title: args.title.clone(),
-                code: args.code.clone(),
-                queries: parsed.query_sites(),
-                completions: parsed.completion_sites(),
-                files: parsed.files.clone(),
-                no_errors: parsed.no_errors,
-                expected_errors: parsed.expected_errors.clone(),
+        let fresh;
+        let parsed = match self.parsed.get(&args.block) {
+            Some((cached_text, parsed)) if cached_text == &args.code => parsed,
+            _ => {
+                fresh = parse_code_annotations(&args.code, None, args.twoslash);
+                &fresh
             }
-        } else {
-            AnalysisRequest {
-                language: args.language.clone(),
-                title: args.title.clone(),
-                code: args.code.clone(),
-                queries: Vec::new(),
-                completions: Vec::new(),
-                files: Vec::new(),
-                no_errors: false,
-                expected_errors: Vec::new(),
-            }
+        };
+        let request = AnalysisRequest {
+            language: args.language.clone(),
+            title: args.title.clone(),
+            code: args.code.clone(),
+            queries: parsed.query_sites(),
+            completions: parsed.completion_sites(),
+            files: parsed.files.clone(),
+            no_errors: parsed.no_errors,
+            expected_errors: parsed.expected_errors.clone(),
         };
         let block_id = args.block;
         let editor_view = args.editor_view.clone();
@@ -340,16 +345,7 @@ impl CodeState {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         if !args.editable {
-            if self.language_menu == Some(args.block) {
-                self.language_menu = None;
-            }
-            if self
-                .title_form
-                .as_ref()
-                .is_some_and(|form| form.block == args.block)
-            {
-                self.title_form = None;
-            }
+            self.close_controls_if_readonly(window, cx);
         }
         self.ensure_analysis(&args, cx);
 
@@ -371,7 +367,7 @@ impl CodeState {
             .px_3()
             .py_2p5()
             .debug_selector(|| "code-body".to_owned())
-            .on_mouse_move(move |event: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(move |event: &MouseMoveEvent, window, cx| {
                 if !twoslash {
                     return;
                 }
@@ -379,11 +375,13 @@ impl CodeState {
                     .read(cx)
                     .byte_offset_at(block_id, event.position);
                 let changed = state_for_move.update(cx, |state, cx| {
+                    let cleared = state.reconcile_visible(&editor_for_move, window, cx);
                     if state.language_menu.is_some() || state.title_form.is_some() {
-                        return false;
+                        return cleared;
                     }
                     let next = hit.and_then(|offset| {
-                        let hover = state.parsed.get(&block_id)?.hover_at(offset)?.clone();
+                        let (_, parsed) = state.parsed.get(&block_id)?;
+                        let hover = parsed.hover_at(offset)?.clone();
                         let bounds = editor_for_move
                             .read(cx)
                             .range_bounds(block_id, hover.range.clone())?;
@@ -398,7 +396,7 @@ impl CodeState {
                         state.hovered = next;
                         true
                     } else {
-                        false
+                        cleared
                     }
                 });
                 if changed {

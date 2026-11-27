@@ -7,17 +7,17 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Window, anchored, deferred, div,
     point, prelude::*, px,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Icon;
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::list::ListItem;
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, ThemeStyled as _, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Sizable as _, ThemeStyled as _, h_flex, v_flex,
 };
 use lotype_core::BlockId;
 use lotype_ui::EditorView;
 
+use super::controls::scroll_reconciler;
 use super::{BlockRenderArgs, CODE_FONT, COPIED_FEEDBACK, CodeState, TitleForm, elem_id};
 use crate::languages::{LANGUAGES, canonical_language, language_label};
 use crate::twoslash::clean_copy_text;
@@ -53,7 +53,8 @@ impl CodeState {
                     });
                     window.focus(&editor_for_lang.read(cx).focus_handle(cx), cx);
                 } else {
-                    state_entity.update(cx, |state, _| {
+                    state_entity.update(cx, |state, cx| {
+                        state.ensure_observers(&editor_for_lang, window, cx);
                         state.hovered = None;
                         state.language_menu = Some(block_id);
                         state.language_query.clear();
@@ -93,12 +94,7 @@ impl CodeState {
                     .child(lang_slot)
                     .children(title_slot),
             )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(copy_button),
-            )
+            .child(h_flex().gap_1().items_center().child(copy_button))
             .into_any_element()
     }
 
@@ -130,6 +126,7 @@ impl CodeState {
                         }
                     })
                     .child(Input::new(&input).xsmall())
+                    .child(scroll_reconciler(cx.entity(), args.editor_view.clone()))
                     .into_any_element(),
             );
         }
@@ -267,32 +264,32 @@ impl CodeState {
             .enumerate()
             .filter(|(_, entry)| query.is_empty() || language_matches(entry, &query))
             .map(|(index, entry)| {
-            let selected = entry.id == current;
-            let chosen = (entry.id != "text").then_some(entry.id);
-            let state = state_entity.clone();
-            let view = editor_view.clone();
-            let id = entry.id;
-            let option_id = SharedString::from(format!("code-lang-option-{block_id}-{index}"));
-            div()
-                .debug_selector(move || format!("code-lang-{id}"))
-                .child(
-                    ListItem::new(option_id)
-                        .selected(selected)
-                        .child(div().text_xs().child(entry.label))
-                        .on_click(move |_: &ClickEvent, window, cx| {
-                            state.update(cx, |state, _| {
-                                state.language_menu = None;
-                                state.language_query.clear();
-                            });
-                            view.update(cx, |view, cx| {
-                                let _ = view.update_editor(cx, |editor| {
-                                    editor.set_code_language(block_id, chosen)
+                let selected = entry.id == current;
+                let chosen = (entry.id != "text").then_some(entry.id);
+                let state = state_entity.clone();
+                let view = editor_view.clone();
+                let id = entry.id;
+                let option_id = SharedString::from(format!("code-lang-option-{block_id}-{index}"));
+                div()
+                    .debug_selector(move || format!("code-lang-{id}"))
+                    .child(
+                        ListItem::new(option_id)
+                            .selected(selected)
+                            .child(div().text_xs().child(entry.label))
+                            .on_click(move |_: &ClickEvent, window, cx| {
+                                state.update(cx, |state, _| {
+                                    state.language_menu = None;
+                                    state.language_query.clear();
                                 });
-                                window.focus(&view.focus_handle(cx), cx);
-                            });
-                        }),
-                )
-                .into_any_element()
+                                view.update(cx, |view, cx| {
+                                    let _ = view.update_editor(cx, |editor| {
+                                        editor.set_code_language(block_id, chosen)
+                                    });
+                                    window.focus(&view.focus_handle(cx), cx);
+                                });
+                            }),
+                    )
+                    .into_any_element()
             })
             .collect();
 
@@ -330,9 +327,10 @@ impl CodeState {
                     }
                     "enter" => {
                         let query = state_for_escape.read(cx).language_query.to_lowercase();
-                        if let Some(language) = LANGUAGES.iter().find(|language| {
-                            query.is_empty() || language_matches(language, &query)
-                        }) {
+                        if let Some(language) = LANGUAGES
+                            .iter()
+                            .find(|language| query.is_empty() || language_matches(language, &query))
+                        {
                             cx.stop_propagation();
                             let chosen = (language.id != "text").then_some(language.id);
                             state_for_escape.update(cx, |state, _| {
@@ -361,7 +359,7 @@ impl CodeState {
                     _ => {}
                 }
             })
-            .on_mouse_down_out(move |_: &MouseDownEvent, _, cx| {
+            .on_mouse_down_out(move |_: &MouseDownEvent, window, cx| {
                 let closed = state_for_close.update(cx, |state, _| {
                     if state.language_menu == Some(block_id) {
                         state.language_menu = None;
@@ -372,10 +370,14 @@ impl CodeState {
                     }
                 });
                 if closed {
+                    if state_for_close.read(cx).language_focus.is_focused(window) {
+                        window.focus(&editor_for_close.read(cx).focus_handle(cx), cx);
+                    }
                     editor_for_close.update(cx, |_, cx| cx.notify());
                 }
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(scroll_reconciler(state_entity, editor_view))
             .child(
                 div()
                     .id(elem_id("code-language-scroll", block_id))
@@ -421,7 +423,9 @@ fn open_title_editor(
     window.focus(&input.read(cx).focus_handle(cx), cx);
     let view_for_sub = editor_view.clone();
     state_entity.update(cx, |state, cx| {
+        state.ensure_observers(editor_view, window, cx);
         state.language_menu = None;
+        state.language_query.clear();
         let sub = cx.subscribe_in(
             &input,
             window,
