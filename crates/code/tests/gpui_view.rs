@@ -498,3 +498,83 @@ fn unmounted_code_controls_restore_focus_and_keep_twoslash_hover_working(cx: &mu
     assert!(long_ed.cx.debug_bounds("code-language-menu").is_none());
     assert!(editor_is_focused(&mut long_ed));
 }
+
+#[gpui::test]
+fn title_editor_survives_window_deactivation_saves_on_switch_and_skips_unchanged_blur(
+    cx: &mut TestAppContext,
+) {
+    let mut doc = Document::new(Schema::builtin());
+    let block_a = doc.insert_block(None, 0, block::CODE_BLOCK).unwrap();
+    doc.set_attr(block_a, lotype_core::attr::LANGUAGE, "rs")
+        .unwrap();
+    doc.set_attr(block_a, lotype_core::attr::TITLE, "a.rs")
+        .unwrap();
+    doc.insert_text(block_a, 0, "let a = 1;").unwrap();
+
+    let block_b = doc.insert_block(None, 1, block::CODE_BLOCK).unwrap();
+    doc.set_attr(block_b, lotype_core::attr::LANGUAGE, "rs")
+        .unwrap();
+    doc.insert_text(block_b, 0, "let b = 2;").unwrap();
+
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(block_a, 0))))
+        .unwrap();
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        CodeBlocks::new().install(EditorView::new(editor, cx), cx)
+    });
+    ed.cx.update(|window, _| window.activate_window());
+    ed.settle();
+
+    // 1. Deactivating the OS window (Cmd-Tab) must keep the title editor open with its draft.
+    click(&mut ed, "code-title");
+    assert!(ed.cx.debug_bounds("code-title-input").is_some());
+    ed.keys("cmd-a");
+    ed.cx.simulate_input("draft.rs");
+    ed.settle();
+    ed.cx.deactivate_window();
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-title-input").is_some());
+    assert_eq!(
+        ed.editor(|e| e.document().code_title(block_a)),
+        Some("a.rs".to_owned())
+    );
+    ed.cx.update(|window, _| window.activate_window());
+    ed.settle();
+
+    // 2. Switching directly to block_b's title button commits block_a's draft first.
+    click(&mut ed, "code-add-title");
+    assert_eq!(
+        ed.editor(|e| e.document().code_title(block_a)),
+        Some("draft.rs".to_owned())
+    );
+    assert!(ed.cx.debug_bounds("code-title-input").is_some());
+    ed.keys("escape");
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-title-input").is_none());
+
+    // 3. Blurring an unchanged title form must not overwrite a peer's concurrent title edit.
+    click(&mut ed, "code-title");
+    assert!(ed.cx.debug_bounds("code-title-input").is_some());
+    let mut peer = Document::new(Schema::builtin());
+    let snap = ed.editor(|e| e.document().export_snapshot().unwrap());
+    peer.import(&snap).unwrap();
+    peer.set_attr(block_a, lotype_core::attr::TITLE, "peer.rs")
+        .unwrap();
+    let update = ed.editor(|e| peer.export_updates(&e.document().version()).unwrap());
+    ed.view
+        .update(ed.cx, |view, cx| {
+            view.update_editor(cx, |editor| editor.import(&update))
+        })
+        .unwrap();
+    ed.settle();
+    ed.view.update_in(ed.cx, |view, window, cx| {
+        window.focus(&view.focus_handle(cx), cx);
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("code-title-input").is_none());
+    assert_eq!(
+        ed.editor(|e| e.document().code_title(block_a)),
+        Some("peer.rs".to_owned())
+    );
+}

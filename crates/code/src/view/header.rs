@@ -406,6 +406,38 @@ impl CodeState {
     }
 }
 
+fn commit_title_form(
+    form: TitleForm,
+    editor_view: &Entity<EditorView>,
+    focus_editor: bool,
+    notify_next_frame: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let value = form.input.read(cx).value().trim().to_owned();
+    let next = (!value.is_empty()).then_some(value);
+    let unchanged = next == form.initial;
+    let ai_active = editor_view.read(cx).ai_state().is_some();
+    editor_view.update(cx, |view, cx| {
+        if !unchanged && !ai_active {
+            let _ = view.update_editor(cx, |editor| {
+                editor.set_code_title(form.block, next.as_deref())
+            });
+        } else {
+            cx.notify();
+        }
+        if focus_editor {
+            window.focus(&view.focus_handle(cx), cx);
+        }
+    });
+    if notify_next_frame {
+        let editor = editor_view.clone();
+        window.on_next_frame(move |_, cx| {
+            editor.update(cx, |_, cx| cx.notify());
+        });
+    }
+}
+
 fn open_title_editor(
     state_entity: &Entity<CodeState>,
     editor_view: &Entity<EditorView>,
@@ -414,7 +446,13 @@ fn open_title_editor(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let previous = state_entity.update(cx, |state, _| state.title_form.take());
+    if let Some(prev) = previous {
+        commit_title_form(prev, editor_view, false, false, window, cx);
+    }
     let initial_value = initial.to_owned();
+    let initial_trimmed = initial.trim();
+    let initial_norm = (!initial_trimmed.is_empty()).then(|| initial_trimmed.to_owned());
     let input = cx.new(|cx| {
         InputState::new(window, cx)
             .placeholder("File or title (e.g. src/main.rs)")
@@ -426,41 +464,40 @@ fn open_title_editor(
         state.ensure_observers(editor_view, window, cx);
         state.language_menu = None;
         state.language_query.clear();
-        let sub = cx.subscribe_in(
-            &input,
-            window,
-            move |state, input, event, window, cx| match event {
-                InputEvent::PressEnter { .. } => {
-                    let value = input.read(cx).value().trim().to_owned();
-                    let next = (!value.is_empty()).then_some(value);
-                    state.title_form = None;
-                    view_for_sub.update(cx, |view, cx| {
-                        let _ = view.update_editor(cx, |editor| {
-                            editor.set_code_title(block_id, next.as_deref())
-                        });
-                        window.focus(&view.focus_handle(cx), cx);
-                    });
-                }
-                InputEvent::Blur
-                    if state
-                        .title_form
-                        .as_ref()
-                        .is_some_and(|form| form.block == block_id) =>
-                {
-                    let value = input.read(cx).value().trim().to_owned();
-                    let next = (!value.is_empty()).then_some(value);
-                    state.title_form = None;
-                    view_for_sub.update(cx, |view, cx| {
-                        let _ = view.update_editor(cx, |editor| {
-                            editor.set_code_title(block_id, next.as_deref())
-                        });
-                    });
-                }
-                _ => {}
-            },
-        );
+        let sub =
+            cx.subscribe_in(
+                &input,
+                window,
+                move |state, _input, event, window, cx| match event {
+                    InputEvent::PressEnter { .. } => {
+                        if state
+                            .title_form
+                            .as_ref()
+                            .is_some_and(|form| form.block == block_id)
+                            && let Some(form) = state.title_form.take()
+                        {
+                            commit_title_form(form, &view_for_sub, true, false, window, cx);
+                        }
+                    }
+                    InputEvent::Blur => {
+                        if !window.is_window_active() {
+                            return;
+                        }
+                        if state
+                            .title_form
+                            .as_ref()
+                            .is_some_and(|form| form.block == block_id)
+                            && let Some(form) = state.title_form.take()
+                        {
+                            commit_title_form(form, &view_for_sub, false, true, window, cx);
+                        }
+                    }
+                    _ => {}
+                },
+            );
         state.title_form = Some(TitleForm {
             block: block_id,
+            initial: initial_norm,
             input,
             _sub: sub,
         });

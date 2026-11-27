@@ -129,6 +129,7 @@ struct BuiltinCacheEntry {
 
 pub(super) struct TitleForm {
     pub(super) block: BlockId,
+    pub(super) initial: Option<String>,
     pub(super) input: Entity<InputState>,
     pub(super) _sub: Subscription,
 }

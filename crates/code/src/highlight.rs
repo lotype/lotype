@@ -242,22 +242,34 @@ pub(crate) fn build_text_decoration(
     let fold = !editing && parsed.hidden_in_preview.len() < total_lines;
 
     for range in &parsed.word_highlights {
-        highlights.push((
-            range.clone(),
-            HighlightStyle {
-                background_color: Some(cx.theme().primary.opacity(0.18)),
-                ..Default::default()
-            },
-        ));
+        if range.start < range.end
+            && text.is_char_boundary(range.start)
+            && text.is_char_boundary(range.end)
+        {
+            highlights.push((
+                range.clone(),
+                HighlightStyle {
+                    background_color: Some(cx.theme().primary.opacity(0.18)),
+                    ..Default::default()
+                },
+            ));
+        }
     }
 
     for diagnostic in &parsed.diagnostics {
         if fold && parsed.is_cut_line(diagnostic.after_line) {
             continue;
         }
+        let range = &diagnostic.target_range;
+        if range.start >= range.end
+            || !text.is_char_boundary(range.start)
+            || !text.is_char_boundary(range.end)
+        {
+            continue;
+        }
         let color = severity_ink(diagnostic.severity, cx);
         highlights.push((
-            diagnostic.target_range.clone(),
+            range.clone(),
             HighlightStyle {
                 underline: Some(UnderlineStyle {
                     color: Some(color),
