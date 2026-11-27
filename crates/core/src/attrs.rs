@@ -360,7 +360,10 @@ impl Document {
 
     /// Whether Twoslash annotations are enabled on a code block.
     pub fn is_twoslash(&self, block: BlockId) -> bool {
-        !matches!(self.attr(block, attr::TWOSLASH), Ok(Some(Value::Bool(false))))
+        !matches!(
+            self.attr(block, attr::TWOSLASH),
+            Ok(Some(Value::Bool(false)))
+        )
     }
 
     /// Highlighted line ranges on a code block, such as `1,3-5`.

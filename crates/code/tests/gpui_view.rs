@@ -140,9 +140,7 @@ let bad: u8 = \"no\";
 }
 
 #[gpui::test]
-fn enter_in_code_block_inserts_lines_then_leaves_edit_mode_on_empty_line(
-    cx: &mut TestAppContext,
-) {
+fn enter_in_code_block_inserts_lines_then_leaves_edit_mode_on_empty_line(cx: &mut TestAppContext) {
     let mut doc = Document::new(Schema::builtin());
     doc.insert_markdown(None, 0, "```rs\nfn main() {}\n```\n")
         .unwrap();
@@ -280,10 +278,11 @@ out.to
     assert!(unfolded_bounds.is_some());
 
     // Leaving the code block folds it back to Shiki Twoslash Preview Mode.
-    let intro_bounds = ed.view.update(ed.cx, |view, _| {
-        view.range_bounds(intro, 0..5).unwrap()
-    });
-    ed.cx.simulate_click(intro_bounds.center(), Modifiers::none());
+    let intro_bounds = ed
+        .view
+        .update(ed.cx, |view, _| view.range_bounds(intro, 0..5).unwrap());
+    ed.cx
+        .simulate_click(intro_bounds.center(), Modifiers::none());
     ed.settle();
     assert!(ed.cx.debug_bounds("twoslash-cut").is_none());
 }
@@ -369,7 +368,8 @@ fn unmounted_code_controls_restore_focus_and_keep_twoslash_hover_working(cx: &mu
     let doomed_code = doc.insert_block(None, 1, block::CODE_BLOCK).unwrap();
     doc.set_attr(doomed_code, lotype_core::attr::LANGUAGE, "ts")
         .unwrap();
-    doc.insert_text(doomed_code, 0, "const doomed = 2;").unwrap();
+    doc.insert_text(doomed_code, 0, "const doomed = 2;")
+        .unwrap();
 
     let mut editor = Editor::new(doc);
     editor

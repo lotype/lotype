@@ -226,8 +226,7 @@ pub(super) fn parse_code_info(info: &str) -> Vec<(std::borrow::Cow<'static, str>
     if rest.is_empty() {
         return Vec::new();
     }
-    let (mut language, mut title, mut twoslash) =
-        (None::<String>, None::<String>, None::<bool>);
+    let (mut language, mut title, mut twoslash) = (None::<String>, None::<String>, None::<bool>);
     let mut highlights = Vec::<String>::new();
 
     if !rest.starts_with(['{', '[', '"', '\'']) {
