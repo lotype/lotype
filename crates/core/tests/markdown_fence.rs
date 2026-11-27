@@ -205,3 +205,22 @@ fn code_block_title_with_braces_round_trips_without_spurious_highlights() {
         assert_eq!(back.code_language(made[0]).as_deref(), Some("tsx"));
     }
 }
+
+#[test]
+fn is_twoslash_is_false_for_non_code_and_removed_blocks() {
+    let mut doc = Document::new(Schema::builtin());
+    let para = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+    let code = doc.insert_block(None, 1, block::CODE_BLOCK).unwrap();
+
+    assert!(!doc.is_twoslash(para));
+    assert!(doc.is_twoslash(code));
+
+    doc.set_attr(code, attr::TWOSLASH, false).unwrap();
+    assert!(!doc.is_twoslash(code));
+
+    doc.set_attr(code, attr::TWOSLASH, true).unwrap();
+    assert!(doc.is_twoslash(code));
+
+    doc.remove_block(code).unwrap();
+    assert!(!doc.is_twoslash(code));
+}

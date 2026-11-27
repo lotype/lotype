@@ -360,6 +360,9 @@ impl Document {
 
     /// Whether Twoslash annotations are enabled on a code block.
     pub fn is_twoslash(&self, block: BlockId) -> bool {
+        if self.block_type(block).ok().as_deref() != Some(block::CODE_BLOCK) {
+            return false;
+        }
         !matches!(
             self.attr(block, attr::TWOSLASH),
             Ok(Some(Value::Bool(false)))
