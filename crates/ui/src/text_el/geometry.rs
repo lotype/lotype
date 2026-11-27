@@ -49,6 +49,20 @@ impl Line {
         }
         self.range.end
     }
+
+    /// The byte offset of the glyph or atom directly under `x`, or `None` when
+    /// `x` falls outside every piece on this line.
+    fn byte_at(&self, x: Pixels) -> Option<usize> {
+        let piece = self
+            .pieces
+            .iter()
+            .find(|piece| x >= piece.x && x < piece.x + piece.width)?;
+        let raw = match &piece.kind {
+            Kind::Text(shaped) => piece.range.start + covering(shaped, x - piece.x),
+            Kind::Atom(..) => piece.range.start,
+        };
+        Some(raw)
+    }
 }
 
 /// The glyph boundary nearest to `x`. GPUI's `closest_index_for_x` gives
@@ -60,6 +74,25 @@ fn closest(shaped: &ShapedLine, x: Pixels) -> usize {
     let distance = |(_, at): &(usize, Pixels)| f32::from((*at - x).abs());
     let nearest = boundaries.min_by(|a, b| distance(a).total_cmp(&distance(b)));
     nearest.map_or(0, |(index, _)| index)
+}
+
+/// The byte index of the glyph covering `x`: the glyph with the largest
+/// `position.x <= x` (breaking ties by smaller byte index), or the leftmost
+/// glyph when `x` precedes the first glyph's origin.
+fn covering(shaped: &ShapedLine, x: Pixels) -> usize {
+    let glyphs = shaped.runs.iter().flat_map(|run| &run.glyphs);
+    let mut best_before: Option<(Pixels, usize)> = None;
+    let mut leftmost: Option<(Pixels, usize)> = None;
+    for glyph in glyphs {
+        let gx = glyph.position.x;
+        if gx <= x && best_before.is_none_or(|(bx, bi)| gx > bx || (gx == bx && glyph.index < bi)) {
+            best_before = Some((gx, glyph.index));
+        }
+        if leftmost.is_none_or(|(lx, li)| gx < lx || (gx == lx && glyph.index < li)) {
+            leftmost = Some((gx, glyph.index));
+        }
+    }
+    best_before.or(leftmost).map_or(0, |(_, index)| index)
 }
 
 impl Laid {
@@ -189,8 +222,9 @@ impl TextLayout {
         rectangles.unwrap_or_default()
     }
 
-    /// The UTF-8 byte offset strictly under `at`, or `None` when `at` falls
-    /// outside any glyph run (such as blank space to the right or an interline row).
+    /// The UTF-8 byte offset strictly under `at`, normalized to the enclosing
+    /// grapheme start, or `None` when `at` falls outside any glyph run (such as
+    /// blank space to the right or an interline row).
     pub(crate) fn byte_at(&self, at: Point<Pixels>) -> Option<usize> {
         self.read(|laid| {
             let local = at - laid.origin;
@@ -201,15 +235,15 @@ impl TextLayout {
                 let text_top = line.top + line.text_top;
                 local.y >= text_top && local.y < text_top + laid.line_height
             })?;
-            let right_edge = line
-                .pieces
-                .last()
-                .map_or(line.left, |piece| piece.x + piece.width);
-            if local.x < line.left || local.x >= right_edge {
-                return None;
-            }
-            let index = line.index(local.x).min(line.range.end.saturating_sub(1));
-            (line.range.contains(&index)).then_some(index)
+            let raw = line.byte_at(local.x)?;
+            let shown = laid.text.get(line.range.clone())?;
+            let within = raw.saturating_sub(line.range.start);
+            let before = shown
+                .grapheme_indices(true)
+                .map(|(at, _)| at)
+                .take_while(|at| *at <= within)
+                .last()?;
+            Some(line.range.start + before)
         })
     }
 

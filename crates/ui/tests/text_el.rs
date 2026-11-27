@@ -196,3 +196,78 @@ fn no_empty_line_follows_a_last_atom_wider_than_the_line(cx: &mut TestAppContext
     ed.keys("left");
     assert_eq!(caret_top(&mut ed), after);
 }
+
+#[gpui::test]
+fn byte_offset_at_hits_enclosing_glyph_and_utf8_boundaries(cx: &mut TestAppContext) {
+    let text = "foo.日本語\ne\u{0301}x";
+    let mut ed = EditorTestContext::new(cx, blocks![p!["<a>", text]]);
+    let block = head(&mut ed).block;
+    ed.view.update(ed.cx, |view, _| {
+        // Just inside the right edge of the second 'o' in "foo." must stay on 'o' (byte 2),
+        // not snap forward to '.' (byte 3).
+        let dot = view.caret_bounds(Pos::new(block, 3)).unwrap();
+        let mid_y = dot.top() + dot.size.height / 2.;
+        assert_eq!(
+            view.byte_offset_at(block, point(dot.left() - px(1.), mid_y)),
+            Some(2)
+        );
+        assert_eq!(
+            view.byte_offset_at(block, point(dot.left() + px(1.), mid_y)),
+            Some(3)
+        );
+
+        // Right half of the final multi-byte UTF-8 character ('語', bytes 10..13)
+        // must return its UTF-8 start byte (10), never a mid-character byte (12).
+        let line1_end_byte = "foo.日本語".len();
+        let last_char_start = "foo.日本".len();
+        let line1_end = view.caret_bounds(Pos::new(block, line1_end_byte)).unwrap();
+        let last_hit = view.byte_offset_at(block, point(line1_end.left() - px(1.), mid_y));
+        assert_eq!(last_hit, Some(last_char_start));
+        assert!(text.is_char_boundary(last_hit.unwrap()));
+        assert_eq!(
+            view.byte_offset_at(block, point(line1_end.left() + px(2.), mid_y)),
+            None
+        );
+
+        // Combining mark cluster ("e\u{0301}") normalizes to the cluster start across its width.
+        let line2_start = line1_end_byte + 1;
+        let x_offset = line2_start + "e\u{0301}".len();
+        let x_caret = view.caret_bounds(Pos::new(block, x_offset)).unwrap();
+        let line2_y = x_caret.top() + x_caret.size.height / 2.;
+        let cluster_hit = view.byte_offset_at(block, point(x_caret.left() - px(1.), line2_y));
+        assert_eq!(cluster_hit, Some(line2_start));
+        assert!(text.is_char_boundary(cluster_hit.unwrap()));
+    });
+
+    // Right half of an inline atom at the end of a line returns the start byte
+    // of U+FFFC (1), not a mid-UTF-8 byte (3).
+    let build = |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
+        let mut doc = Document::new(schema);
+        let block = doc.insert_block(None, 0, "paragraph").unwrap();
+        doc.insert_text(block, 0, "a").unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(block, 1))))
+            .unwrap();
+        editor
+            .insert_atom(Atom::new("mention").attr("label", "Ann"))
+            .unwrap();
+        EditorView::new(editor, cx)
+    };
+    let mut atom_ed = EditorTestContext::with_view(cx, build);
+    let end = head(&mut atom_ed);
+    assert_eq!(end.offset, 1 + OBJECT.len_utf8());
+    atom_ed.view.update(atom_ed.cx, |view, _| {
+        let after = view.caret_bounds(end).unwrap();
+        let mid_y = after.top() + after.size.height / 2.;
+        assert_eq!(
+            view.byte_offset_at(end.block, point(after.left() - px(1.), mid_y)),
+            Some(1)
+        );
+        assert_eq!(
+            view.byte_offset_at(end.block, point(after.left() + px(2.), mid_y)),
+            None
+        );
+    });
+}
