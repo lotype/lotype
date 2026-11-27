@@ -178,8 +178,7 @@ impl EditorView {
         let start = |block| Pos::new(block, 0);
         let end = |block| Pos::new(block, self.text_len(block));
         let layout = self.layout(head.block)?;
-        let bounds = layout.bounds()?;
-        let (line, shown) = layout.line(head.offset, self.affinity(head))?;
+        let (_, shown) = layout.line(head.offset, self.affinity(head))?;
         let at = |x, y| self.hit(point(x, y));
         let target = match motion {
             Motion::Left => match before.grapheme_indices(true).next_back() {
@@ -210,19 +209,31 @@ impl EditorView {
             // The end of a line that wraps is the end of that line, not the
             // start of the next.
             Motion::LineEnd => return Some((Pos::new(head.block, shown.end), Affinity::Upstream)),
-            Motion::Up if line.top() > bounds.top() + px(1.) => {
-                return at(goal, line.top() - px(1.));
-            }
-            Motion::Up => match self.beyond(head.block, false) {
-                Some(y) => return at(goal, y),
-                None => start(head.block),
+            Motion::Up => match layout.adjacent_line_y(head.offset, self.affinity(head), false) {
+                Some(y) => {
+                    let (index, affinity) = layout.hit(point(goal, y))?;
+                    return Some((
+                        Pos::new(head.block, index.min(self.text_len(head.block))),
+                        affinity,
+                    ));
+                }
+                None => match self.beyond(head.block, false) {
+                    Some(y) => return at(goal, y),
+                    None => start(head.block),
+                },
             },
-            Motion::Down if line.bottom() < bounds.bottom() - px(1.) => {
-                return at(goal, line.bottom() + px(1.));
-            }
-            Motion::Down => match self.beyond(head.block, true) {
-                Some(y) => return at(goal, y),
-                None => end(head.block),
+            Motion::Down => match layout.adjacent_line_y(head.offset, self.affinity(head), true) {
+                Some(y) => {
+                    let (index, affinity) = layout.hit(point(goal, y))?;
+                    return Some((
+                        Pos::new(head.block, index.min(self.text_len(head.block))),
+                        affinity,
+                    ));
+                }
+                None => match self.beyond(head.block, true) {
+                    Some(y) => return at(goal, y),
+                    None => end(head.block),
+                },
             },
             Motion::DocStart => start(*self.order.first()?),
             Motion::DocEnd => end(*self.order.last()?),

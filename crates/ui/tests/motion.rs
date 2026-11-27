@@ -201,3 +201,62 @@ fn a_click_on_a_combining_mark_goes_before_its_letter(cx: &mut TestAppContext) {
     });
     assert!(text == "ae\u{301}x" || text == "e\u{301}ax", "{text:?}");
 }
+
+#[gpui::test]
+fn vertical_arrows_cross_interlines_and_leave_blocks_with_trailing_interlines(
+    cx: &mut TestAppContext,
+) {
+    use gpui::{IntoElement, Styled, div};
+    use lotype_core::test_support::editor;
+    use lotype_ui::{EditorView, Interline, TextDecoration};
+
+    let code = block("code_block", vec!["first\nsecond<a>".into()]);
+    let model = editor(blocks![p!["above"], code, p!["below"]]);
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        EditorView::new(model, cx).with_text_decorator("code_block", |_, _, _, _, _, _| {
+            TextDecoration {
+                interlines: vec![
+                    Interline {
+                        after_line: 0,
+                        element: div().h(px(28.)).into_any_element(),
+                    },
+                    Interline {
+                        after_line: 1,
+                        element: div().h(px(40.)).into_any_element(),
+                    },
+                ],
+                ..Default::default()
+            }
+        })
+    });
+
+    // Moving up crosses the interior interline from line 1 to line 0, then exits to `above`.
+    ed.keys("up");
+    ed.assert(blocks![
+        p!["above"],
+        block("code_block", vec!["first<a>\nsecond".into()]),
+        p!["below"]
+    ]);
+    ed.keys("up");
+    ed.assert(blocks![
+        p!["above<a>"],
+        block("code_block", vec!["first\nsecond".into()]),
+        p!["below"]
+    ]);
+
+    // Moving down crosses the interior interline to line 1, then past the trailing interline to `below`.
+    ed.keys("down down down");
+    ed.assert(blocks![
+        p!["above"],
+        block("code_block", vec!["first\nsecond".into()]),
+        p!["below<a>"]
+    ]);
+
+    // Moving back up from `below` lands on line 1 (skipping the trailing interline).
+    ed.keys("up");
+    ed.assert(blocks![
+        p!["above"],
+        block("code_block", vec!["first\nsecond<a>".into()]),
+        p!["below"]
+    ]);
+}

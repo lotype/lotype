@@ -114,6 +114,26 @@ impl TextLayout {
         })
     }
 
+    /// The vertical midpoint of the visual line directly above (`!down`) or
+    /// below (`down`) `at`, skipping any interline gap, or `None` when `at`
+    /// is already on the first or last visual line.
+    pub(crate) fn adjacent_line_y(
+        &self,
+        at: usize,
+        affinity: Affinity,
+        down: bool,
+    ) -> Option<Pixels> {
+        self.read(|laid| {
+            let current = laid.line(at, affinity)?;
+            let target = if down {
+                laid.lines.get(current + 1)?
+            } else {
+                laid.lines.get(current.checked_sub(1)?)?
+            };
+            Some(laid.origin.y + target.top + target.height / 2.)
+        })
+    }
+
     /// The place nearest to a point, and the line it is on when that ends
     /// at a soft wrap.
     pub(crate) fn hit(&self, at: Point<Pixels>) -> Option<(usize, Affinity)> {
