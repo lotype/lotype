@@ -91,7 +91,7 @@ label.to
 //      ^|
 ```
 
-Hover any identifier for its inferred signature and JSDoc. Click inside the block to edit hidden `---cut---`, `^?`, and `^|` Twoslash directives, then press Escape or click Preview to fold back.
+Hover any identifier for its inferred signature and JSDoc. Click inside the block to edit hidden `---cut---`, `^?`, and `^|` Twoslash directives, then press Escape or click outside the block to fold back.
 
 ### Table
 
