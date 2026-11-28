@@ -4,13 +4,64 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Styled,
-    TextStyle, UnderlineStyle, Window, div, px, rems,
+    AnyElement, App, Context, Div, Entity, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, Pixels, Styled, TextStyle, UnderlineStyle, Window, div, px, rems,
 };
 use gpui_component::ActiveTheme;
-use lotype_core::{Align, Atom, BlockId, Content, Role, Selection, Span, block};
+use lotype_core::{Align, Atom, BlockId, Content, Document, Role, Selection, Span, block};
 
 use super::EditorView;
+
+/// Context passed to an interactive inline atom view.
+pub struct AtomContent<'a> {
+    /// The block containing this atom.
+    pub block: BlockId,
+    /// UTF-8 byte offset of this atom's `OBJECT` character in `block`.
+    pub offset: usize,
+    /// The atom's type and scalar attributes.
+    pub atom: &'a Atom,
+    /// The document, to read surrounding content or attributes from.
+    pub document: &'a Document,
+    pub(crate) view: Entity<EditorView>,
+    pub(crate) editable: bool,
+}
+
+impl AtomContent<'_> {
+    /// Handle to the owning [`EditorView`], for controls that edit or remove this atom.
+    pub fn view(&self) -> &Entity<EditorView> {
+        &self.view
+    }
+
+    /// Whether interactive atom controls should allow edits (`false` during AI preview).
+    pub fn is_editable(&self) -> bool {
+        self.editable
+    }
+}
+
+/// Rendered inline atom element with an optional typographic baseline.
+pub struct RenderedAtom {
+    /// The element drawn in place of the atom character.
+    pub element: AnyElement,
+    /// Distance from the element's top edge down to its typographic baseline.
+    /// When `None`, the atom is vertically centered on the line.
+    pub baseline: Option<Pixels>,
+}
+
+impl RenderedAtom {
+    /// Wraps `element` with default vertical centering.
+    pub fn new(element: AnyElement) -> Self {
+        Self {
+            element,
+            baseline: None,
+        }
+    }
+
+    /// Sets the distance from the element's top edge down to its typographic baseline.
+    pub fn with_baseline(mut self, baseline: Pixels) -> Self {
+        self.baseline = Some(baseline);
+        self
+    }
+}
 
 /// What an empty paragraph says while the caret is in it.
 const PLACEHOLDER: &str = "Type '/' for blocks, or just write";
@@ -37,7 +88,7 @@ impl EditorView {
         base: &TextStyle,
         shown: Option<&Shown>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Option<Div> {
         let doc = self.document_of(block);
         let block_type = doc.block_type(block).ok()?;
@@ -114,9 +165,11 @@ impl EditorView {
         let mut at = 0;
         for span in &spans {
             if let Some(atom) = &span.atom {
+                let rendered = self.atom_element(block, at, atom, window, cx);
                 atoms.push((
                     at..at + span.text.len(),
-                    self.atom_element(atom, window, cx),
+                    rendered.element,
+                    rendered.baseline,
                 ));
             }
             at += span.text.len();
@@ -189,9 +242,24 @@ impl EditorView {
         Some((spans, Some(marked)))
     }
 
-    fn atom_element(&self, atom: &Atom, window: &mut Window, cx: &mut App) -> AnyElement {
-        if let Some(view) = self.atom_views.get(&atom.name) {
-            return view(atom, window, cx);
+    fn atom_element(
+        &self,
+        block: BlockId,
+        offset: usize,
+        atom: &Atom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> RenderedAtom {
+        if let Some(view) = self.atom_views.get(&atom.name).cloned() {
+            let content = AtomContent {
+                block,
+                offset,
+                atom,
+                document: self.document_of(block),
+                view: cx.entity(),
+                editable: self.ai.session.is_none(),
+            };
+            return view(content, window, cx);
         }
         let spec = self.editor.document().schema().inline_spec(&atom.name);
         let text = spec.map_or_else(|| atom.name.clone(), |spec| spec.text(atom));
@@ -200,7 +268,7 @@ impl EditorView {
             .rounded_sm()
             .bg(cx.theme().secondary)
             .child(text);
-        chip.into_any_element()
+        RenderedAtom::new(chip.into_any_element())
     }
 
     /// Whether an active text selection currently touches `block`.

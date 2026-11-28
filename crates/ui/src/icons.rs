@@ -49,6 +49,7 @@ icons! {
     FILE = "file",
     PLUS = "plus",
     GRIP = "grip-vertical",
+    SIGMA = "sigma",
 }
 
 /// An icon drawn from one of the SVGs above, in the text's color.
@@ -77,6 +78,7 @@ pub(crate) fn entry(key: &str) -> Option<&'static [u8]> {
         "table" => TABLE,
         "image" => IMAGE,
         "file" => FILE,
+        "math" => SIGMA,
         _ => return None,
     })
 }

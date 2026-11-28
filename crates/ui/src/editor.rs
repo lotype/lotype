@@ -28,6 +28,7 @@ mod visible;
 pub(crate) use ai_controls::{Act, send, status, tier};
 pub use alert::{AlertLook, Shade};
 pub use media::MediaSource;
+pub use render::{AtomContent, RenderedAtom};
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -48,10 +49,11 @@ use crate::text_el::{Affinity, TextDecoration, TextLayout};
 use input::Composition;
 
 /// Draws an atom of one type.
-type AtomView = Rc<dyn Fn(&Atom, &mut Window, &mut App) -> AnyElement>;
+type AtomView = Rc<dyn Fn(AtomContent, &mut Window, &mut App) -> RenderedAtom>;
 type BlockView = Rc<dyn Fn(BlockContent, &mut Window, &mut App) -> AnyElement>;
 type TextDecorator =
     Rc<dyn Fn(BlockId, &Document, &str, bool, &mut Window, &mut App) -> TextDecoration>;
+type ToolbarFilter = Rc<dyn Fn(&Document, Pos, Pos) -> bool>;
 
 /// What a view of a block of its own type draws from.
 pub struct BlockContent<'a> {
@@ -104,6 +106,7 @@ pub struct EditorView {
     atom_views: HashMap<String, AtomView>,
     block_views: HashMap<String, BlockView>,
     text_decorators: HashMap<String, TextDecorator>,
+    toolbar_filters: Vec<ToolbarFilter>,
     /// Toggle list items whose children are hidden.
     closed: HashSet<BlockId>,
     scroll: ScrollHandle,
@@ -167,6 +170,7 @@ impl EditorView {
             atom_views: HashMap::new(),
             block_views: HashMap::new(),
             text_decorators: HashMap::new(),
+            toolbar_filters: Vec::new(),
             closed: HashSet::new(),
             scroll: ScrollHandle::new(),
             reveal: Rc::default(),
@@ -209,6 +213,31 @@ impl EditorView {
         self
     }
 
+    /// Appends additional entries to the slash menu (skipping duplicates by `key`),
+    /// inserting each entry at the end of its matching group so group headings stay
+    /// contiguous.
+    pub fn with_extra_slash_items(mut self, items: impl IntoIterator<Item = SlashItem>) -> Self {
+        for item in items {
+            if self
+                .slash_items
+                .iter()
+                .any(|existing| existing.key == item.key)
+            {
+                continue;
+            }
+            if let Some(last_in_group) = self
+                .slash_items
+                .iter()
+                .rposition(|existing| existing.group == item.group)
+            {
+                self.slash_items.insert(last_in_group + 1, item);
+            } else {
+                self.slash_items.push(item);
+            }
+        }
+        self
+    }
+
     /// The document's editor. While an AI session is open the view shows
     /// the session's copy instead, which is no part of the document.
     pub fn editor(&self) -> &Editor {
@@ -237,6 +266,20 @@ impl EditorView {
         mut self,
         name: &str,
         view: impl Fn(&Atom, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.atom_views.insert(
+            name.to_owned(),
+            Rc::new(move |content, window, cx| RenderedAtom::new(view(content.atom, window, cx))),
+        );
+        self
+    }
+
+    /// Draws atoms of type `name` with `view`, providing the atom's block,
+    /// byte offset, owning editor handle, and optional baseline alignment.
+    pub fn with_atom_content_view(
+        mut self,
+        name: &str,
+        view: impl Fn(AtomContent, &mut Window, &mut App) -> RenderedAtom + 'static,
     ) -> Self {
         self.atom_views.insert(name.to_owned(), Rc::new(view));
         self
@@ -268,6 +311,17 @@ impl EditorView {
     ) -> Self {
         self.text_decorators
             .insert(block_type.to_owned(), Rc::new(decorate));
+        self
+    }
+
+    /// Registers a predicate that controls whether the selection formatting
+    /// toolbar is shown for the ordered text selection `(from, to)`.
+    /// Every registered filter must return `true` for the toolbar to appear.
+    pub fn with_toolbar_filter(
+        mut self,
+        allow: impl Fn(&Document, Pos, Pos) -> bool + 'static,
+    ) -> Self {
+        self.toolbar_filters.push(Rc::new(allow));
         self
     }
 

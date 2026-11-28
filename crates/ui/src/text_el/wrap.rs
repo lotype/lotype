@@ -13,12 +13,13 @@ pub(super) struct Input {
     pub(super) runs: Vec<TextRun>,
     /// Where each run begins.
     pub(super) starts: Vec<usize>,
-    pub(super) atoms: Vec<(Range<usize>, Size<Pixels>)>,
+    pub(super) atoms: Vec<(Range<usize>, Size<Pixels>, Option<Pixels>)>,
     pub(super) interlines: Vec<(usize, Size<Pixels>)>,
     pub(super) hidden_lines: Vec<usize>,
     pub(super) trimmed_lines: Vec<(usize, usize)>,
     pub(super) font_size: Pixels,
     pub(super) line_height: Pixels,
+    pub(super) text_baseline: Pixels,
     /// How far right each line goes in the room it leaves: 0 left, 1 right.
     pub(super) align: f32,
 }
@@ -129,11 +130,11 @@ impl Input {
         // Atoms are in order: those of this line follow each other.
         let first = self
             .atoms
-            .partition_point(|(atom, _)| atom.start < range.start);
+            .partition_point(|(atom, _, _)| atom.start < range.start);
         let atoms = self.atoms.iter().enumerate().skip(first);
-        let atoms = atoms.take_while(|(_, (atom, _))| atom.end <= range.end);
-        let end = (usize::MAX, &(range.end..range.end, Size::default()));
-        for (index, (atom, measured)) in atoms.chain([end]) {
+        let atoms = atoms.take_while(|(_, (atom, _, _))| atom.end <= range.end);
+        let end = (usize::MAX, &(range.end..range.end, Size::default(), None));
+        for (index, (atom, measured, _)) in atoms.chain([end]) {
             if atom.start > at {
                 let shaped = self.shape(&(at..atom.start), window);
                 let width = shaped.width();
@@ -313,9 +314,13 @@ impl Input {
                     });
                 }
                 Err(index) => {
-                    // An atom is centred on the text, as CSS's `middle`
-                    // puts it, and pushes the text down when it is taller.
-                    let over = (self.atoms[index].1.height - self.line_height) / 2.;
+                    // Baseline-aware atoms (like inline math) align their baseline
+                    // with the surrounding text; others centre vertically on the line.
+                    let (_, measured, baseline) = &self.atoms[index];
+                    let over = match baseline {
+                        Some(atom_baseline) => *atom_baseline - self.text_baseline,
+                        None => (measured.height - self.line_height) / 2.,
+                    };
                     text_top = text_top.max(over);
                     let kind = Kind::Atom(index, -over);
                     pieces.push(Piece {

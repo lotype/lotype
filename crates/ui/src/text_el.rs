@@ -108,7 +108,7 @@ enum Kind {
 pub(crate) struct TextElement {
     text: SharedString,
     runs: Vec<TextRun>,
-    atoms: Vec<(Range<usize>, AnyElement)>,
+    atoms: Vec<(Range<usize>, AnyElement, Option<Pixels>)>,
     line_decorations: Vec<LineDecoration>,
     interlines: Vec<Interline>,
     hidden_lines: Vec<usize>,
@@ -122,7 +122,7 @@ impl TextElement {
     pub(crate) fn new(
         text: SharedString,
         runs: Vec<TextRun>,
-        atoms: Vec<(Range<usize>, AnyElement)>,
+        atoms: Vec<(Range<usize>, AnyElement, Option<Pixels>)>,
     ) -> Self {
         let layout = TextLayout::default();
         Self {
@@ -199,14 +199,27 @@ impl Element for TextElement {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
         let line_height = window.pixel_snap(line_height);
+        let sample_run = TextRun {
+            len: 1,
+            font: style.font(),
+            color: style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let sample = window
+            .text_system()
+            .shape_line("x".into(), font_size, &[sample_run], None);
+        let text_baseline = (line_height - sample.ascent - sample.descent) / 2. + sample.ascent;
         // Atoms are measured here: laying out an element inside the
         // measuring callback below would nest layouts.
         let atoms = self.atoms.iter_mut();
         let atoms: Vec<_> = atoms
-            .map(|(range, element)| {
+            .map(|(range, element, baseline)| {
                 (
                     range.clone(),
                     element.layout_as_root(unbounded(), window, cx),
+                    *baseline,
                 )
             })
             .collect();
@@ -234,6 +247,7 @@ impl Element for TextElement {
             trimmed_lines: self.trimmed_lines.clone(),
             font_size,
             line_height,
+            text_baseline,
             align: self.align,
         };
         let shared = self.layout.clone();

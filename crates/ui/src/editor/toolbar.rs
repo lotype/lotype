@@ -90,7 +90,8 @@ fn separator(cx: &App) -> Div {
 }
 
 impl EditorView {
-    /// The selected text, when it is some and not being dragged out.
+    /// The selected text, when it is some, not being dragged out, and allowed
+    /// by every registered toolbar filter.
     pub(super) fn selected_text(&self) -> Option<(Pos, Pos)> {
         let Some(Selection::Text { anchor, head }) = self.editor.selection() else {
             return None;
@@ -98,7 +99,13 @@ impl EditorView {
         // Marks go across no edge of a cell.
         let cell = anchor.block.column().or(head.block.column()).is_some();
         let shown = anchor != head && !cell && !self.dragging && self.composition.is_none();
-        shown.then(|| self.editor.document().ordered(*anchor, *head).ok())?
+        let doc = self.editor.document();
+        let (from, to) = shown.then(|| doc.ordered(*anchor, *head).ok())??;
+        let allowed = self
+            .toolbar_filters
+            .iter()
+            .all(|allow| allow(doc, from, to));
+        allowed.then_some((from, to))
     }
 
     /// The block the selection starts in, which the toolbar shows the type,
