@@ -408,7 +408,7 @@ impl MathState {
         let editable = content.is_editable();
         let editor_view = content.view().clone();
         let tex = inline_tex(content.atom).to_owned();
-        let style = window.text_style();
+        let style = content.text_style();
         let font_size: Pixels = style.font_size.to_pixels(window.rem_size());
         let ink = style.color;
         if !editable {

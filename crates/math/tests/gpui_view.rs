@@ -514,3 +514,32 @@ fn clearing_block_equation_drops_stale_preview(cx: &mut TestAppContext) {
     assert!(ed.cx.debug_bounds("math-error").is_some());
     assert!(ed.cx.debug_bounds("math-stale-preview").is_none());
 }
+
+#[gpui::test]
+fn inline_equation_scales_to_heading_font_size(cx: &mut TestAppContext) {
+    let schema = extend_schema(Schema::builtin());
+
+    let mut body_doc = Document::new(schema.clone());
+    body_doc
+        .insert_markdown(None, 0, "Body $E = mc^2$")
+        .unwrap();
+    let body_ed = EditorTestContext::with_view(cx, |cx| {
+        lotype_math::install(EditorView::new(Editor::new(body_doc), cx), cx)
+    });
+    let body_bounds = body_ed.cx.debug_bounds("inline-math").unwrap();
+
+    let mut h1_doc = Document::new(schema);
+    h1_doc
+        .insert_markdown(None, 0, "# Heading $E = mc^2$")
+        .unwrap();
+    let h1_ed = EditorTestContext::with_view(cx, |cx| {
+        lotype_math::install(EditorView::new(Editor::new(h1_doc), cx), cx)
+    });
+    let h1_bounds = h1_ed.cx.debug_bounds("inline-math").unwrap();
+
+    assert!(
+        h1_bounds.size.width > body_bounds.size.width * 1.5
+            && h1_bounds.size.height > body_bounds.size.height * 1.5,
+        "expected H1 inline math ({h1_bounds:?}) to scale above body ({body_bounds:?})"
+    );
+}
