@@ -10,15 +10,14 @@ use gpui::{
 };
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::{ActiveTheme as _, v_flex};
-use katex_native::Layout;
-use lotype_core::{BlockId, Pos, Selection};
+use lotype_core::{BlockId, Document, OBJECT, Pos, Selection};
 use lotype_ui::{AtomContent, BlockContent, EditorView, RenderedAtom};
 
 use crate::card::{CODE_FONT, EquationCardProps, render_equation_card};
 use crate::engine::{MathOptions, typeset_with};
 use crate::fonts;
 use crate::popover::{InlineMathForm, open_inline_editor, render_inline_popover};
-use crate::render::{display_element, inline_element};
+use crate::render::{CachedLayout, display_element, inline_element};
 use crate::{BLOCK_TYPE, INLINE_TYPE, allows_selection_toolbar, inline_tex, slash_item};
 
 const MAX_LAYOUT_CACHE: usize = 256;
@@ -79,12 +78,13 @@ pub fn install(editor: EditorView, cx: &mut App) -> EditorView {
 
 pub(crate) struct MathState {
     options: MathOptions,
-    cache: HashMap<(String, bool), Result<Arc<Layout>, String>>,
-    last_valid: HashMap<BlockId, Arc<Layout>>,
+    cache: HashMap<(String, bool), Result<Arc<CachedLayout>, String>>,
+    last_valid: HashMap<BlockId, Arc<CachedLayout>>,
     pub(crate) copied: Option<(SharedString, Task<()>)>,
     pub(crate) inline_form: Option<InlineMathForm>,
     editor_focus: Option<FocusHandle>,
     observer: Option<Subscription>,
+    reconcile_scheduled: bool,
 }
 
 impl MathState {
@@ -97,6 +97,7 @@ impl MathState {
             inline_form: None,
             editor_focus: None,
             observer: None,
+            reconcile_scheduled: false,
         }
     }
 
@@ -113,38 +114,124 @@ impl MathState {
             return;
         }
         let sub = cx.observe_in(editor_view, window, |state, editor_view, window, cx| {
-            let Some(form) = &state.inline_form else {
-                return;
-            };
-            let view = editor_view.read(cx);
-            let still_exists = view
-                .editor()
-                .document()
-                .spans_in(
-                    form.block,
-                    form.offset..form.offset + lotype_core::OBJECT.len_utf8(),
-                )
-                .ok()
-                .and_then(|spans| spans.into_iter().next())
-                .and_then(|span| span.atom)
-                .is_some_and(|atom| atom.name == INLINE_TYPE);
-            if !still_exists {
-                let focus_back = form.input.read(cx).focus_handle(cx).is_focused(window);
-                state.inline_form = None;
-                if focus_back && let Some(focus) = state.editor_focus.clone() {
-                    window.focus(&focus, cx);
-                }
+            state.schedule_reconcile(editor_view, window, cx);
+        });
+        self.observer = Some(sub);
+    }
+
+    fn close_inline_form(
+        &mut self,
+        editor_view: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(form) = self.inline_form.take() else {
+            return false;
+        };
+        if form.input.read(cx).focus_handle(cx).is_focused(window) {
+            let focus = self
+                .editor_focus
+                .clone()
+                .unwrap_or_else(|| editor_view.read(cx).focus_handle(cx));
+            window.focus(&focus, cx);
+        }
+        true
+    }
+
+    pub(crate) fn schedule_reconcile(
+        &mut self,
+        editor_view: Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.inline_form.is_none() {
+            return;
+        }
+        if self.reconcile_inline_doc(&editor_view, window, cx) {
+            editor_view.update(cx, |_, cx| cx.notify());
+        }
+        if self.inline_form.is_none() || self.reconcile_scheduled {
+            return;
+        }
+        self.reconcile_scheduled = true;
+        let state = cx.entity();
+        window.on_next_frame(move |window, cx| {
+            let changed = state.update(cx, |state, cx| {
+                state.reconcile_scheduled = false;
+                state.reconcile_visible(&editor_view, window, cx)
+            });
+            if changed {
                 editor_view.update(cx, |_, cx| cx.notify());
             }
         });
-        self.observer = Some(sub);
+    }
+
+    fn reconcile_inline_doc(
+        &mut self,
+        editor_view: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let resolved = self
+            .inline_form
+            .as_ref()
+            .and_then(|form| form.resolve_pos(editor_view.read(cx).editor().document()));
+        match resolved {
+            Some(pos) => {
+                if let Some(form) = self.inline_form.as_mut() {
+                    form.block = pos.block;
+                    form.offset = pos.offset;
+                }
+                false
+            }
+            None => self.close_inline_form(editor_view, window, cx),
+        }
+    }
+
+    fn reconcile_visible(
+        &mut self,
+        editor_view: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(pos) = self
+            .inline_form
+            .as_ref()
+            .and_then(|form| form.resolve_pos(editor_view.read(cx).editor().document()))
+        else {
+            return self.close_inline_form(editor_view, window, cx);
+        };
+        let bounds = editor_view
+            .read(cx)
+            .range_bounds(pos.block, pos.offset..pos.offset + OBJECT.len_utf8());
+        match bounds {
+            Some(bounds) => {
+                if let Some(form) = self.inline_form.as_mut() {
+                    let moved = form.block != pos.block
+                        || form.offset != pos.offset
+                        || form.bounds != bounds;
+                    form.block = pos.block;
+                    form.offset = pos.offset;
+                    form.bounds = bounds;
+                    moved
+                } else {
+                    false
+                }
+            }
+            None => self.close_inline_form(editor_view, window, cx),
+        }
+    }
+
+    fn prune_last_valid(&mut self, doc: &Document) {
+        self.last_valid
+            .retain(|block, _| doc.block_type(*block).ok().as_deref() == Some(BLOCK_TYPE));
     }
 
     pub(crate) fn layout_cached(
         &mut self,
         tex: &str,
         display: bool,
-    ) -> Result<Arc<Layout>, String> {
+    ) -> Result<Arc<CachedLayout>, String> {
         let key = (tex.to_owned(), display);
         if let Some(entry) = self.cache.get(&key) {
             return entry.clone();
@@ -153,7 +240,7 @@ impl MathState {
             self.cache.clear();
         }
         let result = typeset_with(tex, display, &self.options)
-            .map(Arc::new)
+            .map(|layout| Arc::new(CachedLayout::from_katex(layout)))
             .map_err(|err| err.message);
         self.cache.insert(key, result.clone());
         result
@@ -182,11 +269,13 @@ impl MathState {
         let fleqn = self.options.fleqn;
         let leqno = self.options.leqno;
 
+        self.prune_last_valid(content.document);
         if !editable {
-            self.inline_form = None;
+            self.close_inline_form(&editor_view, window, cx);
         }
 
         let rendered_result = if trimmed.is_empty() {
+            self.last_valid.remove(&block);
             None
         } else {
             let res = self.layout_cached(trimmed, true);
@@ -322,15 +411,28 @@ impl MathState {
         let style = window.text_style();
         let font_size: Pixels = style.font_size.to_pixels(window.rem_size());
         let ink = style.color;
+        if !editable {
+            self.close_inline_form(&editor_view, window, cx);
+        }
+
         let theme = cx.theme();
         let hover_bg = theme.muted;
         let active_bg = theme.primary.opacity(0.14);
         let danger = theme.danger;
+        let muted_fg = theme.muted_foreground;
 
-        let is_open = self
-            .inline_form
-            .as_ref()
-            .is_some_and(|form| form.block == block && form.offset == offset);
+        let is_open = if let Some(form) = self.inline_form.as_mut() {
+            match form.resolve_pos(content.document) {
+                Some(pos) => {
+                    form.block = pos.block;
+                    form.offset = pos.offset;
+                    pos.block == block && pos.offset == offset
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
         let popover = if editable && is_open {
             render_inline_popover(self, &editor_view, block, offset, cx)
         } else {
@@ -341,7 +443,7 @@ impl MathState {
             let empty = div()
                 .px_1()
                 .text_xs()
-                .text_color(theme.muted_foreground)
+                .text_color(muted_fg)
                 .child("fx")
                 .into_any_element();
             (empty, None)

@@ -248,4 +248,98 @@ fn equation_selection_helper_disables_toolbar_for_block_and_inline_math() {
         Pos::new(math_block, 0),
         Pos::new(math_block, 4)
     ));
+
+    // Selecting a paragraph down to offset 0 of the next math block (e.g. Shift+Down)
+    // selects only prose, so the formatting toolbar must remain available.
+    assert!(!is_equation_selection(
+        &doc,
+        Pos::new(para, 0),
+        Pos::new(math_block, 0)
+    ));
+    assert!(allows_selection_toolbar(
+        &doc,
+        Pos::new(para, 0),
+        Pos::new(math_block, 0)
+    ));
+}
+
+#[test]
+fn equation_selection_handles_multiblock_ranges_consistently() {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc = Document::new(schema);
+    let ids = doc
+        .insert_markdown(None, 0, "Before\n\n$$\na = 1\n$$\n\n$$\nb = 2\n$$\n\nAfter")
+        .unwrap();
+    let before = ids[0];
+    let math_a = ids[1];
+    let math_b = ids[2];
+    let after = ids[3];
+
+    // Spanning prose -> math -> prose keeps toolbar available for the prose.
+    assert!(allows_selection_toolbar(
+        &doc,
+        Pos::new(before, 0),
+        Pos::new(after, 3)
+    ));
+    // Spanning prose into a math block also contains prose, so keep toolbar.
+    assert!(allows_selection_toolbar(
+        &doc,
+        Pos::new(before, 0),
+        Pos::new(math_a, 3)
+    ));
+    // Spanning exclusively across two consecutive math blocks hides toolbar.
+    assert!(is_equation_selection(
+        &doc,
+        Pos::new(math_a, 0),
+        Pos::new(math_b, 3)
+    ));
+    assert!(!allows_selection_toolbar(
+        &doc,
+        Pos::new(math_a, 0),
+        Pos::new(math_b, 3)
+    ));
+}
+
+#[test]
+fn char_anchor_tracks_inline_atom_across_remote_edits_and_detects_deletion() {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc_a = Document::new(schema.clone());
+    let ids = doc_a.insert_markdown(None, 0, "$a$ $b$").unwrap();
+    let para = ids[0];
+    let b_offset = OBJECT.len_utf8() + 1;
+
+    // Peer B starts from a snapshot of Peer A.
+    let mut doc_b = Document::new(schema);
+    doc_b.import(&doc_a.export_snapshot().unwrap()).unwrap();
+    let since = doc_b.version();
+
+    // Anchor `$b$` on Peer A before remote edits arrive.
+    let anchor = doc_a.anchor_char(Pos::new(para, b_offset)).unwrap();
+
+    // Peer B prepends 4 ASCII bytes ("See "), shifting `$a$` into `$b$`'s old offset!
+    doc_b.insert_text(para, 0, "See ").unwrap();
+    let update = doc_b.export_updates(&since).unwrap();
+    doc_a.import(&update).unwrap();
+
+    let resolved = doc_a
+        .resolve_char(&anchor)
+        .expect("anchor still resolves to shifted `$b$`");
+    assert_eq!(resolved, Pos::new(para, b_offset + 4));
+    let spans = doc_a
+        .spans_in(para, resolved.offset..resolved.offset + OBJECT.len_utf8())
+        .unwrap();
+    assert_eq!(
+        inline_tex(spans[0].atom.as_ref().expect("inline_math atom")),
+        "b"
+    );
+
+    // Once Peer B deletes `$b$`, the anchor resolves to `None` rather than matching `$a$`.
+    let since_del = doc_b.version();
+    doc_b
+        .delete_text(para, resolved.offset..resolved.offset + OBJECT.len_utf8())
+        .unwrap();
+    doc_a
+        .import(&doc_b.export_updates(&since_del).unwrap())
+        .unwrap();
+    assert!(doc_a.resolve_char(&anchor).is_none());
 }

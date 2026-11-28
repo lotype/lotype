@@ -99,29 +99,35 @@ pub fn block_tex(doc: &Document, block: BlockId) -> Option<String> {
     doc.plain_text(block).ok()
 }
 
-/// Returns `true` when the ordered text selection `(from, to)` targets a block
-/// equation (`math`) or consists solely of inline equation atoms (`inline_math`).
+/// Returns `true` when the ordered text selection `(from, to)` consists solely
+/// of block equations (`math`) and/or inline equation atoms (`inline_math`).
 pub fn is_equation_selection(doc: &Document, from: Pos, to: Pos) -> bool {
     let is_math_block = |id: BlockId| doc.block_type(id).ok().as_deref() == Some(BLOCK_TYPE);
-    if is_math_block(from.block) || is_math_block(to.block) {
-        return true;
-    }
-    if from.block != to.block || from.offset >= to.offset {
-        return false;
-    }
-    let Ok(spans) = doc.spans_in(from.block, from.offset..to.offset) else {
+    let Ok(segments) = doc.segments(from, to) else {
         return false;
     };
-    let mut has_inline_math = false;
-    for span in &spans {
-        match &span.atom {
-            Some(atom) if atom.name == INLINE_TYPE => has_inline_math = true,
-            Some(_) => return false,
-            None if span.text.trim().is_empty() => {}
-            None => return false,
+    if segments.is_empty() {
+        return is_math_block(from.block) && is_math_block(to.block);
+    }
+    let mut has_equation = false;
+    for (block, range) in segments {
+        if is_math_block(block) {
+            has_equation = true;
+            continue;
+        }
+        let Ok(spans) = doc.spans_in(block, range) else {
+            return false;
+        };
+        for span in &spans {
+            match &span.atom {
+                Some(atom) if atom.name == INLINE_TYPE => has_equation = true,
+                Some(_) => return false,
+                None if span.text.trim().is_empty() => {}
+                None => return false,
+            }
         }
     }
-    has_inline_math
+    has_equation
 }
 
 /// Single policy helper deciding whether the text-selection formatting toolbar

@@ -1,40 +1,165 @@
 //! Native GPU vector renderer for [`katex_native::Layout`] in GPUI.
 //!
-//! Draws text runs using KaTeX's loaded fonts, rules/rectangles via `paint_quad`,
-//! and stretchy radicals/delimiters via `PathBuilder` + `paint_path` clipped by
-//! `with_content_mask`.
+//! Pre-converts `katex_native::Layout` display lists once at cache insertion
+//! into GPUI-ready `SharedString` runs, `Font` descriptors, and `Hsla` colors
+//! so per-frame painting performs zero heap allocations for text strings.
 
 use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Bounds, ContentMask, Font as GpuiFont, FontStyle, FontWeight, Hsla,
-    PathBuilder, Pixels, Point, Rgba, Size, TextAlign, TextRun, Window, canvas, fill, point,
-    prelude::*, px, size,
+    PathBuilder, Pixels, Point, Rgba, SharedString, Size, TextAlign, TextRun, Window, canvas, fill,
+    point, prelude::*, px, size,
 };
-use katex_native::{Color, Font, Item, Layout, PathCommand};
+use katex_native::{Color, Font, Item, Layout, PathCommand, Rect};
 
 /// Minimum thickness in logical pixels so hairline fraction bars remain crisp.
 const MIN_RULE_PX: f32 = 0.75;
 
+/// Pre-converted GPUI display list built once from a [`katex_native::Layout`].
+pub(crate) struct CachedLayout {
+    width: f32,
+    height: f32,
+    depth: f32,
+    items: Vec<CachedItem>,
+    tag: Option<CachedTag>,
+}
+
+struct CachedTag {
+    width: f32,
+    height: f32,
+    depth: f32,
+    items: Vec<CachedItem>,
+}
+
+enum CachedItem {
+    Text {
+        x: f32,
+        y: f32,
+        text: SharedString,
+        font: GpuiFont,
+        size: f32,
+        color: Option<Hsla>,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Option<Hsla>,
+    },
+    Line {
+        from: (f32, f32),
+        to: (f32, f32),
+        thickness: f32,
+        color: Option<Hsla>,
+    },
+    Path {
+        commands: Vec<PathCommand>,
+        clip: Rect,
+        color: Option<Hsla>,
+    },
+}
+
+impl CachedLayout {
+    pub(crate) fn from_katex(layout: Layout) -> Self {
+        Self {
+            width: layout.width as f32,
+            height: layout.height as f32,
+            depth: layout.depth as f32,
+            items: convert_items(layout.items),
+            tag: layout.tag.map(|tag| CachedTag {
+                width: tag.width as f32,
+                height: tag.height as f32,
+                depth: tag.depth as f32,
+                items: convert_items(tag.items),
+            }),
+        }
+    }
+}
+
+fn convert_items(items: Vec<Item>) -> Vec<CachedItem> {
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            Item::Text {
+                x,
+                y,
+                text,
+                font,
+                size,
+                color,
+            } => {
+                if text.is_empty() {
+                    continue;
+                }
+                out.push(CachedItem::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: SharedString::from(text),
+                    font: to_gpui_font(font),
+                    size: size as f32,
+                    color: color.map(to_hsla),
+                });
+            }
+            Item::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => out.push(CachedItem::Rect {
+                x: x as f32,
+                y: y as f32,
+                width: width as f32,
+                height: height as f32,
+                color: color.map(to_hsla),
+            }),
+            Item::Line {
+                from,
+                to,
+                thickness,
+                color,
+            } => out.push(CachedItem::Line {
+                from: (from.0 as f32, from.1 as f32),
+                to: (to.0 as f32, to.1 as f32),
+                thickness: thickness as f32,
+                color: color.map(to_hsla),
+            }),
+            Item::Path {
+                commands,
+                clip,
+                color,
+            } => out.push(CachedItem::Path {
+                commands,
+                clip,
+                color: color.map(to_hsla),
+            }),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Computes the pixel size and top-to-baseline distance for an inline formula.
-pub(crate) fn inline_metrics(layout: &Layout, px_per_em: Pixels) -> (Size<Pixels>, Pixels) {
+pub(crate) fn inline_metrics(layout: &CachedLayout, px_per_em: Pixels) -> (Size<Pixels>, Pixels) {
     let em = f32::from(px_per_em);
     let tag_width = layout.tag.as_ref().map_or(0., |tag| 1.0 + tag.width);
-    let width = px(((layout.width + tag_width) as f32 * em).ceil().max(1.));
+    let width = px(((layout.width + tag_width) * em).ceil().max(1.));
     let height = layout
         .height
         .max(layout.tag.as_ref().map_or(0., |tag| tag.height));
     let depth = layout
         .depth
         .max(layout.tag.as_ref().map_or(0., |tag| tag.depth));
-    let ascent = px((height as f32 * em).ceil());
-    let total_height = px((((height + depth) as f32) * em).ceil().max(1.));
+    let ascent = px((height * em).ceil());
+    let total_height = px(((height + depth) * em).ceil().max(1.));
     (size(width, total_height), ascent)
 }
 
 /// Renders an inline formula as a fixed-size vector GPUI canvas element.
 pub(crate) fn inline_element(
-    layout: Arc<Layout>,
+    layout: Arc<CachedLayout>,
     px_per_em: Pixels,
     color: Hsla,
 ) -> (AnyElement, Pixels) {
@@ -42,7 +167,7 @@ pub(crate) fn inline_element(
     let em = f32::from(px_per_em);
     let ascent = layout
         .height
-        .max(layout.tag.as_ref().map_or(0., |tag| tag.height)) as f32
+        .max(layout.tag.as_ref().map_or(0., |tag| tag.height))
         * em;
     let element = canvas(
         |_, _, _| (),
@@ -50,7 +175,7 @@ pub(crate) fn inline_element(
             let origin = point(bounds.origin.x, bounds.origin.y + px(ascent));
             paint_items(&layout.items, origin, em, color, window, cx);
             if let Some(tag) = &layout.tag {
-                let tag_origin = point(origin.x + px(((layout.width + 1.0) as f32) * em), origin.y);
+                let tag_origin = point(origin.x + px((layout.width + 1.0) * em), origin.y);
                 paint_items(&tag.items, tag_origin, em, color, window, cx);
             }
         },
@@ -66,7 +191,7 @@ pub(crate) fn inline_element(
 /// centered (or flush-left when `fleqn`) with optional `\tag{...}` aligned to
 /// the right (or left when `leqno`).
 pub(crate) fn display_element(
-    layout: Arc<Layout>,
+    layout: Arc<CachedLayout>,
     px_per_em: Pixels,
     color: Hsla,
     fleqn: bool,
@@ -75,13 +200,13 @@ pub(crate) fn display_element(
     let em = f32::from(px_per_em);
     let height = layout
         .height
-        .max(layout.tag.as_ref().map_or(0., |tag| tag.height)) as f32;
+        .max(layout.tag.as_ref().map_or(0., |tag| tag.height));
     let depth = layout
         .depth
-        .max(layout.tag.as_ref().map_or(0., |tag| tag.depth)) as f32;
+        .max(layout.tag.as_ref().map_or(0., |tag| tag.depth));
     let pad_y = px(4.);
     let min_width = px(
-        ((layout.width + layout.tag.as_ref().map_or(0., |tag| tag.width + 1.5)) as f32 * em)
+        ((layout.width + layout.tag.as_ref().map_or(0., |tag| tag.width + 1.5)) * em)
             .ceil()
             .max(1.),
     ) + px(4.);
@@ -91,11 +216,11 @@ pub(crate) fn display_element(
     canvas(
         |_, _, _| (),
         move |bounds, _, window, cx| {
-            let body_w = px((layout.width as f32) * em);
+            let body_w = px(layout.width * em);
             let tag_w = layout
                 .tag
                 .as_ref()
-                .map_or(Pixels::ZERO, |tag| px((tag.width as f32) * em));
+                .map_or(Pixels::ZERO, |tag| px(tag.width * em));
             let gap = px(em * 1.0);
             let baseline_y = bounds.origin.y + pad_y + ascent;
 
@@ -145,7 +270,7 @@ pub(crate) fn display_element(
 }
 
 fn paint_items(
-    items: &[Item],
+    items: &[CachedItem],
     origin: Point<Pixels>,
     em: f32,
     default_color: Hsla,
@@ -154,7 +279,7 @@ fn paint_items(
 ) {
     for item in items {
         match item {
-            Item::Text {
+            CachedItem::Text {
                 x,
                 y,
                 text,
@@ -162,64 +287,51 @@ fn paint_items(
                 size,
                 color,
             } => {
-                if text.is_empty() {
-                    continue;
-                }
-                let font_px = px((*size as f32) * em).max(px(1.));
-                let ink = resolve_color(*color, default_color);
+                let font_px = px(*size * em).max(px(1.));
+                let ink = color.unwrap_or(default_color);
                 let run = TextRun {
                     len: text.len(),
-                    font: to_gpui_font(*font),
+                    font: font.clone(),
                     color: ink,
                     background_color: None,
                     underline: None,
                     strikethrough: None,
                 };
-                let shaped =
-                    window
-                        .text_system()
-                        .shape_line(text.clone().into(), font_px, &[run], None);
+                let shaped = window
+                    .text_system()
+                    .shape_line(text.clone(), font_px, &[run], None);
                 let line_height = shaped.ascent + shaped.descent;
                 let pos = point(
-                    origin.x + px((*x as f32) * em),
-                    origin.y + px((*y as f32) * em) - shaped.ascent,
+                    origin.x + px(*x * em),
+                    origin.y + px(*y * em) - shaped.ascent,
                 );
                 let _ = shaped.paint(pos, line_height, TextAlign::Left, None, window, cx);
             }
-            Item::Rect {
+            CachedItem::Rect {
                 x,
                 y,
                 width,
                 height,
                 color,
             } => {
-                let w = px(((*width as f32) * em).max(MIN_RULE_PX));
-                let h = px(((*height as f32) * em).max(MIN_RULE_PX));
+                let w = px((*width * em).max(MIN_RULE_PX));
+                let h = px((*height * em).max(MIN_RULE_PX));
                 let bounds = Bounds::new(
-                    point(
-                        origin.x + px((*x as f32) * em),
-                        origin.y + px((*y as f32) * em),
-                    ),
+                    point(origin.x + px(*x * em), origin.y + px(*y * em)),
                     size(w, h),
                 );
-                window.paint_quad(fill(bounds, resolve_color(*color, default_color)));
+                window.paint_quad(fill(bounds, color.unwrap_or(default_color)));
             }
-            Item::Line {
+            CachedItem::Line {
                 from,
                 to,
                 thickness,
                 color,
             } => {
-                let ink = resolve_color(*color, default_color);
-                let stroke = px(((*thickness as f32) * em).max(MIN_RULE_PX));
-                let p1 = point(
-                    origin.x + px((from.0 as f32) * em),
-                    origin.y + px((from.1 as f32) * em),
-                );
-                let p2 = point(
-                    origin.x + px((to.0 as f32) * em),
-                    origin.y + px((to.1 as f32) * em),
-                );
+                let ink = color.unwrap_or(default_color);
+                let stroke = px((*thickness * em).max(MIN_RULE_PX));
+                let p1 = point(origin.x + px(from.0 * em), origin.y + px(from.1 * em));
+                let p2 = point(origin.x + px(to.0 * em), origin.y + px(to.1 * em));
                 if (from.1 - to.1).abs() < 1e-6 {
                     let left = p1.x.min(p2.x);
                     let width = (p1.x - p2.x).abs().max(stroke);
@@ -239,12 +351,12 @@ fn paint_items(
                     }
                 }
             }
-            Item::Path {
+            CachedItem::Path {
                 commands,
                 clip,
                 color,
             } => {
-                let ink = resolve_color(*color, default_color);
+                let ink = color.unwrap_or(default_color);
                 let mut builder = PathBuilder::fill();
                 let mut has_move = false;
                 for cmd in commands {
@@ -315,7 +427,6 @@ fn paint_items(
                     window.paint_path(path, ink);
                 }
             }
-            _ => {}
         }
     }
 }
@@ -337,14 +448,11 @@ fn to_gpui_font(font: Font) -> GpuiFont {
     }
 }
 
-fn resolve_color(color: Option<Color>, default: Hsla) -> Hsla {
-    match color {
-        Some(c) => Hsla::from(Rgba {
-            r: f32::from(c.r) / 255.,
-            g: f32::from(c.g) / 255.,
-            b: f32::from(c.b) / 255.,
-            a: f32::from(c.a) / 255.,
-        }),
-        None => default,
-    }
+fn to_hsla(c: Color) -> Hsla {
+    Hsla::from(Rgba {
+        r: f32::from(c.r) / 255.,
+        g: f32::from(c.g) / 255.,
+        b: f32::from(c.b) / 255.,
+        a: f32::from(c.a) / 255.,
+    })
 }

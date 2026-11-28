@@ -1,10 +1,15 @@
 #![cfg(feature = "test-support")]
 
-use gpui::{Modifiers, TestAppContext};
-use lotype_core::{Document, Editor, Pos, Schema, Selection, block};
+use gpui::{Focusable as _, Modifiers, ScrollDelta, ScrollEvent, TestAppContext, point, px};
+use lotype_core::{Document, Editor, OBJECT, Pos, Schema, Selection, block};
 use lotype_math::{BLOCK_TYPE, INLINE_TYPE, block_tex, extend_schema, inline_tex};
 use lotype_ui::EditorView;
 use lotype_ui::test_support::EditorTestContext;
+
+fn editor_is_focused(ed: &mut EditorTestContext) -> bool {
+    let focus = ed.view.read_with(ed.cx, |view, cx| view.focus_handle(cx));
+    ed.cx.update(|window, _| focus.is_focused(window))
+}
 
 #[gpui::test]
 fn block_equation_toggles_between_preview_and_live_edit(cx: &mut TestAppContext) {
@@ -308,4 +313,204 @@ fn selection_toolbar_is_hidden_in_block_and_inline_equations(cx: &mut TestAppCon
     ed.settle();
     assert!(ed.cx.debug_bounds("math-block-editing").is_some());
     assert!(ed.cx.debug_bounds("toolbar-bold").is_none());
+
+    // Selecting a paragraph down to offset 0 of the following math block keeps the toolbar visible.
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            editor
+                .set_selection(Some(Selection::Text {
+                    anchor: Pos::new(para, 0),
+                    head: Pos::new(math_block, 0),
+                }))
+                .unwrap();
+        });
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("toolbar-bold").is_some());
+}
+
+#[gpui::test]
+fn inline_popover_commits_to_shifted_atom_after_remote_edit(cx: &mut TestAppContext) {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc = Document::new(schema.clone());
+    let ids = doc.insert_markdown(None, 0, "$a$ $b$").unwrap();
+    let para = ids[0];
+    let b_offset = OBJECT.len_utf8() + 1;
+
+    // Peer B starts from a snapshot before the popover opens.
+    let mut peer = Document::new(schema);
+    peer.import(&doc.export_snapshot().unwrap()).unwrap();
+    let since = peer.version();
+
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(para, 0))))
+        .unwrap();
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        let view = EditorView::new(editor, cx);
+        lotype_math::install(view, cx)
+    });
+
+    // Click the second inline equation (`$b$`) at `b_offset`.
+    let b_bounds = ed
+        .view
+        .read_with(ed.cx, |view, _| {
+            view.range_bounds(para, b_offset..b_offset + OBJECT.len_utf8())
+        })
+        .expect("bounds for `$b$`");
+    ed.cx.simulate_click(b_bounds.center(), Modifiers::none());
+    ed.settle();
+    assert!(ed.cx.debug_bounds("inline-math-popover").is_some());
+
+    // Remote peer prepends "See " (4 bytes), shifting `$a$` into `$b$`'s old offset!
+    peer.insert_text(para, 0, "See ").unwrap();
+    let update = peer.export_updates(&since).unwrap();
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            editor.import(&update).unwrap();
+        });
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("inline-math-popover").is_some());
+
+    // Committing must update `$b$` without corrupting `$a$`.
+    ed.cx.simulate_keystrokes("+ 1 enter");
+    ed.settle();
+    assert!(ed.cx.debug_bounds("inline-math-popover").is_none());
+
+    let equations: Vec<String> = ed.editor(|editor| {
+        editor
+            .document()
+            .spans(para)
+            .unwrap()
+            .into_iter()
+            .filter_map(|span| span.atom.filter(|a| a.name == INLINE_TYPE))
+            .map(|atom| inline_tex(&atom).to_owned())
+            .collect()
+    });
+    assert_eq!(equations, vec!["a".to_owned(), "b+1".to_owned()]);
+}
+
+#[gpui::test]
+fn inline_popover_follows_scroll_and_closes_when_scrolled_out_of_view(cx: &mut TestAppContext) {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc = Document::new(schema);
+    let ids = doc.insert_markdown(None, 0, "Eq $x^2$ here.").unwrap();
+    let top_para = ids[0];
+    let mut last_para = top_para;
+    for i in 1..=80 {
+        let p = doc.insert_block(None, i, block::PARAGRAPH).unwrap();
+        doc.insert_text(p, 0, &format!("Paragraph line {i}"))
+            .unwrap();
+        last_para = p;
+    }
+
+    // Keep caret at bottom so scrolling down lets `top_para` virtualize out.
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(last_para, 0))))
+        .unwrap();
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        let view = EditorView::new(editor, cx);
+        lotype_math::install(view, cx)
+    });
+
+    // Scroll back to the top so `top_para` is visible and open its inline popover.
+    for _ in 0..10 {
+        ed.cx.simulate_event(ScrollEvent {
+            position: point(px(300.), px(300.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(400.))),
+            ..Default::default()
+        });
+        ed.settle();
+    }
+    let inline_bounds = ed
+        .cx
+        .debug_bounds("inline-math")
+        .expect("top inline math visible");
+    ed.cx
+        .simulate_click(inline_bounds.center(), Modifiers::none());
+    ed.settle();
+    let initial_popover = ed
+        .cx
+        .debug_bounds("inline-math-popover")
+        .expect("popover open");
+    assert!(!editor_is_focused(&mut ed));
+
+    // A small downward scroll moves the popover upward with its equation instead of freezing.
+    ed.cx.simulate_event(ScrollEvent {
+        position: point(px(300.), px(300.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(-40.))),
+        ..Default::default()
+    });
+    ed.settle();
+    let moved_popover = ed
+        .cx
+        .debug_bounds("inline-math-popover")
+        .expect("popover stays open while equation is visible");
+    assert!(
+        moved_popover.top() < initial_popover.top(),
+        "expected popover to follow scroll: before={initial_popover:?}, after={moved_popover:?}"
+    );
+
+    // Scrolling far downward virtualizes `top_para`, closes the popover, and restores editor focus.
+    for _ in 0..8 {
+        ed.cx.simulate_event(ScrollEvent {
+            position: point(px(300.), px(300.)),
+            delta: ScrollDelta::Pixels(point(px(0.), px(-400.))),
+            ..Default::default()
+        });
+        ed.settle();
+    }
+    assert!(ed.cx.debug_bounds("inline-math-popover").is_none());
+    assert!(editor_is_focused(&mut ed));
+}
+
+#[gpui::test]
+fn clearing_block_equation_drops_stale_preview(cx: &mut TestAppContext) {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc = Document::new(schema);
+    let ids = doc
+        .insert_markdown(None, 0, "Above\n\n$$\nE = mc^2\n$$")
+        .unwrap();
+    let math_id = ids[1];
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(ids[0], 0))))
+        .unwrap();
+
+    let mut ed = EditorTestContext::with_view(cx, |cx| {
+        let view = EditorView::new(editor, cx);
+        lotype_math::install(view, cx)
+    });
+
+    // Click into edit mode and break the formula: stale preview of `E = mc^2` is shown.
+    let bounds = ed.cx.debug_bounds("math-block").unwrap();
+    ed.cx.simulate_click(bounds.center(), Modifiers::none());
+    ed.settle();
+    ed.type_text(r" + \frac{1}");
+    ed.settle();
+    assert!(ed.cx.debug_bounds("math-error").is_some());
+    assert!(ed.cx.debug_bounds("math-stale-preview").is_some());
+
+    // Empty the block completely, then type a new incomplete formula: old formula must not reappear.
+    ed.view.update(ed.cx, |view, cx| {
+        view.update_editor(cx, |editor| {
+            let len = editor.document().text_len(math_id).unwrap();
+            editor
+                .set_selection(Some(Selection::Text {
+                    anchor: Pos::new(math_id, 0),
+                    head: Pos::new(math_id, len),
+                }))
+                .unwrap();
+            editor.delete_backward().unwrap();
+        });
+    });
+    ed.settle();
+    assert!(ed.cx.debug_bounds("math-error").is_none());
+
+    ed.type_text(r"\frac{1}");
+    ed.settle();
+    assert!(ed.cx.debug_bounds("math-error").is_some());
+    assert!(ed.cx.debug_bounds("math-stale-preview").is_none());
 }

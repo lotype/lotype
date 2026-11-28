@@ -19,8 +19,9 @@ pub(crate) fn ensure_loaded(cx: &mut App) {
         .iter()
         .map(|file| Cow::Owned(patch_ttf_style(file.data, file.font.bold, file.font.italic)))
         .collect();
-    let _ = cx.text_system().add_fonts(fonts);
-    cx.set_global(KatexFontsLoaded);
+    if cx.text_system().add_fonts(fonts).is_ok() {
+        cx.set_global(KatexFontsLoaded);
+    }
 }
 
 /// KaTeX ships its TTF files with `head.macStyle = 0` and `OS/2.fsSelection = REGULAR`

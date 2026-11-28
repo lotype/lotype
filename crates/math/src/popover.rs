@@ -4,26 +4,45 @@
 use std::sync::Arc;
 
 use gpui::{
-    Anchor, AnyElement, AppContext as _, Bounds, Entity, Focusable as _, KeyDownEvent, Pixels,
-    SharedString, Subscription, Window, anchored, deferred, div, point, prelude::*, px,
+    Anchor, AnyElement, AppContext as _, Bounds, DispatchPhase, Entity, Focusable as _,
+    KeyDownEvent, Pixels, ScrollEvent, SharedString, Subscription, Window, anchored, canvas,
+    deferred, div, point, prelude::*, px,
 };
 use gpui_component::Sizable as _;
 use gpui_component::input::{InputEvent, Position, Textarea, TextareaState};
-use katex_native::Layout;
-use lotype_core::{BlockId, OBJECT, Pos};
+use lotype_core::{BlockId, CharAnchor, Document, OBJECT, Pos};
 use lotype_ui::EditorView;
 
 use crate::card::{EquationCardProps, render_equation_card};
-use crate::inline_atom;
+use crate::render::CachedLayout;
 use crate::view::MathState;
+use crate::{INLINE_TYPE, inline_atom};
 
 pub(crate) struct InlineMathForm {
+    pub(crate) anchor: CharAnchor,
     pub(crate) block: BlockId,
     pub(crate) offset: usize,
     pub(crate) bounds: Bounds<Pixels>,
-    pub(crate) last_valid: Option<Arc<Layout>>,
+    pub(crate) last_valid: Option<Arc<CachedLayout>>,
     pub(crate) input: Entity<TextareaState>,
     pub(crate) _sub: Subscription,
+}
+
+impl InlineMathForm {
+    /// Resolves this form's CRDT anchor to its current UTF-8 byte offset and
+    /// verifies that the pinned character is still an `inline_math` atom.
+    pub(crate) fn resolve_pos(&self, doc: &Document) -> Option<Pos> {
+        let pos = doc.resolve_char(&self.anchor)?;
+        let spans = doc
+            .spans_in(pos.block, pos.offset..pos.offset + OBJECT.len_utf8())
+            .ok()?;
+        let is_inline_math = spans
+            .into_iter()
+            .next()
+            .and_then(|span| span.atom)
+            .is_some_and(|atom| atom.name == INLINE_TYPE);
+        is_inline_math.then_some(pos)
+    }
 }
 
 fn normalize_inline_tex(raw: &str) -> String {
@@ -42,11 +61,19 @@ pub(crate) fn open_inline_editor(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
-    let Some(bounds) = editor_view
-        .read(cx)
-        .range_bounds(block, offset..offset + OBJECT.len_utf8())
-    else {
-        return;
+    let (anchor, bounds) = {
+        let view = editor_view.read(cx);
+        let Ok(anchor) = view
+            .editor()
+            .document()
+            .anchor_char(Pos::new(block, offset))
+        else {
+            return;
+        };
+        let Some(bounds) = view.range_bounds(block, offset..offset + OBJECT.len_utf8()) else {
+            return;
+        };
+        (anchor, bounds)
     };
     let input = cx.new(|cx| {
         let mut field = TextareaState::new(window, cx)
@@ -57,11 +84,19 @@ pub(crate) fn open_inline_editor(
         field
     });
     let focus = input.read(cx).focus_handle(cx);
+    let state_for_cursor = state.clone();
     let input_for_cursor = input.clone();
     window.on_next_frame(move |window, cx| {
-        input_for_cursor.update(cx, |field, cx| {
-            field.set_cursor_position(Position::new(u32::MAX, u32::MAX), window, cx);
-        });
+        let still_active = state_for_cursor
+            .read(cx)
+            .inline_form
+            .as_ref()
+            .is_some_and(|form| form.input == input_for_cursor);
+        if still_active {
+            input_for_cursor.update(cx, |field, cx| {
+                field.set_cursor_position(Position::new(u32::MAX, u32::MAX), window, cx);
+            });
+        }
     });
     let editor_for_sub = editor_view.clone();
     let input_for_sub = input.clone();
@@ -98,6 +133,7 @@ pub(crate) fn open_inline_editor(
             },
         );
         state.inline_form = Some(InlineMathForm {
+            anchor,
             block,
             offset,
             bounds,
@@ -110,6 +146,30 @@ pub(crate) fn open_inline_editor(
     editor_view.update(cx, |_, cx| cx.notify());
 }
 
+fn apply_inline_commit(
+    form: InlineMathForm,
+    normalized: String,
+    editor_view: &Entity<EditorView>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    editor_view.update(cx, |view, cx| {
+        if let Some(pos) = form.resolve_pos(view.editor().document()) {
+            view.update_editor(cx, |editor| {
+                if normalized.is_empty() {
+                    let _ = editor.remove_atom(pos);
+                } else {
+                    let _ = editor.replace_atom(pos, inline_atom(normalized));
+                }
+            });
+        } else {
+            cx.notify();
+        }
+        let focus = view.focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+}
+
 fn commit_from_state(
     state: &mut MathState,
     editor_view: &Entity<EditorView>,
@@ -120,20 +180,7 @@ fn commit_from_state(
         return;
     };
     let normalized = normalize_inline_tex(&form.input.read(cx).value());
-    let block = form.block;
-    let offset = form.offset;
-    editor_view.update(cx, |view, cx| {
-        let pos = Pos::new(block, offset);
-        view.update_editor(cx, |editor| {
-            if normalized.is_empty() {
-                let _ = editor.remove_atom(pos);
-            } else {
-                let _ = editor.replace_atom(pos, inline_atom(normalized));
-            }
-        });
-        let focus = view.focus_handle(cx);
-        window.focus(&focus, cx);
-    });
+    apply_inline_commit(form, normalized, editor_view, window, cx);
 }
 
 pub(crate) fn commit_inline_editor(
@@ -142,26 +189,15 @@ pub(crate) fn commit_inline_editor(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
-    let Some((block, offset, value)) = state.update(cx, |state, cx| {
+    let Some((form, value)) = state.update(cx, |state, cx| {
         let form = state.inline_form.take()?;
         let value = form.input.read(cx).value().to_string();
-        Some((form.block, form.offset, value))
+        Some((form, value))
     }) else {
         return;
     };
     let normalized = normalize_inline_tex(&value);
-    editor_view.update(cx, |view, cx| {
-        let pos = Pos::new(block, offset);
-        view.update_editor(cx, |editor| {
-            if normalized.is_empty() {
-                let _ = editor.remove_atom(pos);
-            } else {
-                let _ = editor.replace_atom(pos, inline_atom(normalized));
-            }
-        });
-        let focus = view.focus_handle(cx);
-        window.focus(&focus, cx);
-    });
+    apply_inline_commit(form, normalized, editor_view, window, cx);
 }
 
 pub(crate) fn cancel_inline_editor(
@@ -186,19 +222,43 @@ pub(crate) fn delete_inline_equation(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
-    let Some((block, offset)) = state.update(cx, |state, _| {
-        let form = state.inline_form.take()?;
-        Some((form.block, form.offset))
-    }) else {
+    let Some(form) = state.update(cx, |state, _| state.inline_form.take()) else {
         return;
     };
     editor_view.update(cx, |view, cx| {
-        view.update_editor(cx, |editor| {
-            let _ = editor.remove_atom(Pos::new(block, offset));
-        });
+        if let Some(pos) = form.resolve_pos(view.editor().document()) {
+            view.update_editor(cx, |editor| {
+                let _ = editor.remove_atom(pos);
+            });
+        } else {
+            cx.notify();
+        }
         let focus = view.focus_handle(cx);
         window.focus(&focus, cx);
     });
+}
+
+/// Zero-size sentinel painted alongside an open inline equation popover so any
+/// viewport scroll schedules a one-shot bounds/visibility reconciliation.
+fn scroll_reconciler(state: Entity<MathState>, editor_view: Entity<EditorView>) -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        move |_, _, window, _| {
+            let state = state.clone();
+            let editor_view = editor_view.clone();
+            window.on_mouse_event(move |_: &ScrollEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let editor = editor_view.clone();
+                    state.update(cx, |state, cx| {
+                        state.schedule_reconcile(editor, window, cx);
+                    });
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
+    .into_any_element()
 }
 
 pub(crate) fn render_inline_popover(
@@ -218,6 +278,9 @@ pub(crate) fn render_inline_popover(
     let draft = input.read(cx).value().to_string();
     let normalized = normalize_inline_tex(&draft);
     let preview = if normalized.is_empty() {
+        if let Some(form) = state.inline_form.as_mut() {
+            form.last_valid = None;
+        }
         None
     } else {
         let res = state.layout_cached(&normalized, false);
@@ -234,6 +297,7 @@ pub(crate) fn render_inline_popover(
         .and_then(|form| form.last_valid.clone());
 
     let state_entity = cx.entity();
+    let state_for_scroll = state_entity.clone();
     let state_for_key = state_entity.clone();
     let editor_for_key = editor_view.clone();
     let state_for_done = state_entity.clone();
@@ -294,6 +358,10 @@ pub(crate) fn render_inline_popover(
         .attach(bounds, Anchor::BottomLeft)
         .offset(point(px(0.), px(6.)))
         .snap_to_window_with_margin(px(8.))
-        .child(card);
+        .child(
+            div()
+                .child(scroll_reconciler(state_for_scroll, editor_view.clone()))
+                .child(card),
+        );
     Some(deferred(placed).with_priority(3).into_any_element())
 }

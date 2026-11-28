@@ -13,10 +13,9 @@ use gpui_component::Icon;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
-use katex_native::Layout;
 use lotype_ui::EditorView;
 
-use crate::render::display_element;
+use crate::render::{CachedLayout, display_element};
 use crate::view::MathState;
 
 pub(crate) const CODE_FONT: &str = "Menlo";
@@ -30,8 +29,8 @@ pub(crate) struct EquationCardProps {
     pub(crate) empty_placeholder: &'static str,
     pub(crate) tex: String,
     pub(crate) copy_key: SharedString,
-    pub(crate) preview: Option<Result<Arc<Layout>, String>>,
-    pub(crate) stale_preview: Option<Arc<Layout>>,
+    pub(crate) preview: Option<Result<Arc<CachedLayout>, String>>,
+    pub(crate) stale_preview: Option<Arc<CachedLayout>>,
     pub(crate) preview_em: Pixels,
     pub(crate) fleqn: bool,
     pub(crate) leqno: bool,
@@ -143,6 +142,7 @@ pub(crate) fn render_equation_card(
                 div()
                     .w_full()
                     .opacity(0.45)
+                    .debug_selector(|| "math-stale-preview".to_owned())
                     .child(display_element(
                         layout,
                         props.preview_em,
