@@ -33,7 +33,7 @@ pub(crate) struct Shown {
 
 impl Shown {
     /// The place in the block's text for a place in the shown text.
-    fn to_doc(&self, at: usize) -> usize {
+    pub(super) fn to_doc(&self, at: usize) -> usize {
         match &self.marked {
             Some(marked) if at >= marked.end => at - marked.len() + self.replaced.len(),
             Some(marked) if at > marked.start => self.replaced.start,

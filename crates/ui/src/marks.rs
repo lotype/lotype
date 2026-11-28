@@ -42,7 +42,27 @@ pub(crate) fn text_runs(spans: &[Span], base: &TextStyle, inks: Inks) -> Vec<Tex
     spans.map(|span| text_run(span, base, inks)).collect()
 }
 
+/// Effective [`TextStyle`] for `span` with its marks applied on top of `base`.
+pub(crate) fn span_text_style(span: &Span, base: &TextStyle, inks: Inks) -> TextStyle {
+    let mut style = base.clone().highlight(span_highlight(span, inks));
+    if span.marks.contains_key(mark::CODE) {
+        style.font_family = CODE_FONT.into();
+    }
+    style
+}
+
 fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
+    let mut run = base
+        .clone()
+        .highlight(span_highlight(span, inks))
+        .to_run(span.text.len());
+    if span.marks.contains_key(mark::CODE) {
+        run.font.family = CODE_FONT.into();
+    }
+    run
+}
+
+fn span_highlight(span: &Span, inks: Inks) -> HighlightStyle {
     let mut style = HighlightStyle::default();
     let line = |color| UnderlineStyle {
         color,
@@ -72,11 +92,7 @@ fn text_run(span: &Span, base: &TextStyle, inks: Inks) -> TextRun {
             _ => {}
         }
     }
-    let mut run = base.clone().highlight(style).to_run(span.text.len());
-    if span.marks.contains_key(mark::CODE) {
-        run.font.family = CODE_FONT.into();
-    }
-    run
+    style
 }
 
 /// Splits and styles `runs` with `highlights`, preserving existing run properties

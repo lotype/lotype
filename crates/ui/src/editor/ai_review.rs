@@ -113,7 +113,7 @@ impl EditorView {
 
     /// Whether `block` is one of [`Self::ai_struck`], asked of every row
     /// a frame lays out.
-    fn ai_is_struck(&self, block: BlockId) -> bool {
+    pub(super) fn ai_is_struck(&self, block: BlockId) -> bool {
         let removed = || self.ai.changes.contains(&Change::Removed(block));
         let main = self.ai.main.as_ref();
         main.is_some_and(|main| removed() && main.document().text_len(block).is_ok())

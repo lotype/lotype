@@ -16,7 +16,7 @@ use super::EditorView;
 pub struct AtomContent<'a> {
     /// The block containing this atom.
     pub block: BlockId,
-    /// UTF-8 byte offset of this atom's `OBJECT` character in `block`.
+    /// UTF-8 byte offset of this atom's `OBJECT` character in `block` within `document`.
     pub offset: usize,
     /// The atom's type and scalar attributes.
     pub atom: &'a Atom,
@@ -24,6 +24,7 @@ pub struct AtomContent<'a> {
     pub document: &'a Document,
     pub(crate) view: Entity<EditorView>,
     pub(crate) editable: bool,
+    pub(crate) text_style: TextStyle,
 }
 
 impl AtomContent<'_> {
@@ -32,9 +33,16 @@ impl AtomContent<'_> {
         &self.view
     }
 
-    /// Whether interactive atom controls should allow edits (`false` during AI preview).
+    /// Whether interactive atom controls should allow edits (`false` during AI
+    /// preview or active IME composition).
     pub fn is_editable(&self) -> bool {
         self.editable
+    }
+
+    /// Effective text style at this atom's position (including heading size,
+    /// block colors, quote italics, and inline marks).
+    pub fn text_style(&self) -> &TextStyle {
+        &self.text_style
     }
 }
 
@@ -66,8 +74,9 @@ impl RenderedAtom {
 /// What an empty paragraph says while the caret is in it.
 const PLACEHOLDER: &str = "Type '/' for blocks, or just write";
 const AI_PLACEHOLDER: &str = "Type '/' for blocks, Space for AI, or just write";
+use super::ai_review::Mark;
 use super::input::Shown;
-use crate::marks::{CODE_FONT, Inks, apply_highlights, text_runs};
+use crate::marks::{CODE_FONT, Inks, apply_highlights, span_text_style, text_runs};
 use crate::text_el::TextElement;
 
 /// The row of a document with no blocks: where writing starts, as the first
@@ -109,14 +118,17 @@ impl EditorView {
             block::HEADING => {
                 let level = doc.heading_level(block);
                 let sizes = [2.0, 1.5, 1.25, 1.125, 1.0];
+                let size = rems(sizes[level as usize - 1]);
                 // The text takes its size from the element around it.
-                line = line.text_size(rems(sizes[level as usize - 1]));
+                line = line.text_size(size);
+                style.font_size = size.into();
                 style.font_weight = FontWeight::BOLD;
             }
             _ if doc.role(block) == Role::Code => style.font_family = CODE_FONT.into(),
             _ => {}
         }
-        let (spans, composed, marks) = match (shown.filter(|shown| shown.block == block), review) {
+        let shown_here = shown.filter(|shown| shown.block == block);
+        let (spans, composed, marks) = match (shown_here, review) {
             (Some(shown), _) => {
                 let (spans, composed) = self.composed_spans(shown)?;
                 (spans, composed, None)
@@ -161,18 +173,31 @@ impl EditorView {
         if let Some(marks) = &marks {
             super::ai_review::mark_runs(&mut runs, marks, cx);
         }
+        let struck = self.ai_is_struck(block);
         let mut atoms = Vec::new();
         let mut at = 0;
+        let mut doc_at = 0;
         for span in &spans {
+            let span_len = span.text.len();
+            let is_removed = !struck
+                && marks.as_ref().is_some_and(|marks| {
+                    marks
+                        .iter()
+                        .any(|(range, mark)| *mark == Mark::Removed && range.contains(&at))
+                });
+            let doc_offset = match shown_here {
+                Some(shown) => shown.to_doc(at),
+                None => doc_at,
+            };
             if let Some(atom) = &span.atom {
-                let rendered = self.atom_element(block, at, atom, window, cx);
-                atoms.push((
-                    at..at + span.text.len(),
-                    rendered.element,
-                    rendered.baseline,
-                ));
+                let atom_style = span_text_style(span, &style, inks);
+                let rendered = self.atom_element(block, doc_offset, atom, atom_style, window, cx);
+                atoms.push((at..at + span_len, rendered.element, rendered.baseline));
             }
-            at += span.text.len();
+            at += span_len;
+            if !is_removed {
+                doc_at += span_len;
+            }
         }
         let mut element = TextElement::new(text.into(), runs, atoms).align(align);
         if let Some(decoration) = decoration {
@@ -247,6 +272,7 @@ impl EditorView {
         block: BlockId,
         offset: usize,
         atom: &Atom,
+        text_style: TextStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> RenderedAtom {
@@ -257,7 +283,8 @@ impl EditorView {
                 atom,
                 document: self.document_of(block),
                 view: cx.entity(),
-                editable: self.ai.session.is_none(),
+                editable: self.ai.session.is_none() && self.composition.is_none(),
+                text_style,
             };
             return view(content, window, cx);
         }

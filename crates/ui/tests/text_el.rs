@@ -309,3 +309,101 @@ fn text_decoration_with_mid_utf8_offsets_does_not_panic(cx: &mut TestAppContext)
             .is_some()
     );
 }
+
+#[gpui::test]
+fn atom_content_preserves_doc_offset_and_disables_editing_during_ime_composition(
+    cx: &mut TestAppContext,
+) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use lotype_core::block;
+    use lotype_ui::RenderedAtom;
+
+    let observed: Rc<RefCell<Option<(usize, bool)>>> = Rc::default();
+    let sink = observed.clone();
+
+    let build = move |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
+        let mut doc = Document::new(schema);
+        let p = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+        doc.insert_text(p, 0, "a ").unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(p, 2))))
+            .unwrap();
+        editor.insert_atom(Atom::new("mention")).unwrap();
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(p, 0))))
+            .unwrap();
+        EditorView::new(editor, cx).with_atom_content_view("mention", move |content, _, _| {
+            *sink.borrow_mut() = Some((content.offset, content.is_editable()));
+            RenderedAtom::new(div().child("@").into_any_element())
+        })
+    };
+
+    let mut ed = EditorTestContext::with_view(cx, build);
+    assert_eq!(*observed.borrow(), Some((2, true)));
+
+    // Preedit text inserted before the atom must not shift `AtomContent.offset`
+    // away from the committed document offset, and must mark the atom non-editable.
+    ed.ime_compose("日本語", None);
+    assert_eq!(*observed.borrow(), Some((2, false)));
+
+    // Once committed, the document offset advances by the committed bytes and editing resumes.
+    ed.ime_commit("日本語");
+    assert_eq!(*observed.borrow(), Some((2 + "日本語".len(), true)));
+}
+
+#[gpui::test]
+fn atom_content_receives_heading_font_size_and_block_text_color(cx: &mut TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{FontWeight, Hsla, Pixels};
+    use lotype_core::{attr, block};
+    use lotype_ui::RenderedAtom;
+
+    let styles: Rc<RefCell<Vec<(Pixels, FontWeight, Hsla)>>> = Rc::default();
+    let sink = styles.clone();
+
+    let build = move |cx: &mut gpui::Context<EditorView>| {
+        let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
+        let mut doc = Document::new(schema);
+        let p = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+        let h = doc.insert_block(None, 1, block::HEADING).unwrap();
+        doc.set_attr(h, attr::LEVEL, 1_i64).unwrap();
+        doc.set_attr(h, attr::TEXT_COLOR, "red").unwrap();
+        let mut editor = Editor::new(doc);
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(p, 0))))
+            .unwrap();
+        editor.insert_atom(Atom::new("mention")).unwrap();
+        editor
+            .set_selection(Some(Selection::caret(Pos::new(h, 0))))
+            .unwrap();
+        editor.insert_atom(Atom::new("mention")).unwrap();
+        EditorView::new(editor, cx).with_atom_content_view("mention", move |content, window, _| {
+            let style = content.text_style();
+            let px_size = style.font_size.to_pixels(window.rem_size());
+            sink.borrow_mut()
+                .push((px_size, style.font_weight, style.color));
+            RenderedAtom::new(div().child("@").into_any_element())
+        })
+    };
+
+    let mut ed = EditorTestContext::with_view(cx, build);
+    ed.settle();
+    let captured = styles.borrow();
+    assert!(captured.len() >= 2);
+    let last_two = &captured[captured.len() - 2..];
+    let (body_size, body_weight, body_color) = last_two[0];
+    let (h1_size, h1_weight, h1_color) = last_two[1];
+    assert!(
+        h1_size > body_size * 1.5,
+        "expected H1 atom font size ({h1_size:?}) to scale above body ({body_size:?})"
+    );
+    assert_eq!(body_weight, FontWeight::NORMAL);
+    assert_eq!(h1_weight, FontWeight::BOLD);
+    assert_ne!(h1_color, body_color);
+}

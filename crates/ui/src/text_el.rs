@@ -199,18 +199,27 @@ impl Element for TextElement {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
         let line_height = window.pixel_snap(line_height);
-        let sample_run = TextRun {
-            len: 1,
-            font: style.font(),
-            color: style.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+        let text_baseline = if self.atoms.iter().any(|(_, _, baseline)| baseline.is_some()) {
+            let font = self
+                .runs
+                .first()
+                .map_or_else(|| style.font(), |run| run.font.clone());
+            let sample_run = TextRun {
+                len: 1,
+                font,
+                color: style.color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let sample =
+                window
+                    .text_system()
+                    .shape_line("x".into(), font_size, &[sample_run], None);
+            (line_height - sample.ascent - sample.descent) / 2. + sample.ascent
+        } else {
+            Pixels::ZERO
         };
-        let sample = window
-            .text_system()
-            .shape_line("x".into(), font_size, &[sample_run], None);
-        let text_baseline = (line_height - sample.ascent - sample.descent) / 2. + sample.ascent;
         // Atoms are measured here: laying out an element inside the
         // measuring callback below would nest layouts.
         let atoms = self.atoms.iter_mut();
