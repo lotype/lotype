@@ -74,6 +74,7 @@ Workspace members today:
 
 | Crate | Role | Main dependencies |
 | :--- | :--- | :--- |
+| `lotype` | Umbrella crate with feature-gated re-exports of the workspace crates | `core`, optional `ai`, `code`, `server`, `storage`, `ui` |
 | `lotype-core` | Block tree, schema, commands, selection, local undo, sync updates, awareness, Markdown | `loro`, `pulldown-cmark` |
 | `lotype-ui` | GPUI editor and built-in block views | `core`, `ai`, `storage`, `gpui-pre`, `gpui-component` |
 | `lotype-server` | WebSocket sync as an embeddable Axum router; self-hosted by the consumer | `core`, `storage`, `axum`, `tokio` |
@@ -86,7 +87,6 @@ Planned and not yet workspace members:
 | Crate | Role | Milestone |
 | :--- | :--- | :--- |
 | `app` (binary) | Reference application that wires Tokio and GPUI together | 7 |
-| `lotype` | Umbrella crate with feature-gated re-exports | Unassigned |
 | `lotype-math` | LaTeX blocks and inline math | Unassigned |
 | `lotype-diagram` | Mermaid diagram blocks | Unassigned |
 
@@ -470,6 +470,7 @@ lotype/
     │   ├── test_support.rs # EditorTestContext [feature "test-support"]
     ├── ui/assets/icons/    # Lucide SVG icons
     ├── ui/examples/editor.rs # Local editor demo, not the reference app
+    ├── lotype/src/lib.rs   # Umbrella crate: feature-gated re-exports of workspace crates
     ├── server/src/         # router.rs (the WebSocket and its clients), room.rs, auth.rs; tests/relay.rs, failures.rs
     ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs
     ├── code/src/           # languages.rs, lines.rs, analyzer.rs, twoslash.rs (+ directives.rs),
@@ -485,7 +486,7 @@ Current workspace membership in `Cargo.toml`:
 ```toml
 [workspace]
 resolver = "3"
-members = ["crates/ai", "crates/code", "crates/core", "crates/server", "crates/storage", "crates/ui"]
+members = ["crates/ai", "crates/code", "crates/core", "crates/lotype", "crates/server", "crates/storage", "crates/ui"]
 exclude = ["porting"]
 ```
 
@@ -493,7 +494,7 @@ exclude = ["porting"]
 
 ## 10. Milestones
 
-The numbered roadmap tracks the first release. The implementation through 6c is in the workspace; manual release checks are still pending. Milestone 7 is planned. The umbrella and renderer crates in [§2](#2-crates) are not yet assigned to a milestone.
+The numbered roadmap tracks the first release. The implementation through 6c is in the workspace; manual release checks are still pending. Milestone 7 is planned. The renderer crates in [§2](#2-crates) are not yet assigned to a milestone.
 
 | # | Milestone | Verified by |
 | :--- | :--- | :--- |

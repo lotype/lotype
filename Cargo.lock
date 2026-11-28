@@ -4001,6 +4001,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lotype"
+version = "0.1.0-alpha.0"
+dependencies = [
+ "lotype-ai",
+ "lotype-code",
+ "lotype-core",
+ "lotype-server",
+ "lotype-storage",
+ "lotype-ui",
+]
+
+[[package]]
 name = "lotype-ai"
 version = "0.1.0-alpha.0"
 dependencies = [

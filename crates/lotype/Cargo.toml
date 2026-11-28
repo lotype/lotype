@@ -1,0 +1,44 @@
+[package]
+name = "lotype"
+description = "Native Rust SDK for block-based document editors with realtime collaboration."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+lotype-ai = { workspace = true, optional = true }
+lotype-code = { workspace = true, optional = true }
+lotype-core.workspace = true
+lotype-server = { workspace = true, optional = true }
+lotype-storage = { workspace = true, optional = true }
+lotype-ui = { workspace = true, optional = true }
+
+[features]
+default = []
+# AI session, provider trait, tools, private draft, and replay.
+ai = ["dep:lotype-ai"]
+# Code block metadata, Twoslash directives, and built-in/LSP analysis;
+# enables the GPUI view and Tree-sitter highlighting when combined with `ui`.
+code = ["dep:lotype-code"]
+# Enables every additional Tree-sitter grammar shipped by gpui-component.
+code-all-languages = ["code", "ui", "lotype-code/all-languages"]
+# Axum WebSocket collaboration relay.
+server = ["dep:lotype-server"]
+# Bundled SQLite `DocStore` implementation.
+sqlite = ["storage", "lotype-storage/sqlite"]
+# `DocId`, `DocStore`, and guarded snapshot/update merge.
+storage = ["dep:lotype-storage"]
+# Test helpers on `core`, plus `ai` and `ui` when those features are enabled.
+test-support = [
+    "lotype-core/test-support",
+    "lotype-ai?/test-support",
+    "lotype-ui?/test-support",
+]
+# GPUI editor and built-in block views (macOS, Rust 1.98+).
+ui = ["dep:lotype-ui", "lotype-code?/gpui"]
