@@ -117,3 +117,19 @@ fn code_gpui_reexport_works() {
     let _ = std::any::TypeId::of::<lotype::code::CodeBlocks>();
     let _install = lotype::code::install;
 }
+
+#[cfg(feature = "math")]
+#[test]
+fn math_reexport_works() {
+    let layout = lotype::math::typeset("E = mc^2", false).unwrap();
+    assert!(layout.width > 0.);
+    let atom = lotype::math::inline_atom("x^2");
+    assert_eq!(lotype::math::inline_tex(&atom), "x^2");
+}
+
+#[cfg(all(feature = "math", feature = "ui"))]
+#[test]
+fn math_gpui_reexport_works() {
+    let _ = std::any::TypeId::of::<lotype::math::MathBlocks>();
+    let _install = lotype::math::install;
+}

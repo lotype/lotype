@@ -12,6 +12,9 @@
 //!   GPUI code block view and Tree-sitter syntax highlighting.
 //! - `code-all-languages`: enables every additional Tree-sitter grammar
 //!   shipped by `gpui-component` (implies `code` and `ui`).
+//! - `math`: LaTeX block and inline equations with native KaTeX typesetting
+//!   (`lotype-math`). Combining `math` with `ui` also enables the GPUI vector
+//!   equation views and inline equation popover.
 //! - `server`: Axum WebSocket collaboration relay (`lotype-server`).
 //! - `storage`: `DocId`, `DocStore`, and guarded snapshot/update merge
 //!   (`lotype-storage`).
@@ -45,6 +48,10 @@ pub use lotype_ai as ai;
 #[cfg(feature = "code")]
 #[doc(inline)]
 pub use lotype_code as code;
+
+#[cfg(feature = "math")]
+#[doc(inline)]
+pub use lotype_math as math;
 
 #[cfg(feature = "server")]
 #[doc(inline)]

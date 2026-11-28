@@ -15,6 +15,7 @@ categories.workspace = true
 lotype-ai = { workspace = true, optional = true }
 lotype-code = { workspace = true, optional = true }
 lotype-core.workspace = true
+lotype-math = { workspace = true, optional = true }
 lotype-server = { workspace = true, optional = true }
 lotype-storage = { workspace = true, optional = true }
 lotype-ui = { workspace = true, optional = true }
@@ -28,6 +29,9 @@ ai = ["dep:lotype-ai"]
 code = ["dep:lotype-code"]
 # Enables every additional Tree-sitter grammar shipped by gpui-component.
 code-all-languages = ["code", "ui", "lotype-code/all-languages"]
+# LaTeX block and inline equations with native KaTeX typesetting;
+# enables the GPUI vector view when combined with `ui`.
+math = ["dep:lotype-math"]
 # Axum WebSocket collaboration relay.
 server = ["dep:lotype-server"]
 # Bundled SQLite `DocStore` implementation.
@@ -41,4 +45,4 @@ test-support = [
     "lotype-ui?/test-support",
 ]
 # GPUI editor and built-in block views (macOS, Rust 1.98+).
-ui = ["dep:lotype-ui", "lotype-code?/gpui"]
+ui = ["dep:lotype-ui", "lotype-code?/gpui", "lotype-math?/gpui"]
