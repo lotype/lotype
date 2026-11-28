@@ -81,13 +81,13 @@ Workspace members today:
 | `lotype-storage` | The `DocStore` trait a server saves through, and one in SQLite (feature `sqlite`, on by default); debounced auto-save and the migrator for legacy Tiptap/BlockNote JSON come with the reference app | `core`, `rusqlite`, `tokio` |
 | `lotype-ai` | A chat with a model about a document: the provider trait, the tools, and the private copy the model edits until its edits are accepted | `core`, `storage` (for `DocId`), `futures-core`, `serde_json` |
 | `lotype-code` | Code blocks with language/title metadata, Tree-sitter highlighting, JS/TS Twoslash directives (`^?`, `^|`, `@errors`, `@noErrors`, `@filename`, `---cut---`), built-in & stdio LSP semantic analysis, and folded GPUI preview (`gpui` feature) | `core`, `serde_json`, optional `ui`, `gpui-pre`, `gpui-component`, `tree-sitter` |
+| `lotype-math` | Block (`$$...$$` / ` ```math `) and inline (`$...$`) LaTeX equations with KaTeX typesetting (`katex-rs` + `katex-native`), custom macros, SVG export, and native GPUI vector views with baseline alignment & live preview (`gpui` feature) | `core`, `katex-native`, optional `ui`, `gpui-pre`, `gpui-component` |
 
 Planned and not yet workspace members:
 
 | Crate | Role | Milestone |
 | :--- | :--- | :--- |
 | `app` (binary) | Reference application that wires Tokio and GPUI together | 7 |
-| `lotype-math` | LaTeX blocks and inline math | Unassigned |
 | `lotype-diagram` | Mermaid diagram blocks | Unassigned |
 
 All dependencies point towards `core`. `core` never depends on GPUI, Tokio or any OS API.
@@ -221,7 +221,7 @@ Built-in `BlockSpec`s live in `lotype-core`, and their GPUI views live in `lotyp
 | :--- | :--- | :--- |
 | `lotype-ui` | Blocks: Paragraph, Heading, Quote, Alert, Bullet/Numbered/Check/Toggle list, Code (plain), Table, Image, File, Divider, PageBreak<br/>Styles: bold, italic, underline, strike, code, text color, background color<br/>Inline: text, link | `text_el` |
 | `lotype-code` | Header (`language`, `title`, `Twoslash`, `Copy`), Tree-sitter syntax highlighting, line highlights/diffs, Twoslash (`^?`, `@error`, `@hover`, `CodeAnalyzer`) | `gpui-component` `highlighter` + `text_el` decorations |
-| `lotype-math` (planned) | Block and inline LaTeX | `katex-rs` + `katex-native` |
+| `lotype-math` | Block equations (preview + live-edit mode, `\tag`, Copy LaTeX, error banner) and baseline-aligned inline equations (click-to-edit popover, `$...$` & `$$ ` input rules, Markdown round-trip) | `katex-rs` + `katex-native` → native GPUI vector canvas |
 | `lotype-diagram` (planned) | Mermaid diagrams | `bezel-mermaid` |
 
 In the planned design, math and diagram blocks store their **source text** (LaTeX or Mermaid) in a `LoroText` and use `without_style()`, as the existing plain code block does. This keeps collaborative edits on the source and lets the renderer change without a migration.
@@ -471,6 +471,7 @@ lotype/
     ├── ui/assets/icons/    # Lucide SVG icons
     ├── ui/examples/editor.rs # Local editor demo, not the reference app
     ├── lotype/src/lib.rs   # Umbrella crate: feature-gated re-exports of workspace crates
+    ├── math/src/           # lib.rs, engine.rs (KaTeX + SVG), fonts.rs, render.rs (GPUI vector canvas), card.rs, view.rs, popover.rs
     ├── server/src/         # router.rs (the WebSocket and its clients), room.rs, auth.rs; tests/relay.rs, failures.rs
     ├── storage/src/        # lib.rs (DocId, DocStore, merge), sqlite.rs
     ├── code/src/           # languages.rs, lines.rs, analyzer.rs, twoslash.rs (+ directives.rs),
@@ -486,7 +487,7 @@ Current workspace membership in `Cargo.toml`:
 ```toml
 [workspace]
 resolver = "3"
-members = ["crates/ai", "crates/code", "crates/core", "crates/lotype", "crates/server", "crates/storage", "crates/ui"]
+members = ["crates/ai", "crates/code", "crates/core", "crates/lotype", "crates/math", "crates/server", "crates/storage", "crates/ui"]
 exclude = ["porting"]
 ```
 
