@@ -30,7 +30,7 @@ impl Document {
             (_, Role::Code) => self.plain_text(block).ok()?,
             // No line of it may read as a heading, a list item or a quote.
             _ => {
-                let text = inline(&self.plain_spans(block).ok()?);
+                let text = inline(&self.spans(block).ok()?, self.schema());
                 let lines: Vec<_> = text.split('\n').map(line_start).collect();
                 lines.join("\n")
             }

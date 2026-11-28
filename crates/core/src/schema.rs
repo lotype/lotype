@@ -54,6 +54,7 @@ pub struct BlockSpec {
     attrs: Vec<String>,
     hint: Option<String>,
     fence: Option<String>,
+    display_math: bool,
 }
 
 impl BlockSpec {
@@ -70,6 +71,7 @@ impl BlockSpec {
             attrs: Vec::new(),
             hint: None,
             fence: None,
+            display_math: false,
         }
     }
 
@@ -94,6 +96,13 @@ impl BlockSpec {
     /// written as its text alone, and Markdown makes none of it.
     pub fn written_as_fence(mut self, tag: impl Into<String>) -> Self {
         self.fence = Some(tag.into());
+        self
+    }
+
+    /// Marks this block type as the schema's display math block, enabling
+    /// Markdown `$$...$$` round-tripping and the `$$ ` block input rule.
+    pub fn as_display_math(mut self) -> Self {
+        self.display_math = true;
         self
     }
 
@@ -168,6 +177,11 @@ impl BlockSpec {
     pub fn fence(&self) -> Option<&str> {
         self.fence.as_deref()
     }
+
+    /// Whether this block type represents display math (`$$...$$`).
+    pub fn is_display_math(&self) -> bool {
+        self.display_math
+    }
 }
 
 /// The deepest heading: a level beyond it, from Markdown or a peer, is read
@@ -238,6 +252,7 @@ impl MarkSpec {
 pub struct InlineSpec {
     name: String,
     text: fn(&Atom) -> String,
+    math_attr: Option<String>,
 }
 
 impl InlineSpec {
@@ -245,7 +260,19 @@ impl InlineSpec {
     /// such as `@name` for a mention.
     pub fn new(name: impl Into<String>, text: fn(&Atom) -> String) -> Self {
         let name = name.into();
-        Self { name, text }
+        Self {
+            name,
+            text,
+            math_attr: None,
+        }
+    }
+
+    /// Marks this inline atom type as the schema's inline math atom, storing
+    /// its LaTeX source in attribute `attr`. Enables Markdown `$...$`
+    /// round-tripping and the `$...$` inline input rule.
+    pub fn as_inline_math(mut self, attr: impl Into<String>) -> Self {
+        self.math_attr = Some(attr.into());
+        self
     }
 
     /// The atom type's name.
@@ -256,6 +283,11 @@ impl InlineSpec {
     /// `atom` as plain text, for the clipboard and Markdown.
     pub fn text(&self, atom: &Atom) -> String {
         (self.text)(atom)
+    }
+
+    /// Attribute name storing LaTeX source when this spec is inline math.
+    pub fn inline_math_attr(&self) -> Option<&str> {
+        self.math_attr.as_deref()
     }
 }
 
@@ -404,6 +436,18 @@ impl Schema {
     /// The block type written in Markdown as a fenced block tagged `tag`.
     pub fn fenced(&self, tag: &str) -> Option<&BlockSpec> {
         self.block_specs().find(|spec| spec.fence() == Some(tag))
+    }
+
+    /// The block type registered for display math (`$$...$$`), if any.
+    pub fn display_math_block(&self) -> Option<&BlockSpec> {
+        self.block_specs().find(|spec| spec.is_display_math())
+    }
+
+    /// The inline atom type and attribute key registered for inline math (`$...$`), if any.
+    pub fn inline_math_spec(&self) -> Option<(&InlineSpec, &str)> {
+        self.inlines
+            .values()
+            .find_map(|spec| Some((spec, spec.inline_math_attr()?)))
     }
 
     /// Adds a mark, replacing any existing one with the same name.

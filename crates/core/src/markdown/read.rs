@@ -8,7 +8,8 @@ mod media;
 use self::media::{Description, Media};
 use super::PAGE_BREAK;
 use crate::{
-    AlertKind, BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Span, Value, attr, block,
+    AlertKind, Atom, BlockId, Document, MAX_DEPTH, MAX_HEADING_LEVEL, Result, Schema, Span, Value,
+    attr, block,
 };
 
 /// A block to make.
@@ -70,6 +71,8 @@ pub(super) struct Reader {
     opened: Vec<usize>,
     described: Option<Description>,
     in_file_link: bool,
+    display_math: Option<String>,
+    inline_math: Option<(String, String)>,
 }
 
 /// The marks Markdown has signs for. Code is not among them: it does not nest.
@@ -80,6 +83,88 @@ const STRIKE: usize = 2;
 const LINK: usize = 3;
 
 impl Reader {
+    pub(super) fn for_schema(schema: &Schema) -> Self {
+        Self {
+            display_math: schema
+                .display_math_block()
+                .map(|spec| spec.name().to_owned()),
+            inline_math: schema
+                .inline_math_spec()
+                .map(|(spec, attr)| (spec.name().to_owned(), attr.to_owned())),
+            ..Self::default()
+        }
+    }
+
+    fn active_marks(&self, code: bool) -> BTreeMap<String, Value> {
+        let mut marks = BTreeMap::new();
+        for (name, values) in MARKS.iter().zip(&self.marks) {
+            if let Some(value) = values.last() {
+                marks.insert((*name).to_owned(), value.clone());
+            }
+        }
+        if code {
+            marks.insert("code".to_owned(), true.into());
+        }
+        marks
+    }
+
+    fn inline_math_event(&mut self, text: &str) {
+        let Some((name, attr)) = self.inline_math.clone() else {
+            self.plain(&format!("${text}$"), false);
+            return;
+        };
+        if text.is_empty() || self.described.is_some() || self.in_file_link {
+            self.plain(&format!("${text}$"), false);
+            return;
+        }
+        if self.leaf.is_none() {
+            self.open(Node::new(block::PARAGRAPH));
+        }
+        let marks = self.active_marks(false);
+        let atom = Atom::new(name).attr(&attr, text);
+        if let Some(leaf) = &mut self.leaf {
+            leaf.node.spans.push(Span::atom(atom, marks));
+            leaf.plain = true;
+        }
+    }
+
+    fn display_math_event(&mut self, text: &str) {
+        let in_table = self
+            .stack
+            .iter()
+            .any(|(c, _)| matches!(c, Container::Table | Container::Row));
+        let Some(block_type) = self.display_math.clone() else {
+            self.plain(&format!("$${text}$$"), false);
+            return;
+        };
+        if self.described.is_some() || self.in_file_link || in_table {
+            self.inline_math_event(text.trim());
+            return;
+        }
+        if let Some(leaf) = &self.leaf
+            && leaf.node.block_type == block::PARAGRAPH
+            && leaf.node.spans.is_empty()
+            && leaf.media.is_none()
+            && !leaf.heading
+        {
+            self.leaf = None;
+        } else {
+            self.close();
+        }
+        let mut node = Node {
+            block_type: block_type.into(),
+            attrs: Vec::new(),
+            spans: Vec::new(),
+            children: Vec::new(),
+            info: None,
+        };
+        let tex = text.trim();
+        if !tex.is_empty() {
+            node.spans.push(Span::new(tex, BTreeMap::new()));
+        }
+        self.push(node);
+    }
+
     fn open(&mut self, node: Node) {
         self.close();
         self.leaf = Some(Leaf {
@@ -126,7 +211,7 @@ impl Reader {
         }
         let Some(leaf) = &mut self.leaf else { return };
         match leaf.node.spans.last_mut() {
-            Some(last) if last.marks == marks => last.text.push_str(text),
+            Some(last) if last.atom.is_none() && last.marks == marks => last.text.push_str(text),
             _ => leaf.node.spans.push(Span::new(text, marks)),
         }
     }
@@ -315,8 +400,8 @@ impl Reader {
                     self.plain(&text, false);
                 }
                 Event::Code(text) => self.plain(&text, true),
-                Event::InlineMath(text) => self.plain(&format!("${text}$"), false),
-                Event::DisplayMath(text) => self.plain(&format!("$${text}$$"), false),
+                Event::InlineMath(text) => self.inline_math_event(&text),
+                Event::DisplayMath(text) => self.display_math_event(&text),
                 Event::FootnoteReference(label) => self.plain(&format!("[^{label}]"), false),
                 Event::SoftBreak => self.plain(" ", false),
                 Event::HardBreak => self.plain("\n", false),
@@ -365,7 +450,7 @@ impl Document {
         let mut next = HashMap::from([(top, index)]);
         let mut made = Vec::new();
         // In reading order: a block, what is in it, then the block after it.
-        let nodes = Reader::default().read(markdown);
+        let nodes = Reader::for_schema(self.schema()).read(markdown);
         let mut stack: Vec<_> = nodes.into_iter().rev().map(|n| (top, depth, n)).collect();
         while let Some((parent, depth, mut node)) = stack.pop() {
             self.unfence(&mut node);

@@ -73,7 +73,7 @@ impl Editor {
             Ok(Pos::new(caret.block, caret.offset + text.len()))
         })?;
         // Every input rule ends in one of these, and most keystrokes do not.
-        if text.ends_with([' ', '-', '`', '*', '_', '~']) {
+        if text.ends_with([' ', '-', '`', '*', '_', '~', '$']) {
             self.input_rule()?;
         }
         Ok(())

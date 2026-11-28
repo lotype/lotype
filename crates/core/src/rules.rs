@@ -72,6 +72,51 @@ pub(crate) fn block_rule(typed: &str) -> Option<BlockRule> {
     None
 }
 
+/// Whether `typed` at the start of a paragraph triggers a display math block (`$$ `).
+pub(crate) fn display_math_rule(typed: &str) -> bool {
+    typed == "$$ "
+}
+
+/// An inline math expression `$...$` at the end of `typed` to turn into an atom.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct InlineMathRule {
+    pub(crate) replace: Range<usize>,
+    pub(crate) tex: String,
+}
+
+/// Matches `$expr$` at the end of `typed` following Pandoc/KaTeX delimiter rules:
+/// no space right after the opening `$`, no space right before the closing `$`,
+/// not escaped (`\$`), not `$$`, and not immediately preceded by a digit or `$`.
+pub(crate) fn inline_math_rule(typed: &str) -> Option<InlineMathRule> {
+    let before = typed.strip_suffix('$')?;
+    if before.ends_with(['$', '\\']) || before.ends_with(char::is_whitespace) {
+        return None;
+    }
+    let mut scan = before.len();
+    while let Some(open) = before[..scan].rfind('$') {
+        let prev = before[..open].chars().next_back();
+        if matches!(prev, Some('$' | '\\')) {
+            scan = open;
+            continue;
+        }
+        if prev.is_some_and(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let tex = &before[open + 1..];
+        if tex.is_empty()
+            || tex.starts_with(char::is_whitespace)
+            || tex.contains(['\n', '\r', '\u{FFFC}'])
+        {
+            return None;
+        }
+        return Some(InlineMathRule {
+            replace: open..typed.len(),
+            tex: tex.to_owned(),
+        });
+    }
+    None
+}
+
 /// A mark to put on the text between two delimiters, which go.
 #[derive(Debug, PartialEq)]
 pub(crate) struct MarkRule {

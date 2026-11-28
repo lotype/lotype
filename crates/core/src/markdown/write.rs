@@ -1,5 +1,5 @@
 use super::{FILE_TITLE, PAGE_BREAK, UNNAMED_FILE_TITLE};
-use crate::{BlockId, Document, MAX_HEADING_LEVEL, Span, Value, attr, block};
+use crate::{BlockId, Document, MAX_HEADING_LEVEL, Schema, Span, Value, attr, block};
 
 /// A block with what the line before it, its first line and its later lines
 /// start with.
@@ -156,11 +156,11 @@ impl Document {
                 let line = |row: &BlockId| {
                     let cells = columns.iter().map(|column| {
                         let cell = self.cell(*row, *column);
-                        let spans = cell
-                            .and_then(|cell| self.plain_spans(cell))
-                            .unwrap_or_default();
+                        let spans = cell.and_then(|cell| self.spans(cell)).unwrap_or_default();
                         // A cell is one line, and a bar ends it even in code.
-                        inline(&spans).replace("\\\n", " ").replace('|', "\\|")
+                        inline(&spans, self.schema())
+                            .replace("\\\n", " ")
+                            .replace('|', "\\|")
                     });
                     format!("| {} |", cells.collect::<Vec<_>>().join(" | "))
                 };
@@ -175,25 +175,34 @@ impl Document {
                     Ok(Some(Value::Int(level))) => level.clamp(1, MAX_HEADING_LEVEL) as usize,
                     _ => 1,
                 };
-                let mut title = inline(&self.plain_spans(block).ok()?).replace("\\\n", " ");
+                let mut title =
+                    inline(&self.spans(block).ok()?, self.schema()).replace("\\\n", " ");
                 // Signs at the end of a heading would read as part of its frame.
                 if let Some(last) = title.rfind('#').filter(|at| at + 1 == title.len()) {
                     title.insert(last, '\\');
                 }
                 format!("{} {title}", "#".repeat(level))
             }
-            _ => match self.fence(block) {
-                Some(fence) => fence,
-                None => {
-                    // A block of a type unknown here still has its text.
-                    let lines = match self.plain_spans(block) {
-                        Ok(spans) => inline(&spans),
-                        Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
-                    };
-                    let lines: Vec<_> = lines.split('\n').map(line_start).collect();
-                    lines.join("\n")
+            _ => {
+                if self.spec(block).is_ok_and(|spec| spec.is_display_math()) {
+                    let tex = self.plain_text(block).ok()?;
+                    if !tex.is_empty() && !tex.contains("$$") {
+                        return Some(format!("$$\n{tex}\n$$"));
+                    }
                 }
-            },
+                match self.fence(block) {
+                    Some(fence) => fence,
+                    None => {
+                        // A block of a type unknown here still has its text.
+                        let lines = match self.spans(block) {
+                            Ok(spans) => inline(&spans, self.schema()),
+                            Err(_) => escape(self.raw_text(block).ok()?.to_string().trim()),
+                        };
+                        let lines: Vec<_> = lines.split('\n').map(line_start).collect();
+                        lines.join("\n")
+                    }
+                }
+            }
         })
     }
 }
@@ -210,7 +219,7 @@ struct Open {
 }
 
 /// Rich text as Markdown. A line break in it is a hard break.
-pub(super) fn inline(spans: &[Span]) -> String {
+pub(super) fn inline(spans: &[Span], schema: &Schema) -> String {
     let mut out = String::new();
     let mut open: Vec<Open> = Vec::new();
     // Space between two spans goes outside the marks that end or start there.
@@ -229,13 +238,38 @@ pub(super) fn inline(spans: &[Span]) -> String {
     let mut inner = None;
     // Where in `out` emphasis signs start, and where the text after them does.
     let mut started: Vec<(usize, usize)> = Vec::new();
+    let inline_math = schema
+        .inline_math_spec()
+        .map(|(spec, attr)| (spec.name(), attr));
     for span in spans {
-        let core = span.text.trim();
+        let (owned, verbatim_math) = if let Some(atom) = &span.atom {
+            if let Some((name, attr)) = inline_math
+                && atom.name == name
+                && let Some(Value::Str(tex)) = atom.attrs.get(attr)
+                && !tex.is_empty()
+                && !tex.contains('\n')
+            {
+                (Some(format!("${tex}$")), true)
+            } else {
+                let plain = schema
+                    .inline_spec(&atom.name)
+                    .map(|spec| spec.text(atom))
+                    .unwrap_or_default();
+                if plain.is_empty() {
+                    continue;
+                }
+                (Some(plain), false)
+            }
+        } else {
+            (None, false)
+        };
+        let raw = owned.as_deref().unwrap_or(span.text.as_str());
+        let core = raw.trim();
         if core.is_empty() {
-            space.push_str(&span.text);
+            space.push_str(raw);
             continue;
         }
-        let lead = span.text.len() - span.text.trim_start().len();
+        let lead = raw.len() - raw.trim_start().len();
         let on = |name: &str| {
             let value = span.marks.get(name);
             value.is_some_and(|value| *value != Value::Bool(false))
@@ -270,7 +304,7 @@ pub(super) fn inline(spans: &[Span]) -> String {
             inner = None;
         }
 
-        space.push_str(&span.text[..lead]);
+        space.push_str(&raw[..lead]);
         // A line cannot start with a break, nor can the text.
         if out.is_empty() && space.contains(['\n', '\r']) {
             space.clear();
@@ -281,7 +315,13 @@ pub(super) fn inline(spans: &[Span]) -> String {
             (guard, closed) = (false, None);
         }
 
-        let text = if on("code") { code(core) } else { escape(core) };
+        let text = if verbatim_math {
+            core.to_owned()
+        } else if on("code") {
+            code(core)
+        } else {
+            escape(core)
+        };
         let underscores = closed == Some('*') || inner == Some('*');
         let new = &wanted[kept..];
         let emphasis = new.first().is_some_and(|first| !first.starts_with("link "));
@@ -326,7 +366,7 @@ pub(super) fn inline(spans: &[Span]) -> String {
             None => out.push_str(&text),
         }
         (guard, closed) = (false, None);
-        space.push_str(&span.text[lead + core.len()..]);
+        space.push_str(&raw[lead + core.len()..]);
     }
     while let Some(mark) = open.pop() {
         out.push_str(&mark.close);
