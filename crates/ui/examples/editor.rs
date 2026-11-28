@@ -93,6 +93,23 @@ label.to
 
 Hover any identifier for its inferred signature and JSDoc. Click inside the block to edit hidden `---cut---`, `^?`, and `^|` Twoslash directives, then press Escape or click outside the block to fold back.
 
+### Equations (LaTeX)
+
+Inline equations like $E = mc^2$, Euler's identity $e^{i\pi} + 1 = 0$, and the normal density $\frac{1}{\sqrt{2\pi\sigma^2}} e^{-\frac{(x-\mu)^2}{2\sigma^2}}$ sit natively on the text baseline. Click any inline formula to edit it live, or type `$a^2 + b^2 = c^2$` in a paragraph.
+
+$$
+\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi} \tag{1}
+$$
+
+$$
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \times \mathbf{B} &= \mu_0 \mathbf{J} + \mu_0 \varepsilon_0 \frac{\partial \mathbf{E}}{\partial t}
+\end{aligned}
+$$
+
+Click a block equation to edit its LaTeX source with live KaTeX preview, then press Escape or click outside to fold back. Type `$$ ` at the start of a line or pick Equation (`/math`) in the slash menu to add a new one.
+
 ### Table
 
 | key | what it does |
@@ -275,7 +292,8 @@ fn main() {
             ("demo:logo".to_owned(), crate_dir.join("assets/logo.png")),
             ("demo:manifest".to_owned(), crate_dir.join("Cargo.toml")),
         ])));
-        let schema = Schema::builtin().inline(InlineSpec::new("mention", mention));
+        let schema = lotype_math::extend_schema(Schema::builtin())
+            .inline(InlineSpec::new("mention", mention));
         let mut doc = Document::new(schema);
         doc.insert_markdown(None, 0, TEXT)
             .expect("the tour is valid Markdown");
@@ -330,7 +348,8 @@ fn main() {
                         Some(path) => Some(MediaSource::Path(path.clone())),
                         None => Some(MediaSource::Url(reference.to_owned())),
                     });
-                lotype_code::install(view, cx)
+                let view = lotype_code::install(view, cx);
+                lotype_math::install(view, cx)
             });
             window.focus(&editor.focus_handle(cx), cx);
             cx.new(|_| Page(editor))
