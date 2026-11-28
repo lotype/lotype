@@ -343,3 +343,154 @@ fn char_anchor_tracks_inline_atom_across_remote_edits_and_detects_deletion() {
         .unwrap();
     assert!(doc_a.resolve_char(&anchor).is_none());
 }
+
+#[test]
+fn inline_math_input_rule_preserves_marks_and_skips_code_spans() {
+    let schema = extend_schema(Schema::builtin());
+    let mut doc = Document::new(schema);
+    let p1 = doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+    let p2 = doc.insert_block(None, 1, block::PARAGRAPH).unwrap();
+    let p3 = doc.insert_block(None, 2, block::PARAGRAPH).unwrap();
+    let mut editor = Editor::new(doc);
+
+    // Bold toggled on at offset 0 must survive `$x^2$` input-rule conversion.
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(p1, 0))))
+        .unwrap();
+    editor.toggle_mark("bold").unwrap();
+    for ch in "$x^2$".chars() {
+        editor.insert_text(&ch.to_string()).unwrap();
+    }
+    let spans1 = editor.document().spans(p1).unwrap();
+    assert_eq!(spans1.len(), 1);
+    assert_eq!(inline_tex(spans1[0].atom.as_ref().unwrap()), "x^2");
+    assert!(spans1[0].marks.contains_key("bold"));
+
+    // Bold toggled on after unmarked prose must also survive `$y$`.
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(p2, 0))))
+        .unwrap();
+    editor.insert_text("plain ").unwrap();
+    editor.toggle_mark("bold").unwrap();
+    for ch in "$y$".chars() {
+        editor.insert_text(&ch.to_string()).unwrap();
+    }
+    let atom2 = editor
+        .document()
+        .spans(p2)
+        .unwrap()
+        .into_iter()
+        .find(|span| span.atom.is_some())
+        .expect("inline math atom");
+    assert_eq!(inline_tex(atom2.atom.as_ref().unwrap()), "y");
+    assert!(atom2.marks.contains_key("bold"));
+
+    // A trailing `$` after an inline code span containing `$` must not swallow the code span.
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(p3, 0))))
+        .unwrap();
+    for ch in "See `$foo` bar$".chars() {
+        editor.insert_text(&ch.to_string()).unwrap();
+    }
+    let spans3 = editor.document().spans(p3).unwrap();
+    assert!(spans3.iter().all(|span| span.atom.is_none()));
+    assert!(
+        spans3
+            .iter()
+            .any(|span| span.text == "$foo" && span.marks.contains_key("code")),
+        "expected inline code span `$foo` to remain intact: {spans3:?}"
+    );
+}
+
+#[test]
+fn markdown_round_trips_math_in_fences_headings_tables_and_unsafe_tex() {
+    use lotype_core::{BlockSpec, Content, Error};
+
+    let schema = extend_schema(Schema::builtin())
+        .block(BlockSpec::new("callout", Content::Inline).written_as_fence("callout"));
+
+    // 1. Rich-text fenced block preserves inline math atoms on round-trip.
+    let mut doc = Document::new(schema.clone());
+    let callout = doc.insert_block(None, 0, "callout").unwrap();
+    let mut editor = Editor::new(doc);
+    editor
+        .set_selection(Some(Selection::caret(Pos::new(callout, 0))))
+        .unwrap();
+    editor.insert_text("Check ").unwrap();
+    editor.insert_atom(inline_atom("x^2")).unwrap();
+    let md = editor.document().to_markdown();
+    let mut reread = Document::new(schema.clone());
+    let ids = reread.insert_markdown(None, 0, &md).unwrap();
+    assert_eq!(reread.block_type(ids[0]).unwrap(), "callout");
+    let fence_atom = reread
+        .spans(ids[0])
+        .unwrap()
+        .into_iter()
+        .find_map(|s| s.atom)
+        .expect("inline math atom preserved inside rich-text fence");
+    assert_eq!(inline_tex(&fence_atom), "x^2");
+
+    // 2. Display math delimiters inside a heading stay inline inside the single heading block.
+    let mut heading_doc = Document::new(schema.clone());
+    let h_ids = heading_doc
+        .insert_markdown(
+            None,
+            0,
+            "# Theorem $$a^2 + b^2 = c^2$$ end\n\n# $$E = mc^2$$",
+        )
+        .unwrap();
+    assert_eq!(h_ids.len(), 2);
+    assert_eq!(heading_doc.block_type(h_ids[0]).unwrap(), block::HEADING);
+    assert_eq!(
+        heading_doc.plain_text(h_ids[0]).unwrap(),
+        "Theorem $a^2 + b^2 = c^2$ end"
+    );
+    assert_eq!(heading_doc.block_type(h_ids[1]).unwrap(), block::HEADING);
+    assert_eq!(heading_doc.plain_text(h_ids[1]).unwrap(), "$E = mc^2$");
+
+    // 3. Inline math with `\|` norm inside a table cell must not split the table columns.
+    let mut table_doc = Document::new(schema.clone());
+    let table = table_doc.insert_table(None, 0, 2, 2).unwrap();
+    let rows = table_doc.children(Some(table)).unwrap();
+    let cols = table_doc.columns(table).unwrap();
+    let cell = table_doc.cell(rows[0], cols[0]).unwrap();
+    let mut t_ed = Editor::new(table_doc);
+    t_ed.set_selection(Some(Selection::caret(Pos::new(cell, 0))))
+        .unwrap();
+    t_ed.insert_atom(inline_atom(r"\|x\|")).unwrap();
+    let table_md = t_ed.document().to_markdown();
+    assert!(
+        !table_md.contains(r"\\|"),
+        "must not turn `\\|` into unescaped `\\\\|` in table: {table_md}"
+    );
+    let mut table_reread = Document::new(schema.clone());
+    let t_ids = table_reread.insert_markdown(None, 0, &table_md).unwrap();
+    assert_eq!(table_reread.block_type(t_ids[0]).unwrap(), block::TABLE);
+    assert_eq!(table_reread.columns(t_ids[0]).unwrap().len(), 2);
+
+    // 4. Delimiter-unsafe inline math degrades cleanly without swallowing following prose.
+    let mut unsafe_doc = Document::new(schema.clone());
+    let p = unsafe_doc.insert_block(None, 0, block::PARAGRAPH).unwrap();
+    let mut u_ed = Editor::new(unsafe_doc);
+    u_ed.set_selection(Some(Selection::caret(Pos::new(p, 0))))
+        .unwrap();
+    for bad in [r"a \", " x ", r"\frac{1", "a $ b"] {
+        u_ed.insert_atom(inline_atom(bad)).unwrap();
+        u_ed.insert_text(" tail ").unwrap();
+    }
+    let unsafe_md = u_ed.document().to_markdown();
+    let mut unsafe_reread = Document::new(schema);
+    let u_ids = unsafe_reread.insert_markdown(None, 0, &unsafe_md).unwrap();
+    let reread_text = unsafe_reread.plain_text(u_ids[0]).unwrap();
+    assert_eq!(reread_text.matches("tail").count(), 4, "{reread_text}");
+
+    // 5. Public `replace_atom` and `remove_atom` reject `usize::MAX` without overflowing.
+    assert!(matches!(
+        u_ed.replace_atom(Pos::new(p, usize::MAX), inline_atom("z")),
+        Err(Error::OutOfBounds { .. })
+    ));
+    assert!(matches!(
+        u_ed.remove_atom(Pos::new(p, usize::MAX)),
+        Err(Error::OutOfBounds { .. })
+    ));
+}
