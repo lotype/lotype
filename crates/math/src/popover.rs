@@ -61,13 +61,18 @@ pub(crate) fn open_inline_editor(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
+    let target_pos = Pos::new(block, offset);
+    if let Some(focus) = state.read(cx).inline_form.as_ref().and_then(|form| {
+        let doc = editor_view.read(cx).editor().document();
+        (form.resolve_pos(doc) == Some(target_pos)).then(|| form.input.read(cx).focus_handle(cx))
+    }) {
+        window.focus(&focus, cx);
+        return;
+    }
+
     let (anchor, bounds) = {
         let view = editor_view.read(cx);
-        let Ok(anchor) = view
-            .editor()
-            .document()
-            .anchor_char(Pos::new(block, offset))
-        else {
+        let Ok(anchor) = view.editor().document().anchor_char(target_pos) else {
             return;
         };
         let Some(bounds) = view.range_bounds(block, offset..offset + OBJECT.len_utf8()) else {
@@ -75,6 +80,22 @@ pub(crate) fn open_inline_editor(
         };
         (anchor, bounds)
     };
+
+    // Commit any active draft before opening the new popover; `anchor` was
+    // captured first so deleting an empty earlier atom keeps this target pinned.
+    if state.read(cx).inline_form.is_some() {
+        commit_inline_editor(state, editor_view, window, cx);
+    }
+
+    let Some(pos) = editor_view
+        .read(cx)
+        .editor()
+        .document()
+        .resolve_char(&anchor)
+    else {
+        return;
+    };
+
     let input = cx.new(|cx| {
         let mut field = TextareaState::new(window, cx)
             .placeholder(r"E = mc^2")
@@ -124,8 +145,16 @@ pub(crate) fn open_inline_editor(
                     if still_open {
                         let state_entity = cx.entity();
                         let editor = editor_for_sub.clone();
+                        let input_for_blur = input_for_sub.clone();
                         window.on_next_frame(move |window, cx| {
-                            commit_inline_editor(&state_entity, &editor, window, cx);
+                            let same_form = state_entity
+                                .read(cx)
+                                .inline_form
+                                .as_ref()
+                                .is_some_and(|form| form.input == input_for_blur);
+                            if same_form {
+                                commit_inline_editor(&state_entity, &editor, window, cx);
+                            }
                         });
                     }
                 }
@@ -134,13 +163,14 @@ pub(crate) fn open_inline_editor(
         );
         state.inline_form = Some(InlineMathForm {
             anchor,
-            block,
-            offset,
+            block: pos.block,
+            offset: pos.offset,
             bounds,
             last_valid: initial_valid,
             input,
             _sub: sub,
         });
+        state.schedule_reconcile(editor_view.clone(), window, cx);
     });
     window.focus(&focus, cx);
     editor_view.update(cx, |_, cx| cx.notify());

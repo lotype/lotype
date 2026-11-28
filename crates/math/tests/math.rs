@@ -494,3 +494,73 @@ fn markdown_round_trips_math_in_fences_headings_tables_and_unsafe_tex() {
         Err(Error::OutOfBounds { .. })
     ));
 }
+
+#[test]
+fn display_math_falls_back_to_fence_when_tex_would_break_paragraph_math() {
+    let schema = extend_schema(Schema::builtin());
+
+    for tex in [
+        "x = 1\n\ny = 2",
+        "a + b\n- c + d",
+        "f(x)\n> 0",
+        "f(x)\n>0",
+        "a + b\n# heading",
+        "a + b\n1. item",
+        "a + b\n---",
+        "a + b\n=",
+        "a + b\n| --- |",
+        r"\frac{1",
+        r"a \",
+        "a $$ b",
+        "a $ b",
+        " x = 1 ",
+    ] {
+        let mut doc = Document::new(schema.clone());
+        let id = doc.insert_block(None, 0, BLOCK_TYPE).unwrap();
+        let mut ed = Editor::new(doc);
+        ed.set_selection(Some(Selection::caret(Pos::new(id, 0))))
+            .unwrap();
+        ed.insert_text(tex).unwrap();
+
+        let md = ed.document().to_markdown();
+        assert!(
+            md.starts_with("```math\n"),
+            "expected fenced fallback for {tex:?}, got:\n{md}"
+        );
+
+        let mut reread = Document::new(schema.clone());
+        let ids = reread.insert_markdown(None, 0, &md).unwrap();
+        assert_eq!(ids.len(), 1, "unexpected block split for {tex:?}:\n{md}");
+        assert_eq!(reread.block_type(ids[0]).unwrap(), BLOCK_TYPE);
+        assert_eq!(block_tex(&reread, ids[0]).as_deref(), Some(tex));
+    }
+
+    for safe_tex in [
+        "f(x)\n= x^2",
+        "\\begin{aligned}\n  a &= 1 \\\\\n  b &= 2\n\\end{aligned}",
+        "\\begin{cases}\n  x & x > 0 \\\\\n  -x & x \\le 0\n\\end{cases}",
+    ] {
+        let mut doc = Document::new(schema.clone());
+        let id = doc.insert_block(None, 0, BLOCK_TYPE).unwrap();
+        let mut ed = Editor::new(doc);
+        ed.set_selection(Some(Selection::caret(Pos::new(id, 0))))
+            .unwrap();
+        ed.insert_text(safe_tex).unwrap();
+
+        let md = ed.document().to_markdown();
+        assert!(
+            md.starts_with("$$\n"),
+            "expected $$ display math for {safe_tex:?}, got:\n{md}"
+        );
+
+        let mut reread = Document::new(schema.clone());
+        let ids = reread.insert_markdown(None, 0, &md).unwrap();
+        assert_eq!(
+            ids.len(),
+            1,
+            "unexpected block split for {safe_tex:?}:\n{md}"
+        );
+        assert_eq!(reread.block_type(ids[0]).unwrap(), BLOCK_TYPE);
+        assert_eq!(block_tex(&reread, ids[0]).as_deref(), Some(safe_tex));
+    }
+}
