@@ -10,13 +10,13 @@ use gpui::{
 };
 use gpui_component::Sizable as _;
 use gpui_component::input::{InputEvent, Position, Textarea, TextareaState};
-use lotype_core::{BlockId, CharAnchor, Document, OBJECT, Pos};
+use lotype_core::{Atom, BlockId, CharAnchor, Document, OBJECT, Pos, Selection};
 use lotype_ui::EditorView;
 
 use crate::card::{EquationCardProps, render_equation_card};
 use crate::render::CachedLayout;
 use crate::view::MathState;
-use crate::{INLINE_TYPE, inline_atom};
+use crate::{INLINE_TYPE, inline_atom, inline_tex};
 
 pub(crate) struct InlineMathForm {
     pub(crate) anchor: CharAnchor,
@@ -30,18 +30,57 @@ pub(crate) struct InlineMathForm {
 
 impl InlineMathForm {
     /// Resolves this form's CRDT anchor to its current UTF-8 byte offset and
-    /// verifies that the pinned character is still an `inline_math` atom.
-    pub(crate) fn resolve_pos(&self, doc: &Document) -> Option<Pos> {
+    /// inline equation atom, if the pinned character is still an `inline_math` atom.
+    pub(crate) fn resolve_atom(&self, doc: &Document) -> Option<(Pos, Atom)> {
         let pos = doc.resolve_char(&self.anchor)?;
         let spans = doc
             .spans_in(pos.block, pos.offset..pos.offset + OBJECT.len_utf8())
             .ok()?;
-        let is_inline_math = spans
+        let atom = spans
             .into_iter()
             .next()
             .and_then(|span| span.atom)
-            .is_some_and(|atom| atom.name == INLINE_TYPE);
-        is_inline_math.then_some(pos)
+            .filter(|atom| atom.name == INLINE_TYPE)?;
+        Some((pos, atom))
+    }
+
+    /// Resolves this form's CRDT anchor to its current UTF-8 byte offset and
+    /// verifies that the pinned character is still an `inline_math` atom.
+    pub(crate) fn resolve_pos(&self, doc: &Document) -> Option<Pos> {
+        self.resolve_atom(doc).map(|(pos, _)| pos)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommitMode {
+    /// Explicit confirmation inside the popover (`Enter` or `Done`): places
+    /// the caret at/after the equation and focuses `EditorView`.
+    Explicit,
+    /// Implicit commit when focus moves elsewhere (`Blur`) or when switching
+    /// directly to another inline equation: preserves the active selection
+    /// (adjusted if atom removal shifts offsets) and leaves focus untouched.
+    Background,
+}
+
+fn adjust_pos_for_removed_atom(pos: Pos, removed_at: Pos) -> Pos {
+    if pos.block != removed_at.block || pos.offset <= removed_at.offset {
+        return pos;
+    }
+    let atom_end = removed_at.offset + OBJECT.len_utf8();
+    if pos.offset >= atom_end {
+        Pos::new(pos.block, pos.offset - OBJECT.len_utf8())
+    } else {
+        Pos::new(pos.block, removed_at.offset)
+    }
+}
+
+fn adjust_selection_for_removed_atom(selection: Selection, removed_at: Pos) -> Selection {
+    match selection {
+        Selection::Text { anchor, head } => Selection::Text {
+            anchor: adjust_pos_for_removed_atom(anchor, removed_at),
+            head: adjust_pos_for_removed_atom(head, removed_at),
+        },
+        other => other,
     }
 }
 
@@ -84,7 +123,7 @@ pub(crate) fn open_inline_editor(
     // Commit any active draft before opening the new popover; `anchor` was
     // captured first so deleting an empty earlier atom keeps this target pinned.
     if state.read(cx).inline_form.is_some() {
-        commit_inline_editor(state, editor_view, window, cx);
+        commit_inline_editor(state, editor_view, CommitMode::Background, window, cx);
     }
 
     let Some(pos) = editor_view
@@ -135,7 +174,7 @@ pub(crate) fn open_inline_editor(
                     editor_for_sub.update(cx, |_, cx| cx.notify());
                 }
                 InputEvent::PressEnter { shift: false, .. } => {
-                    commit_from_state(state, &editor_for_sub, window, cx);
+                    commit_from_state(state, &editor_for_sub, CommitMode::Explicit, window, cx);
                 }
                 InputEvent::Blur => {
                     let still_open = state
@@ -153,7 +192,13 @@ pub(crate) fn open_inline_editor(
                                 .as_ref()
                                 .is_some_and(|form| form.input == input_for_blur);
                             if same_form {
-                                commit_inline_editor(&state_entity, &editor, window, cx);
+                                commit_inline_editor(
+                                    &state_entity,
+                                    &editor,
+                                    CommitMode::Background,
+                                    window,
+                                    cx,
+                                );
                             }
                         });
                     }
@@ -180,29 +225,56 @@ fn apply_inline_commit(
     form: InlineMathForm,
     normalized: String,
     editor_view: &Entity<EditorView>,
+    mode: CommitMode,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
     editor_view.update(cx, |view, cx| {
-        if let Some(pos) = form.resolve_pos(view.editor().document()) {
-            view.update_editor(cx, |editor| {
-                if normalized.is_empty() {
+        if let Some((pos, atom)) = form.resolve_atom(view.editor().document()) {
+            if normalized.is_empty() {
+                view.update_editor(cx, |editor| {
+                    let prev_sel = (mode == CommitMode::Background)
+                        .then(|| editor.selection().cloned())
+                        .flatten();
                     let _ = editor.remove_atom(pos);
-                } else {
+                    if mode == CommitMode::Background {
+                        let restored =
+                            prev_sel.map(|sel| adjust_selection_for_removed_atom(sel, pos));
+                        let _ = editor.set_selection(restored);
+                    }
+                });
+            } else if normalized != inline_tex(&atom) {
+                view.update_editor(cx, |editor| {
+                    let prev_sel = (mode == CommitMode::Background)
+                        .then(|| editor.selection().cloned())
+                        .flatten();
                     let _ = editor.replace_atom(pos, inline_atom(normalized));
-                }
-            });
+                    if mode == CommitMode::Background {
+                        let _ = editor.set_selection(prev_sel);
+                    }
+                });
+            } else if mode == CommitMode::Explicit {
+                let after = Pos::new(pos.block, pos.offset + OBJECT.len_utf8());
+                view.update_editor(cx, |editor| {
+                    let _ = editor.set_selection(Some(Selection::caret(after)));
+                });
+            } else {
+                cx.notify();
+            }
         } else {
             cx.notify();
         }
-        let focus = view.focus_handle(cx);
-        window.focus(&focus, cx);
+        if mode == CommitMode::Explicit {
+            let focus = view.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
     });
 }
 
 fn commit_from_state(
     state: &mut MathState,
     editor_view: &Entity<EditorView>,
+    mode: CommitMode,
     window: &mut Window,
     cx: &mut gpui::Context<MathState>,
 ) {
@@ -210,12 +282,13 @@ fn commit_from_state(
         return;
     };
     let normalized = normalize_inline_tex(&form.input.read(cx).value());
-    apply_inline_commit(form, normalized, editor_view, window, cx);
+    apply_inline_commit(form, normalized, editor_view, mode, window, cx);
 }
 
-pub(crate) fn commit_inline_editor(
+fn commit_inline_editor(
     state: &Entity<MathState>,
     editor_view: &Entity<EditorView>,
+    mode: CommitMode,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
@@ -227,7 +300,7 @@ pub(crate) fn commit_inline_editor(
         return;
     };
     let normalized = normalize_inline_tex(&value);
-    apply_inline_commit(form, normalized, editor_view, window, cx);
+    apply_inline_commit(form, normalized, editor_view, mode, window, cx);
 }
 
 pub(crate) fn cancel_inline_editor(
@@ -344,7 +417,13 @@ pub(crate) fn render_inline_popover(
                 cancel_inline_editor(&state_for_key, &editor_for_key, window, cx);
             } else if event.keystroke.key == "enter" && !event.keystroke.modifiers.shift {
                 cx.stop_propagation();
-                commit_inline_editor(&state_for_key, &editor_for_key, window, cx);
+                commit_inline_editor(
+                    &state_for_key,
+                    &editor_for_key,
+                    CommitMode::Explicit,
+                    window,
+                    cx,
+                );
             }
         })
         .child(Textarea::new(&input).appearance(false).xsmall())
@@ -375,7 +454,13 @@ pub(crate) fn render_inline_popover(
             done_id: SharedString::from("inline-math-done"),
             done_debug_id: "inline-math-done",
             on_done: Box::new(move |_, window, cx| {
-                commit_inline_editor(&state_for_done, &editor_for_done, window, cx);
+                commit_inline_editor(
+                    &state_for_done,
+                    &editor_for_done,
+                    CommitMode::Explicit,
+                    window,
+                    cx,
+                );
             }),
             floating: true,
             debug_id: "inline-math-popover",
