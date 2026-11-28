@@ -30,6 +30,16 @@ impl Version {
     }
 }
 
+/// A CRDT-stable anchor to a specific character in a block's text (such as an
+/// inline atom's `OBJECT` marker) that tracks its UTF-8 byte offset across
+/// local and remote edits and resolves to `None` once that character or block
+/// is deleted.
+#[derive(Debug, Clone)]
+pub struct CharAnchor {
+    block: BlockId,
+    cursor: Cursor,
+}
+
 /// A selection that follows its text through changes from other peers.
 pub(crate) enum Anchored {
     Text { anchor: Anchor, head: Anchor },
@@ -178,6 +188,45 @@ impl Document {
             Selection::Blocks(blocks) => Anchored::Blocks(blocks.clone()),
             Selection::Cells { anchor, head } => Anchored::Cells(*anchor, *head),
         }
+    }
+
+    /// Pins the character starting at `pos` so its byte offset can be resolved
+    /// across local and remote edits via [`Document::resolve_char`].
+    pub fn anchor_char(&self, pos: Pos) -> Result<CharAnchor> {
+        let text = self.inline(pos.block)?;
+        let len = text.len_utf8();
+        if pos.offset >= len {
+            return Err(Error::OutOfBounds {
+                index: pos.offset,
+                len,
+            });
+        }
+        let unicode = crate::text::unicode_offset(&text, pos.offset)?;
+        let cursor = text
+            .get_cursor(unicode, Side::Middle)
+            .ok_or(Error::OutOfBounds {
+                index: pos.offset,
+                len,
+            })?;
+        Ok(CharAnchor {
+            block: pos.block,
+            cursor,
+        })
+    }
+
+    /// Resolves a [`CharAnchor`] to the character's current position, or `None`
+    /// if the character or its block has been deleted.
+    pub fn resolve_char(&self, anchor: &CharAnchor) -> Option<Pos> {
+        let text = self.inline(anchor.block).ok()?;
+        if anchor.cursor.container != text.id() {
+            return None;
+        }
+        let position = self.doc.get_cursor_pos(&anchor.cursor).ok()?;
+        if position.update.is_some() {
+            return None;
+        }
+        let offset = text.convert_pos(position.current.pos, PosType::Unicode, PosType::Bytes)?;
+        (offset < text.len_utf8()).then_some(Pos::new(anchor.block, offset))
     }
 
     /// Where the selection is now. A caret whose block is gone has no place,
