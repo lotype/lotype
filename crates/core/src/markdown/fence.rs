@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use super::read::{Node, Reader};
 use super::write::{inline, line_start, longest_run};
-use crate::{BlockId, Content, Document, Role, Span, Value, attr};
+use crate::{BlockId, Content, Document, Role, Schema, Span, Value, attr};
 
 impl Document {
     /// `block` as the fence its type is written as, where it is.
@@ -66,7 +66,7 @@ impl Document {
             (_, Role::Code) => {}
             _ => {
                 let text: String = node.spans.drain(..).map(|span| span.text).collect();
-                node.spans = lines(&text);
+                node.spans = lines(&text, self.schema());
             }
         }
     }
@@ -75,9 +75,9 @@ impl Document {
 /// The text of `markdown` with its marks, a line for each block of it,
 /// those nested in others too: a fence holds text, and none of it is lost
 /// for looking like a list.
-fn lines(markdown: &str) -> Vec<Span> {
+fn lines(markdown: &str, schema: &Schema) -> Vec<Span> {
     let mut spans = Vec::new();
-    let mut nodes = Reader::default().read(markdown);
+    let mut nodes = Reader::for_schema(schema).read(markdown);
     nodes.reverse();
     while let Some(mut node) = nodes.pop() {
         nodes.extend(node.children.drain(..).rev());

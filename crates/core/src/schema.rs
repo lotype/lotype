@@ -307,6 +307,8 @@ pub struct Schema {
     order: Vec<String>,
     marks: HashMap<String, MarkSpec>,
     inlines: HashMap<String, InlineSpec>,
+    /// The names of the inline atom types, in the order they were added.
+    inline_order: Vec<String>,
     text_block: Option<String>,
 }
 
@@ -445,8 +447,9 @@ impl Schema {
 
     /// The inline atom type and attribute key registered for inline math (`$...$`), if any.
     pub fn inline_math_spec(&self) -> Option<(&InlineSpec, &str)> {
-        self.inlines
-            .values()
+        self.inline_order
+            .iter()
+            .filter_map(|name| self.inlines.get(name))
             .find_map(|spec| Some((spec, spec.inline_math_attr()?)))
     }
 
@@ -458,7 +461,10 @@ impl Schema {
 
     /// Adds a type of inline atom, replacing any existing one with the same name.
     pub fn inline(mut self, spec: InlineSpec) -> Self {
-        self.inlines.insert(spec.name.clone(), spec);
+        let name = spec.name.clone();
+        if self.inlines.insert(name.clone(), spec).is_none() {
+            self.inline_order.push(name);
+        }
         self
     }
 
@@ -533,5 +539,18 @@ mod tests {
         let schema = Schema::builtin()
             .block(BlockSpec::new(block::HEADING, Content::Inline).with_children());
         assert!(schema.block_spec(block::HEADING).unwrap().allows_children());
+    }
+
+    #[test]
+    fn inline_math_spec_follows_registration_order() {
+        fn plain(_: &Atom) -> String {
+            String::new()
+        }
+        let schema = Schema::builtin()
+            .inline(InlineSpec::new("first_math", plain).as_inline_math("tex"))
+            .inline(InlineSpec::new("second_math", plain).as_inline_math("src"));
+        let (spec, attr) = schema.inline_math_spec().unwrap();
+        assert_eq!(spec.name(), "first_math");
+        assert_eq!(attr, "tex");
     }
 }

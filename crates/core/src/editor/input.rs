@@ -39,6 +39,11 @@ impl Editor {
             return Ok(());
         }
         if let Some(rule) = rules::inline_math_rule(typed)
+            && !self
+                .doc
+                .spans_in(block, rule.replace.clone())?
+                .iter()
+                .any(|span| span.marks.contains_key(mark::CODE))
             && let Some((name, attr)) = self
                 .doc
                 .schema()
@@ -123,10 +128,12 @@ impl Editor {
         atom_name: &str,
         attr_key: &str,
     ) -> Result<()> {
-        let marks = self.doc.marks_at(Pos::new(block, rule.replace.start))?;
+        let start = rule.replace.start;
+        let marks = self
+            .doc
+            .marks_in(Pos::new(block, start), Pos::new(block, rule.replace.end))?;
         let atom = Atom::new(atom_name).attr(attr_key, rule.tex);
         let span = Span::atom(atom, marks);
-        let start = rule.replace.start;
         let caret = Pos::new(block, start + OBJECT.len_utf8());
         self.apply(|doc, _| {
             doc.delete_text(block, rule.replace)?;

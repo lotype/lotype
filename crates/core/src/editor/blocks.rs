@@ -159,7 +159,14 @@ impl Editor {
     /// Replaces the inline atom at `at` with `atom`, preserving its marks, as
     /// one undo step. Places the caret immediately after the atom.
     pub fn replace_atom(&mut self, at: Pos, atom: Atom) -> Result<()> {
-        let end = at.offset + OBJECT.len_utf8();
+        self.doc.check_pos(at)?;
+        let end = at
+            .offset
+            .checked_add(OBJECT.len_utf8())
+            .ok_or(Error::InvalidRange {
+                start: at.offset,
+                end: usize::MAX,
+            })?;
         let spans = self.doc.spans_in(at.block, at.offset..end)?;
         let Some(existing) = spans.first().filter(|span| span.atom.is_some()) else {
             return Err(Error::InvalidRange {
@@ -177,7 +184,14 @@ impl Editor {
 
     /// Removes the inline atom at `at`, as one undo step, placing the caret at `at`.
     pub fn remove_atom(&mut self, at: Pos) -> Result<()> {
-        let end = at.offset + OBJECT.len_utf8();
+        self.doc.check_pos(at)?;
+        let end = at
+            .offset
+            .checked_add(OBJECT.len_utf8())
+            .ok_or(Error::InvalidRange {
+                start: at.offset,
+                end: usize::MAX,
+            })?;
         let spans = self.doc.spans_in(at.block, at.offset..end)?;
         if !spans.first().is_some_and(|span| span.atom.is_some()) {
             return Err(Error::InvalidRange {

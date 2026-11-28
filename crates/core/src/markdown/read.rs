@@ -133,11 +133,15 @@ impl Reader {
             .stack
             .iter()
             .any(|(c, _)| matches!(c, Container::Table | Container::Row));
+        let in_heading = self
+            .leaf
+            .as_ref()
+            .is_some_and(|leaf| leaf.heading || leaf.node.block_type == block::HEADING);
         let Some(block_type) = self.display_math.clone() else {
             self.plain(&format!("$${text}$$"), false);
             return;
         };
-        if self.described.is_some() || self.in_file_link || in_table {
+        if self.described.is_some() || self.in_file_link || in_table || in_heading {
             self.inline_math_event(text.trim());
             return;
         }

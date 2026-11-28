@@ -157,10 +157,8 @@ impl Document {
                     let cells = columns.iter().map(|column| {
                         let cell = self.cell(*row, *column);
                         let spans = cell.and_then(|cell| self.spans(cell)).unwrap_or_default();
-                        // A cell is one line, and a bar ends it even in code.
-                        inline(&spans, self.schema())
-                            .replace("\\\n", " ")
-                            .replace('|', "\\|")
+                        // A cell is one line, and an unescaped bar ends it even in code.
+                        escape_table_pipes(&inline(&spans, self.schema()).replace("\\\n", " "))
                     });
                     format!("| {} |", cells.collect::<Vec<_>>().join(" | "))
                 };
@@ -184,10 +182,16 @@ impl Document {
                 format!("{} {title}", "#".repeat(level))
             }
             _ => {
-                if self.spec(block).is_ok_and(|spec| spec.is_display_math()) {
+                if let Ok(spec) = self.spec(block)
+                    && spec.is_display_math()
+                {
                     let tex = self.plain_text(block).ok()?;
-                    if !tex.is_empty() && !tex.contains("$$") {
-                        return Some(format!("$$\n{tex}\n$$"));
+                    if !tex.contains("$$") && (!tex.is_empty() || spec.fence().is_none()) {
+                        return Some(if tex.is_empty() {
+                            "$$\n$$".to_owned()
+                        } else {
+                            format!("$$\n{tex}\n$$")
+                        });
                     }
                 }
                 match self.fence(block) {
@@ -205,6 +209,67 @@ impl Document {
             }
         })
     }
+}
+
+/// Escapes any `|` in a GFM table cell that is not already preceded by an odd
+/// number of backslashes (so LaTeX norms like `$\|x\|$` do not become `$\\|x\\|$`
+/// and split the table cell).
+fn escape_table_pipes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut backslashes = 0usize;
+    for c in text.chars() {
+        match c {
+            '\\' => {
+                backslashes += 1;
+                out.push(c);
+            }
+            '|' => {
+                if backslashes.is_multiple_of(2) {
+                    out.push('\\');
+                }
+                out.push('|');
+                backslashes = 0;
+            }
+            _ => {
+                backslashes = 0;
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// Whether `tex` can be emitted verbatim as `$tex$` without breaking
+/// `pulldown-cmark`'s `ENABLE_MATH` delimiter or brace-context matching.
+fn is_inline_math_markdown_safe(tex: &str) -> bool {
+    if tex.is_empty()
+        || tex.contains(['\n', '\r'])
+        || tex.starts_with(|c: char| c.is_ascii_whitespace())
+        || tex.ends_with(|c: char| c.is_ascii_whitespace())
+    {
+        return false;
+    }
+    let mut escaped = false;
+    let mut brace_depth = 0usize;
+    for c in tex.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '$' => return false,
+            '{' => brace_depth += 1,
+            '}' => {
+                let Some(next) = brace_depth.checked_sub(1) else {
+                    return false;
+                };
+                brace_depth = next;
+            }
+            _ => {}
+        }
+    }
+    !escaped && brace_depth == 0
 }
 
 pub(super) fn longest_run(text: &str, of: char) -> usize {
@@ -246,8 +311,7 @@ pub(super) fn inline(spans: &[Span], schema: &Schema) -> String {
             if let Some((name, attr)) = inline_math
                 && atom.name == name
                 && let Some(Value::Str(tex)) = atom.attrs.get(attr)
-                && !tex.is_empty()
-                && !tex.contains('\n')
+                && is_inline_math_markdown_safe(tex)
             {
                 (Some(format!("${tex}$")), true)
             } else {
