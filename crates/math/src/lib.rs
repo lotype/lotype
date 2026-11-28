@@ -45,13 +45,15 @@ pub fn block_spec() -> BlockSpec {
         .without_style()
         .written_as_fence(BLOCK_TYPE)
         .as_display_math()
-        .with_hint("display LaTeX equations (`$$...$$` or ` ```math `)")
+        .with_hint("display LaTeX equations")
 }
 
 /// [`InlineSpec`] for inline equations: stores LaTeX in [`TEX_ATTR`], formats
 /// as `$...$` in plain text and Markdown, and enables the `$...$` input rule.
 pub fn inline_spec() -> InlineSpec {
-    InlineSpec::new(INLINE_TYPE, inline_plain_text).as_inline_math(TEX_ATTR)
+    InlineSpec::new(INLINE_TYPE, inline_plain_text)
+        .as_inline_math(TEX_ATTR)
+        .with_hint("inline LaTeX equations (`$...$`)")
 }
 
 /// Registers both [`block_spec`] and [`inline_spec`] on `schema`.

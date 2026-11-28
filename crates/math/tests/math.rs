@@ -564,3 +564,15 @@ fn display_math_falls_back_to_fence_when_tex_would_break_paragraph_math() {
         assert_eq!(block_tex(&reread, ids[0]).as_deref(), Some(safe_tex));
     }
 }
+
+#[test]
+fn schema_specs_expose_concise_ai_hints() {
+    assert_eq!(
+        lotype_math::block_spec().hint(),
+        Some("display LaTeX equations")
+    );
+    assert_eq!(
+        lotype_math::inline_spec().hint(),
+        Some("inline LaTeX equations (`$...$`)")
+    );
+}

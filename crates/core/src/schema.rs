@@ -253,6 +253,7 @@ pub struct InlineSpec {
     name: String,
     text: fn(&Atom) -> String,
     math_attr: Option<String>,
+    hint: Option<String>,
 }
 
 impl InlineSpec {
@@ -264,6 +265,7 @@ impl InlineSpec {
             name,
             text,
             math_attr: None,
+            hint: None,
         }
     }
 
@@ -272,6 +274,14 @@ impl InlineSpec {
     /// round-tripping and the `$...$` inline input rule.
     pub fn as_inline_math(mut self, attr: impl Into<String>) -> Self {
         self.math_attr = Some(attr.into());
+        self
+    }
+
+    /// A few words saying what this inline atom is and how it is written in
+    /// Markdown, for a model that edits the document, such as
+    /// `"inline LaTeX equations (`$...$`)"`.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
         self
     }
 
@@ -288,6 +298,12 @@ impl InlineSpec {
     /// Attribute name storing LaTeX source when this spec is inline math.
     pub fn inline_math_attr(&self) -> Option<&str> {
         self.math_attr.as_deref()
+    }
+
+    /// What this inline atom is and how it is written in Markdown, where a
+    /// description was given.
+    pub fn hint(&self) -> Option<&str> {
+        self.hint.as_deref()
     }
 }
 
@@ -445,11 +461,16 @@ impl Schema {
         self.block_specs().find(|spec| spec.is_display_math())
     }
 
-    /// The inline atom type and attribute key registered for inline math (`$...$`), if any.
-    pub fn inline_math_spec(&self) -> Option<(&InlineSpec, &str)> {
+    /// The inline atom types, in the order they were added.
+    pub fn inline_specs(&self) -> impl Iterator<Item = &InlineSpec> {
         self.inline_order
             .iter()
             .filter_map(|name| self.inlines.get(name))
+    }
+
+    /// The inline atom type and attribute key registered for inline math (`$...$`), if any.
+    pub fn inline_math_spec(&self) -> Option<(&InlineSpec, &str)> {
+        self.inline_specs()
             .find_map(|spec| Some((spec, spec.inline_math_attr()?)))
     }
 
@@ -547,10 +568,22 @@ mod tests {
             String::new()
         }
         let schema = Schema::builtin()
-            .inline(InlineSpec::new("first_math", plain).as_inline_math("tex"))
-            .inline(InlineSpec::new("second_math", plain).as_inline_math("src"));
+            .inline(
+                InlineSpec::new("first_math", plain)
+                    .as_inline_math("tex")
+                    .with_hint("first math (`$...$`)"),
+            )
+            .inline(InlineSpec::new("second_math", plain).as_inline_math("src"))
+            .inline(
+                InlineSpec::new("first_math", plain)
+                    .as_inline_math("latex")
+                    .with_hint("updated math (`$...$`)"),
+            );
+        let names: Vec<_> = schema.inline_specs().map(InlineSpec::name).collect();
+        assert_eq!(names, ["first_math", "second_math"]);
         let (spec, attr) = schema.inline_math_spec().unwrap();
         assert_eq!(spec.name(), "first_math");
-        assert_eq!(attr, "tex");
+        assert_eq!(attr, "latex");
+        assert_eq!(spec.hint(), Some("updated math (`$...$`)"));
     }
 }

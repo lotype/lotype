@@ -1,6 +1,6 @@
 //! What a model is told of a document.
 
-use lotype_core::{BlockId, BlockSpec, Content, Document, Role, Schema, Selection};
+use lotype_core::{BlockId, BlockSpec, Content, Document, InlineSpec, Role, Schema, Selection};
 use serde_json::{Value, json};
 
 /// A document as a model is shown it: every block with its id, how deep it
@@ -69,12 +69,9 @@ impl DocumentState {
     }
 }
 
-/// How a block type the schema writes as a fence is written, in a few
-/// words: its tag, the attributes after it, and what goes inside.
-fn fence(spec: &BlockSpec, tag: &str) -> String {
-    let named = spec.hint().unwrap_or(spec.name());
-    let attrs = spec.markdown_attrs();
-    let attrs = match attrs {
+/// How a fenced block's tag, attributes, and body format are described to the model.
+fn fence_clause(spec: &BlockSpec, tag: &str) -> String {
+    let attrs = match spec.markdown_attrs() {
         [] => String::new(),
         attrs => {
             let keys: Vec<_> = attrs.iter().map(|key| format!("`{key}`")).collect();
@@ -89,18 +86,48 @@ fn fence(spec: &BlockSpec, tag: &str) -> String {
         (_, Role::Code) => "its text inside as it is",
         _ => "its text inside",
     };
-    format!("{named} (a fenced block tagged `{tag}`{attrs}, and {inside})")
+    format!("a fenced block tagged `{tag}`{attrs}, and {inside}")
+}
+
+fn block_description(spec: &BlockSpec) -> Option<String> {
+    let named = spec.hint().unwrap_or(spec.name());
+    match (spec.is_display_math(), spec.fence()) {
+        (true, Some(tag)) => Some(format!(
+            "{named} (`$$\\n...\\n$$`, or {})",
+            fence_clause(spec, tag)
+        )),
+        (true, None) => match spec.hint() {
+            Some(hint) if hint.contains("$$") => Some(hint.to_owned()),
+            _ => Some(format!("{named} (`$$\\n...\\n$$`)")),
+        },
+        (false, Some(tag)) => Some(format!("{named} ({})", fence_clause(spec, tag))),
+        (false, None) => spec.hint().map(str::to_owned),
+    }
+}
+
+fn inline_description(spec: &InlineSpec) -> Option<String> {
+    match (spec.hint(), spec.inline_math_attr()) {
+        (Some(hint), Some(_)) if !hint.contains('$') => Some(format!("{hint} (`$...$`)")),
+        (Some(hint), _) => Some(hint.to_owned()),
+        (None, Some(_)) => Some(format!("{} (`$...$`)", spec.name())),
+        (None, None) => None,
+    }
 }
 
 /// What the model is to do, with the Markdown the document's schema takes:
-/// each of its block types says how it is written, those an application
-/// added as those built in.
+/// each of its block and inline types says how it is written, those an
+/// application added as those built in.
 pub(crate) fn system(schema: &Schema) -> String {
-    let known = schema.block_specs().filter_map(|spec| match spec.fence() {
-        Some(tag) => Some(fence(spec, tag)),
-        None => spec.hint().map(str::to_owned),
-    });
-    let known: Vec<_> = known.collect();
+    let known: Vec<_> = schema.block_specs().filter_map(block_description).collect();
+    let inlines: Vec<_> = schema
+        .inline_specs()
+        .filter_map(inline_description)
+        .collect();
+    let inline_clause = if inlines.is_empty() {
+        String::new()
+    } else {
+        format!(" Inline text may also include {}.", inlines.join(", "))
+    };
     format!(
         "You edit a document for its user. Each request comes with the document as JSON: \
          `blocks` in reading order, each with its `id`, how deep it is nested (`depth`) and \
@@ -109,10 +136,10 @@ pub(crate) fn system(schema: &Schema) -> String {
          caret is in.\n\n\
          Change the document only by calling the tools, once per block, and with ids taken \
          from the document as given. A block is one Markdown block: a paragraph, or one of \
-         {}. Nest blocks in an added block by indenting them under it. Keep what the user \
-         did not ask to change, and write in the language of the document unless asked \
-         otherwise. When asked something that needs no change, answer in plain text and \
-         call no tool. After the tools, say in a sentence what you did.",
+         {}.{inline_clause} Nest blocks in an added block by indenting them under it. Keep \
+         what the user did not ask to change, and write in the language of the document \
+         unless asked otherwise. When asked something that needs no change, answer in plain \
+         text and call no tool. After the tools, say in a sentence what you did.",
         known.join(", ")
     )
 }

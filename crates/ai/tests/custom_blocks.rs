@@ -1,6 +1,7 @@
 use lotype_ai::{AiSession, AiState, LlmEvent};
 use lotype_core::{
-    BlockId, BlockSpec, Content, Document, Editor, Role, Schema, Value, attr, block,
+    Atom, BlockId, BlockSpec, Content, Document, Editor, InlineSpec, Role, Schema, Value, attr,
+    block,
 };
 use serde_json::json;
 
@@ -145,4 +146,102 @@ fn an_update_keeps_what_markdown_says_nothing_of() {
     );
     assert_eq!(value(alert, attr::KIND), Some("warning".into()));
     assert_eq!(doc.children(Some(alert)).unwrap(), [inside]);
+}
+
+#[test]
+fn a_model_is_told_of_display_and_inline_math_and_edits_equations() {
+    fn math_schema() -> Schema {
+        fn inline_plain(atom: &Atom) -> String {
+            let tex = match atom.attrs.get("tex") {
+                Some(Value::Str(tex)) => tex.as_str(),
+                _ => "",
+            };
+            format!("${tex}$")
+        }
+
+        let math_block = BlockSpec::new("math", Content::Inline)
+            .with_role(Role::Code)
+            .without_style()
+            .written_as_fence("math")
+            .as_display_math()
+            .with_hint("display LaTeX equations");
+        let math_inline = InlineSpec::new("inline_math", inline_plain)
+            .as_inline_math("tex")
+            .with_hint("inline LaTeX equations (`$...$`)");
+        Schema::builtin().block(math_block).inline(math_inline)
+    }
+
+    let make_editor = || {
+        let mut doc = Document::new(math_schema());
+        let made = doc.insert_markdown(None, 0, "Intro.").unwrap();
+        (Editor::new(doc), made)
+    };
+
+    let (mut main, made) = make_editor();
+    let mut session = AiSession::new(&main).unwrap();
+    let request = session.prompt("Add math").unwrap();
+    assert!(
+        request.system.contains(
+            "display LaTeX equations (`$$\\n...\\n$$`, or a fenced block tagged `math`, and its text inside as it is)"
+        ),
+        "{}",
+        request.system
+    );
+    assert!(
+        request
+            .system
+            .contains("Inline text may also include inline LaTeX equations (`$...$`)."),
+        "{}",
+        request.system
+    );
+
+    // Repeating schema construction yields identical prompt wording and ordering.
+    let (other, _) = make_editor();
+    let mut other_session = AiSession::new(&other).unwrap();
+    let request2 = other_session.prompt("Add math").unwrap();
+    assert_eq!(request2.system, request.system);
+
+    call(
+        &mut session,
+        "1",
+        "update",
+        update(made[0], "Energy $E = mc^2$ holds."),
+    );
+    call(
+        &mut session,
+        "2",
+        "add",
+        json!({
+            "referenceId": made[0].to_string(),
+            "position": "after",
+            "blocks": [
+                "$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$",
+                "```math\nx = 1\n\ny = 2\n```"
+            ],
+        }),
+    );
+    session.feed(LlmEvent::Done).unwrap();
+    assert_eq!(session.state(), &AiState::Reviewing);
+    session.accept(&mut main).unwrap();
+
+    let doc = main.document();
+    let blocks = doc.blocks();
+    let kinds: Vec<_> = blocks
+        .iter()
+        .map(|block| doc.block_type(*block).unwrap())
+        .collect();
+    assert_eq!(kinds, ["paragraph", "math", "math"]);
+    let inline_atom = doc
+        .spans(blocks[0])
+        .unwrap()
+        .into_iter()
+        .find_map(|span| span.atom)
+        .expect("inline math atom inserted in paragraph");
+    assert_eq!(inline_atom.name, "inline_math");
+    assert_eq!(inline_atom.attrs.get("tex"), Some(&Value::from("E = mc^2")));
+    assert_eq!(
+        doc.plain_text(blocks[1]).unwrap(),
+        r"\int_0^1 x\,dx = \frac{1}{2}"
+    );
+    assert_eq!(doc.plain_text(blocks[2]).unwrap(), "x = 1\n\ny = 2");
 }
