@@ -1,0 +1,28 @@
+[package]
+name = "lotype-math"
+description = "LaTeX block and inline equations for lotype documents, typeset natively with KaTeX."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+katex-native = "0.1.1"
+lotype-core.workspace = true
+gpui = { workspace = true, optional = true }
+gpui-component = { workspace = true, optional = true }
+lotype-ui = { workspace = true, optional = true }
+
+[features]
+# Enables the GPUI block equation view, inline equation atom view, and live KaTeX vector renderer.
+gpui = ["dep:gpui", "dep:gpui-component", "dep:lotype-ui"]
+# Test helpers for GPUI views using lotype-math.
+test-support = ["gpui", "lotype-core/test-support", "lotype-ui/test-support"]
+
+[dev-dependencies]
+lotype-core = { workspace = true, features = ["test-support"] }

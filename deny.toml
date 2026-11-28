@@ -24,6 +24,8 @@ allow = [
     "ISC",
     "MIT",
     "MPL-2.0",
+    # KaTeX fonts bundled by katex-native.
+    "OFL-1.1",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
